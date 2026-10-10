@@ -1,0 +1,456 @@
+import {
+  Ticket,
+  TicketComment,
+  User,
+  Organization,
+  Asset,
+  KnowledgeArticle,
+  ServiceCatalogItem,
+  ApprovalRequest,
+  WorkLog,
+  TaskItem,
+  CustomFieldDefinition,
+  SlaPolicy,
+  AutomationRule,
+  EmailChannel,
+  AuditLog,
+  SatisfactionSurvey,
+  MailboxConnectionConfig,
+  DefaultEmailGatewayConfig,
+} from '../types';
+
+async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+    ...options,
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(errorData.error || `HTTP error ${res.status}`);
+  }
+
+  return res.json();
+}
+
+export const api = {
+  // Session & Auth
+  async getSession(): Promise<{ user: User; organization: Organization; availableUsers: User[] }> {
+    return request('/api/session');
+  },
+
+  async switchUser(userId: string): Promise<{ user: User; organization: Organization }> {
+    return request('/api/session/switch', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  },
+
+  async getUsers(): Promise<User[]> {
+    return request('/api/users');
+  },
+
+  async createUser(payload: Partial<User>): Promise<User> {
+    return request('/api/users', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateUser(id: string, payload: Partial<User>): Promise<User> {
+    return request(`/api/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteUser(id: string): Promise<{ success: boolean; deletedUserId: string }> {
+    return request(`/api/users/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async registerUser(payload: {
+    name: string;
+    email: string;
+    organizationId?: string;
+    departmentId?: string;
+    title?: string;
+    phone?: string;
+    otp?: string;
+  }): Promise<{ success: boolean; message: string; user: User }> {
+    return request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // Organizations
+  async getOrganizations(): Promise<Organization[]> {
+    return request('/api/organizations');
+  },
+
+  async createOrganization(payload: Partial<Organization>): Promise<Organization> {
+    return request('/api/organizations', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateOrganization(id: string, payload: Partial<Organization>): Promise<Organization> {
+    return request(`/api/organizations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteOrganization(id: string): Promise<{ success: boolean; deletedOrgId: string }> {
+    return request(`/api/organizations/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Tickets
+  async getTickets(params?: Record<string, string>): Promise<Ticket[]> {
+    const query = new URLSearchParams(params).toString();
+    return request(`/api/tickets${query ? `?${query}` : ''}`);
+  },
+
+  async getTicket(id: string): Promise<{
+    ticket: Ticket;
+    comments: TicketComment[];
+    tasks: TaskItem[];
+    workLogs: WorkLog[];
+    auditLogs: AuditLog[];
+  }> {
+    return request(`/api/tickets/${id}`);
+  },
+
+  async createTicket(payload: Partial<Ticket>): Promise<Ticket> {
+    return request('/api/tickets', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateTicket(id: string, payload: Partial<Ticket>): Promise<Ticket> {
+    return request(`/api/tickets/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteTicket(id: string): Promise<{ success: boolean; deletedTicketId: string }> {
+    return request(`/api/tickets/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async addComment(ticketId: string, content: string, isInternal: boolean = false): Promise<TicketComment> {
+    return request(`/api/tickets/${ticketId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ content, isInternal }),
+    });
+  },
+
+  async addTask(ticketId: string, title: string): Promise<TaskItem> {
+    return request(`/api/tickets/${ticketId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    });
+  },
+
+  async toggleTask(ticketId: string, taskId: string, completed: boolean): Promise<TaskItem> {
+    return request(`/api/tickets/${ticketId}/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ completed }),
+    });
+  },
+
+  async addWorkLog(ticketId: string, minutes: number, notes: string, billable: boolean = false, date?: string): Promise<WorkLog> {
+    return request(`/api/tickets/${ticketId}/worklogs`, {
+      method: 'POST',
+      body: JSON.stringify({ minutes, notes, billable, date }),
+    });
+  },
+
+  async bulkUpdateTickets(ticketIds: string[], action: string, value: string): Promise<{ success: boolean; updatedCount: number }> {
+    return request('/api/tickets/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ ticketIds, action, value }),
+    });
+  },
+
+  // Assets
+  async getAssets(): Promise<Asset[]> {
+    return request('/api/assets');
+  },
+
+  async createAsset(payload: Partial<Asset>): Promise<Asset> {
+    return request('/api/assets', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateAsset(id: string, payload: Partial<Asset>): Promise<Asset> {
+    return request(`/api/assets/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteAsset(id: string): Promise<{ success: boolean; deletedAssetId: string }> {
+    return request(`/api/assets/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Knowledge Base
+  async getKnowledgeArticles(params?: { search?: string; category?: string; publicOnly?: boolean }): Promise<KnowledgeArticle[]> {
+    const searchParams: Record<string, string> = {};
+    if (params?.search) searchParams.search = params.search;
+    if (params?.category) searchParams.category = params.category;
+    if (params?.publicOnly) searchParams.publicOnly = 'true';
+    const query = new URLSearchParams(searchParams).toString();
+    return request(`/api/knowledge-base${query ? `?${query}` : ''}`);
+  },
+
+  async createKnowledgeArticle(payload: Partial<KnowledgeArticle>): Promise<KnowledgeArticle> {
+    return request('/api/knowledge-base', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateKnowledgeArticle(id: string, payload: Partial<KnowledgeArticle>): Promise<KnowledgeArticle> {
+    return request(`/api/knowledge-base/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteKnowledgeArticle(id: string): Promise<{ success: boolean; deletedArticleId: string }> {
+    return request(`/api/knowledge-base/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async voteArticle(id: string, helpful: boolean): Promise<KnowledgeArticle> {
+    return request(`/api/knowledge-base/${id}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ helpful }),
+    });
+  },
+
+  // Service Catalog & Approvals
+  async getServiceCatalog(): Promise<ServiceCatalogItem[]> {
+    return request('/api/service-catalog');
+  },
+
+  async createCatalogItem(payload: Partial<ServiceCatalogItem>): Promise<ServiceCatalogItem> {
+    return request('/api/service-catalog', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateCatalogItem(id: string, payload: Partial<ServiceCatalogItem>): Promise<ServiceCatalogItem> {
+    return request(`/api/service-catalog/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteCatalogItem(id: string): Promise<{ success: boolean; deletedCatalogId: string }> {
+    return request(`/api/service-catalog/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async requestCatalogItem(catalogItemId: string, formData: Record<string, any>): Promise<{ ticket: Ticket }> {
+    return request('/api/service-catalog/request', {
+      method: 'POST',
+      body: JSON.stringify({ catalogItemId, formData }),
+    });
+  },
+
+  async getApprovals(): Promise<ApprovalRequest[]> {
+    return request('/api/approvals');
+  },
+
+  async decideApproval(id: string, status: 'approved' | 'rejected', notes?: string): Promise<ApprovalRequest> {
+    return request(`/api/approvals/${id}/decide`, {
+      method: 'POST',
+      body: JSON.stringify({ status, notes }),
+    });
+  },
+
+  // Custom Fields & SLAs & Rules
+  async getCustomFields(): Promise<CustomFieldDefinition[]> {
+    return request('/api/custom-fields');
+  },
+
+  async createCustomField(payload: Partial<CustomFieldDefinition>): Promise<CustomFieldDefinition> {
+    return request('/api/custom-fields', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateCustomField(id: string, payload: Partial<CustomFieldDefinition>): Promise<CustomFieldDefinition> {
+    return request(`/api/custom-fields/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteCustomField(id: string): Promise<{ success: boolean; id: string }> {
+    return request(`/api/custom-fields/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  async reorderCustomFields(orderedIds: string[]): Promise<{ success: boolean; fields: CustomFieldDefinition[] }> {
+    return request('/api/custom-fields/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ orderedIds }),
+    });
+  },
+
+  async getSlaPolicies(): Promise<SlaPolicy[]> {
+    return request('/api/sla-policies');
+  },
+
+  async getAutomationRules(): Promise<AutomationRule[]> {
+    return request('/api/automation-rules');
+  },
+
+  async toggleAutomationRule(id: string): Promise<AutomationRule> {
+    return request(`/api/automation-rules/${id}/toggle`, {
+      method: 'PATCH',
+    });
+  },
+
+  // OTP Verification for Users
+  async sendOtp(email: string): Promise<{ success: boolean; message: string; previewCode: string; expiresInSeconds: number }> {
+    return request('/api/auth/otp/send', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  async verifyOtp(email: string, otp: string): Promise<{ success: boolean; verified: boolean; message: string }> {
+    return request('/api/auth/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ email, otp }),
+    });
+  },
+
+  async getOtpStatus(email: string): Promise<{ verified: boolean }> {
+    return request(`/api/auth/otp/status?email=${encodeURIComponent(email)}`);
+  },
+
+  // Admin & Super Admin Mailboxes (IMAP / POP3 / SMTP)
+  async getAdminMailboxes(): Promise<MailboxConnectionConfig[]> {
+    return request('/api/admin/mailboxes');
+  },
+
+  async getUserMailbox(userId: string): Promise<MailboxConnectionConfig> {
+    return request(`/api/admin/mailboxes/user/${userId}`);
+  },
+
+  async saveUserMailbox(userId: string, data: Partial<MailboxConnectionConfig>): Promise<MailboxConnectionConfig> {
+    return request(`/api/admin/mailboxes/user/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async testMailboxConnection(data: any): Promise<any> {
+    return request('/api/admin/mailboxes/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Default Email Gateway (IMAP / POP3 / SMTP)
+  async getDefaultGatewayConfig(): Promise<DefaultEmailGatewayConfig> {
+    return request('/api/email/default-gateway');
+  },
+
+  async saveDefaultGatewayConfig(data: Partial<DefaultEmailGatewayConfig>): Promise<DefaultEmailGatewayConfig> {
+    return request('/api/email/default-gateway', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async testDefaultGateway(testRecipientEmail?: string): Promise<any> {
+    return request('/api/email/default-gateway/test', {
+      method: 'POST',
+      body: JSON.stringify({ testRecipientEmail }),
+    });
+  },
+
+  // Email Channels & Simulation
+  async getEmailChannels(): Promise<EmailChannel[]> {
+    return request('/api/email-channels');
+  },
+
+  async simulateInboundEmail(from: string, subject: string, body: string): Promise<{ mode: string; ticket: Ticket }> {
+    return request('/api/email/simulate-inbound', {
+      method: 'POST',
+      body: JSON.stringify({ from, subject, body }),
+    });
+  },
+
+  // Reports
+  async getReportsMetrics(): Promise<{
+    totalTickets: number;
+    openTickets: number;
+    resolvedTickets: number;
+    criticalTickets: number;
+    overdueTickets: number;
+    slaCompliancePercent: number;
+    avgResolutionHours: number;
+    avgFirstResponseMinutes: number;
+    csatScore: string;
+    byPriority: Record<string, number>;
+    byStatus: Record<string, number>;
+    byCategory: Record<string, number>;
+    byTechnician: Record<string, number>;
+  }> {
+    return request('/api/reports/metrics');
+  },
+
+  // Superadmin
+  async getSuperadminStats(): Promise<{
+    totalOrganizations: number;
+    activeTenants: number;
+    totalUsers: number;
+    totalTickets: number;
+    totalAssets: number;
+    systemUptimeHours: number;
+    emailQueueHealth: string;
+    backgroundWorkerStatus: string;
+    databaseSizeKb: number;
+  }> {
+    return request('/api/superadmin/stats');
+  },
+
+  async getAuditLogs(): Promise<AuditLog[]> {
+    return request('/api/audit-logs');
+  },
+
+  // Surveys
+  async submitSurvey(ticketId: string, rating: number, comment?: string): Promise<SatisfactionSurvey> {
+    return request('/api/surveys', {
+      method: 'POST',
+      body: JSON.stringify({ ticketId, rating, comment }),
+    });
+  },
+};

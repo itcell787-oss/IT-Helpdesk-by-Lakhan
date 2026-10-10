@@ -1,0 +1,31 @@
+[Unit]
+Description=IT Helpdesk by Lakhan - IT Support & Service Desk Portal
+Documentation=https://github.com/lakhan/it-helpdesk
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/it-helpdesk
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=APP_URL=http://localhost:3000
+
+# Security sandboxing
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=it-helpdesk
+
+[Install]
+WantedBy=multi-user.target

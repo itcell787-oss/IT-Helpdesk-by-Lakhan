@@ -1,0 +1,6 @@
+{
+  "name": "IT Helpdesk by Lakhan",
+  "description": "Enterprise-ready IT service desk, ticketing and support management platform with SLA tracking, asset management, and liquid-glass UI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      try {
+        const theme = localStorage.getItem('it_helpdesk_theme');
+        if (theme === 'light') {
+          document.documentElement.classList.remove('dark');
+        } else {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) {}
+    </script>
+    <title>IT Helpdesk by Lakhan - Modern IT Support &amp; Service Desk</title>
+    <meta name="description" content="Enterprise-ready IT service desk, ticketing and support management platform with SLA tracking, asset management, and liquid-glass UI." />
+    <meta property="og:title" content="IT Helpdesk by Lakhan - Modern IT Support &amp; Service Desk" />
+    <meta property="og:description" content="Enterprise-ready IT service desk, ticketing and support management platform with SLA tracking, asset management, and liquid-glass UI." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%230f172a'/><path d='M16 5 L26 10 L26 18 C26 23.5 21.5 27 16 28 C10.5 27 6 23.5 6 18 L6 10 Z' fill='none' stroke='%2338bdf8' stroke-width='2' stroke-linejoin='round'/><path d='M16 11 L16 19 M12 15 L20 15' stroke='%23818cf8' stroke-width='2.5' stroke-linecap='round'/><circle cx='16' cy='15' r='2' fill='%2338bdf8'/></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans antialiased selection:bg-cyan-500/30 selection:text-cyan-900 dark:selection:text-cyan-200 min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
