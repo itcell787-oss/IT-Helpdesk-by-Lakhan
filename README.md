@@ -27,7 +27,7 @@ The application includes an in-app persona impersonator in the top navigation ba
 
 | Persona | Name | Role | Email | Scope |
 | :--- | :--- | :--- | :--- | :--- |
-| **Superadmin** | Lakhan Verma | `superadmin` | `lakhan.superadmin@ithelpdesk.com` | Platform Console & All Tenants |
+| **Superadmin** | Lakhan Prajapati| `superadmin` | `lakhan.superadmin@ithelpdesk.com` | Platform Console & All Tenants |
 | **Org Admin** | Sarah Jenkins | `admin` | `sarah.admin@lakhanglobal.com` | Organization Configuration & Workflows |
 | **Helpdesk Manager** | Marcus Vance | `manager` | `marcus.manager@lakhanglobal.com` | Team Queues & Approvals |
 | **Technician** | Alex Rivera | `technician` | `alex.tech@lakhanglobal.com` | Service Desk Tier 1 |
