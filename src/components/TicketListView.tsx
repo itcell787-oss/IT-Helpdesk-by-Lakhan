@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { jsPDF } from 'jspdf';
 import {
   Search,
   Filter,
@@ -22,12 +23,52 @@ import {
   X,
   Shield,
   CheckCircle2,
+  Settings,
+  Building2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Printer,
+  Paperclip,
 } from 'lucide-react';
-import { Ticket, User as UserType, UserRole } from '../types';
+import { Ticket, User as UserType, UserRole, Organization } from '../types';
+import { SlaCountdownBadge } from './SlaCountdownBadge';
+
+export type TicketColumnKey =
+  | 'ticketId'
+  | 'subjectCategory'
+  | 'type'
+  | 'requester'
+  | 'organization'
+  | 'priority'
+  | 'status'
+  | 'assignee'
+  | 'slaStatus'
+  | 'createdTime';
+
+export interface ColumnDefinition {
+  key: TicketColumnKey;
+  label: string;
+}
+
+export const AVAILABLE_TICKET_COLUMNS: ColumnDefinition[] = [
+  { key: 'ticketId', label: 'Ticket ID' },
+  { key: 'subjectCategory', label: 'Subject & Category' },
+  { key: 'type', label: 'Type' },
+  { key: 'requester', label: 'Requester' },
+  { key: 'organization', label: 'Organization' },
+  { key: 'priority', label: 'Priority' },
+  { key: 'status', label: 'Status' },
+  { key: 'assignee', label: 'Assignee' },
+  { key: 'slaStatus', label: 'SLA Status' },
+  { key: 'createdTime', label: 'Created Time & Date' },
+];
 
 interface TicketListViewProps {
   tickets: Ticket[];
   users: UserType[];
+  organizations?: Organization[];
   onSelectTicket: (ticketId: string) => void;
   onOpenNewTicket: () => void;
   onBulkUpdate: (ticketIds: string[], action: string, value: string) => void;
@@ -39,6 +80,7 @@ interface TicketListViewProps {
 export const TicketListView: React.FC<TicketListViewProps> = ({
   tickets,
   users,
+  organizations = [],
   onSelectTicket,
   onOpenNewTicket,
   onBulkUpdate,
@@ -55,7 +97,59 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
   const [dateRange, setDateRange] = useState<'all' | 'today' | '7days' | '30days'>('all');
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
   const [ticketToDelete, setTicketToDelete] = useState<Ticket | null>(null);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
   const [showStatsModal, setShowStatsModal] = useState<boolean>(false);
+  const [showColumnChooser, setShowColumnChooser] = useState(false);
+
+  // Configurable Ticket Limits & Pagination: 25 (default), 50, 200, or Custom up to 500
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [customPageInput, setCustomPageInput] = useState<string>('25');
+  const [isCustomMode, setIsCustomMode] = useState<boolean>(false);
+
+  // Auto-reset page to 1 when filters change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [activeQueue, searchQuery, selectedCategory, selectedPriority, selectedType, dateSort, dateRange]);
+
+  // Column visibility state persisted in localStorage
+  const [selectedColumns, setSelectedColumns] = useState<TicketColumnKey[]>(() => {
+    try {
+      const saved = localStorage.getItem('ticket_table_columns');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [
+      'ticketId',
+      'subjectCategory',
+      'type',
+      'requester',
+      'organization',
+      'priority',
+      'status',
+      'assignee',
+      'slaStatus',
+      'createdTime',
+    ];
+  });
+
+  const toggleColumn = (colKey: TicketColumnKey) => {
+    setSelectedColumns((prev) => {
+      let next: TicketColumnKey[];
+      if (prev.includes(colKey)) {
+        if (prev.length <= 1) return prev; // keep at least 1 column
+        next = prev.filter((k) => k !== colKey);
+      } else {
+        next = [...prev, colKey];
+      }
+      try {
+        localStorage.setItem('ticket_table_columns', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
 
   // STRICT RULE: Only Super Admin and Admin can delete tickets. Technicians & basic users cannot delete tickets!
   const canDelete = currentUserRole === 'superadmin' || currentUserRole === 'admin';
@@ -147,6 +241,20 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
     return 0;
   });
 
+  // Paginated tickets calculation (configurable limits: 25, 50, 200, custom up to 500)
+  const totalPages = Math.max(1, Math.ceil(filteredTickets.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, filteredTickets.length);
+  const paginatedTickets = filteredTickets.slice(startIndex, endIndex);
+
+  const handlePageSizeChange = (newSize: number) => {
+    const clamped = Math.min(Math.max(Number(newSize) || 25, 1), 500);
+    setPageSize(clamped);
+    setCustomPageInput(String(clamped));
+    setCurrentPage(1);
+  };
+
   // Toggle selection
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -203,9 +311,102 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
 
   const handleBulkDelete = () => {
     if (!onDeleteTicket || selectedTicketIds.length === 0) return;
-    if (window.confirm(`Are you sure you want to permanently delete ${selectedTicketIds.length} tickets? This action cannot be undone.`)) {
-      selectedTicketIds.forEach((id) => onDeleteTicket(id));
-      setSelectedTicketIds([]);
+    setShowBulkDeleteModal(true);
+  };
+
+  const executeBulkDelete = () => {
+    if (!onDeleteTicket || selectedTicketIds.length === 0) return;
+    selectedTicketIds.forEach((id) => onDeleteTicket(id));
+    setSelectedTicketIds([]);
+    setShowBulkDeleteModal(false);
+  };
+
+  const handleDownloadTicketPdf = () => {
+    try {
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      // Brand Title Header Banner
+      doc.setFillColor(14, 165, 233); // Cyan
+      doc.rect(0, 0, pageWidth, 22, 'F');
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.text('IT Helpdesk - Ticket Management Workspace Report', 14, 14);
+
+      // Metadata
+      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(
+        `Generated: ${new Date().toLocaleString()}   |   Queue: ${activeQueue.toUpperCase()}   |   Showing: ${filteredTickets.length} of ${tickets.length} tickets`,
+        14,
+        30
+      );
+
+      doc.setDrawColor(226, 232, 240);
+      doc.line(14, 34, pageWidth - 14, 34);
+
+      let startY = 40;
+      doc.setFillColor(241, 245, 249);
+      doc.rect(14, startY, pageWidth - 28, 7, 'F');
+      doc.setTextColor(51, 65, 85);
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'bold');
+
+      doc.text('Ticket ID', 17, startY + 5);
+      doc.text('Subject & Category', 42, startY + 5);
+      doc.text('Requester', 115, startY + 5);
+      doc.text('Priority', 160, startY + 5);
+      doc.text('Status', 185, startY + 5);
+      doc.text('Assignee', 215, startY + 5);
+      doc.text('SLA Status', 245, startY + 5);
+
+      startY += 7;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+
+      const items = filteredTickets.slice(0, 32);
+      items.forEach((t) => {
+        if (startY > 185) {
+          doc.addPage();
+          startY = 20;
+          doc.setFillColor(241, 245, 249);
+          doc.rect(14, startY, pageWidth - 28, 7, 'F');
+          doc.setTextColor(51, 65, 85);
+          doc.setFont('helvetica', 'bold');
+          doc.text('Ticket ID', 17, startY + 5);
+          doc.text('Subject & Category', 42, startY + 5);
+          doc.text('Requester', 115, startY + 5);
+          doc.text('Priority', 160, startY + 5);
+          doc.text('Status', 185, startY + 5);
+          doc.text('Assignee', 215, startY + 5);
+          doc.text('SLA Status', 245, startY + 5);
+          startY += 7;
+          doc.setFont('helvetica', 'normal');
+        }
+
+        doc.setTextColor(30, 41, 59);
+        doc.text(t.id, 17, startY + 4.5);
+        doc.text(`${t.subject.slice(0, 38)} (${t.category})`, 42, startY + 4.5);
+        doc.text((t.requesterName || 'User').slice(0, 20), 115, startY + 4.5);
+        doc.text(t.priority.toUpperCase(), 160, startY + 4.5);
+        doc.text(t.status.toUpperCase(), 185, startY + 4.5);
+        doc.text((t.assignedTechnicianName || 'Unassigned').slice(0, 16), 215, startY + 4.5);
+        doc.text(t.slaStatus.toUpperCase(), 245, startY + 4.5);
+
+        doc.setDrawColor(241, 245, 249);
+        doc.line(14, startY + 6, pageWidth - 14, startY + 6);
+        startY += 6;
+      });
+
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text('Lakhan Tech Helpdesk ITSM • Confidential Support Record', 14, 200);
+      doc.save(`helpdesk_tickets_${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (err) {
+      console.error('Failed to download tickets PDF:', err);
     }
   };
 
@@ -243,6 +444,44 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                 className="px-4 py-1.5 text-xs font-semibold rounded-lg text-white bg-rose-600 hover:bg-rose-500 shadow-sm transition-all cursor-pointer"
               >
                 Yes, Delete Ticket
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {showBulkDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="glass-modal max-w-md w-full p-6 rounded-2xl border border-rose-500/30 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-rose-500 dark:text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Selected Tickets</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Permanently purge marked tickets</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-700 dark:text-slate-300">
+              Are you sure you want to permanently delete <strong className="font-bold text-rose-600 dark:text-rose-400">{selectedTicketIds.length}</strong> marked tickets? This operation cannot be undone.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowBulkDeleteModal(false)}
+                className="px-3.5 py-1.5 text-xs font-medium rounded-lg text-slate-600 dark:text-slate-300 bg-slate-100 dark:hover:bg-white/5 border border-slate-200 dark:border-white/10 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeBulkDelete}
+                className="px-4 py-1.5 text-xs font-semibold rounded-lg text-white bg-rose-600 hover:bg-rose-500 shadow-sm transition-all cursor-pointer"
+              >
+                Yes, Delete {selectedTicketIds.length} Tickets
               </button>
             </div>
           </div>
@@ -434,6 +673,14 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
             <Download className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" /> Export CSV
           </button>
           <button
+            type="button"
+            onClick={handleDownloadTicketPdf}
+            className="neu-btn flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 dark:hover:bg-white/5"
+            title="Download tickets report in PDF format"
+          >
+            <Printer className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" /> Print / PDF
+          </button>
+          <button
             onClick={onOpenNewTicket}
             className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.02]"
           >
@@ -506,6 +753,84 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
 
         {/* Secondary Filter Row: Date Range, Ticket Type, Category, Priority */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/80 dark:border-white/5 text-xs">
+          {/* Choose Columns Gear Dropdown Button on Left Side */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowColumnChooser(!showColumnChooser)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                showColumnChooser
+                  ? 'neu-pressed text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'
+                  : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+              }`}
+              title="Choose visible columns"
+            >
+              <Settings className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+              <span>Choose Columns</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300 font-mono">
+                {selectedColumns.length}/10
+              </span>
+            </button>
+
+            {showColumnChooser && (
+              <div className="absolute left-0 top-full mt-2 z-50 w-64 p-3 rounded-2xl neu-modal border border-slate-200 dark:border-white/15 shadow-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md space-y-2.5">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-white/10">
+                  <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <Settings className="w-3.5 h-3.5 text-cyan-600" />
+                    Choose columns
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allKeys = AVAILABLE_TICKET_COLUMNS.map((c) => c.key);
+                        setSelectedColumns(allKeys);
+                        localStorage.setItem('ticket_table_columns', JSON.stringify(allKeys));
+                      }}
+                      className="text-[10px] text-cyan-600 hover:underline font-semibold cursor-pointer"
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowColumnChooser(false)}
+                      className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1 max-h-72 overflow-y-auto custom-scrollbar pr-1">
+                  {AVAILABLE_TICKET_COLUMNS.map((col) => {
+                    const isChecked = selectedColumns.includes(col.key);
+                    return (
+                      <label
+                        key={col.key}
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                          isChecked
+                            ? 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-950 dark:text-cyan-100 font-bold'
+                            : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleColumn(col.key)}
+                            className="rounded border-slate-400 dark:border-slate-700 text-cyan-600 focus:ring-0 cursor-pointer"
+                          />
+                          <span>{col.label}</span>
+                        </div>
+                        {isChecked && <Check className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Date Range Filter */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 neu-btn rounded-xl">
             <Calendar className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
@@ -648,43 +973,72 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
         </div>
       )}
 
+      {/* Print Only Header for Physical Printouts */}
+      <div className="hidden print:block mb-4 p-4 border-b-2 border-slate-900 text-slate-900">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-xl font-bold">IT Service Desk — Tickets Inventory Report</h1>
+            <p className="text-xs text-slate-600">Printed on {new Date().toLocaleString()} | Queue: {activeQueue.toUpperCase()} | Showing {filteredTickets.length} tickets</p>
+          </div>
+          <div className="text-right text-xs font-mono font-bold">
+            Lakhan Tech Helpdesk
+          </div>
+        </div>
+      </div>
+
       {/* Ticket Data Grid Table */}
       <div className="neu-card rounded-2xl border border-slate-200/90 dark:border-white/10 overflow-hidden shadow-sm">
         <div className="overflow-x-auto custom-scrollbar">
           <table className="w-full text-left text-xs min-w-[950px]">
             <thead className="bg-slate-200/80 dark:bg-slate-900/95 text-slate-900 dark:text-slate-100 border-b border-slate-300/90 dark:border-white/10 uppercase tracking-wider font-extrabold text-[11px]">
               <tr>
-                <th className="p-3 w-8">
-                  <input
-                    type="checkbox"
-                    checked={
-                      filteredTickets.length > 0 && selectedTicketIds.length === filteredTickets.length
-                    }
-                    onChange={handleSelectAll}
-                    className="rounded border-slate-400 dark:border-slate-700 bg-white dark:bg-slate-900 text-cyan-600 focus:ring-0 cursor-pointer"
-                  />
+                <th className="p-3 w-12">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={
+                        filteredTickets.length > 0 && selectedTicketIds.length === filteredTickets.length
+                      }
+                      onChange={handleSelectAll}
+                      className="rounded border-slate-400 dark:border-slate-700 bg-white dark:bg-slate-900 text-cyan-600 focus:ring-0 cursor-pointer"
+                      title="Select all tickets"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowColumnChooser(!showColumnChooser)}
+                      className={`p-0.5 rounded transition-all cursor-pointer ${
+                        showColumnChooser
+                          ? 'text-cyan-600 bg-cyan-100 dark:bg-cyan-950'
+                          : 'text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300'
+                      }`}
+                      title="Choose visible columns (gear)"
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </th>
-                <th className="py-3 px-2 w-28">Ticket ID</th>
-                <th className="py-3 px-3">Subject &amp; Category</th>
-                <th className="py-3 px-3">Type</th>
-                <th className="py-3 px-3">Requester</th>
-                <th className="py-3 px-3">Priority</th>
-                <th className="py-3 px-3">Status</th>
-                <th className="py-3 px-3">Assignee</th>
-                <th className="py-3 px-3">SLA Status</th>
-                <th className="py-3 px-3 text-right">Created Time &amp; Date</th>
+                {selectedColumns.includes('ticketId') && <th className="py-3 px-2 w-28">Ticket ID</th>}
+                {selectedColumns.includes('subjectCategory') && <th className="py-3 px-3">Subject &amp; Category</th>}
+                {selectedColumns.includes('type') && <th className="py-3 px-3">Type</th>}
+                {selectedColumns.includes('requester') && <th className="py-3 px-3">Requester</th>}
+                {selectedColumns.includes('organization') && <th className="py-3 px-3">Organization</th>}
+                {selectedColumns.includes('priority') && <th className="py-3 px-3">Priority</th>}
+                {selectedColumns.includes('status') && <th className="py-3 px-3">Status</th>}
+                {selectedColumns.includes('assignee') && <th className="py-3 px-3">Assignee</th>}
+                {selectedColumns.includes('slaStatus') && <th className="py-3 px-3">SLA Status</th>}
+                {selectedColumns.includes('createdTime') && <th className="py-3 px-3 text-right">Created Time &amp; Date</th>}
                 {canDelete && <th className="py-3 px-2 text-center w-12">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200/90 dark:divide-white/5">
               {filteredTickets.length === 0 ? (
                 <tr>
-                  <td colSpan={canDelete ? 11 : 10} className="py-12 text-center text-slate-700 dark:text-slate-300 font-semibold text-sm">
+                  <td colSpan={1 + selectedColumns.length + (canDelete ? 1 : 0)} className="py-12 text-center text-slate-700 dark:text-slate-300 font-semibold text-sm">
                     No tickets found matching the specified filter criteria.
                   </td>
                 </tr>
               ) : (
-                filteredTickets.map((t) => {
+                paginatedTickets.map((t) => {
                   const isSelected = selectedTicketIds.includes(t.id);
                   const priorityBadge: Record<string, { label: string; cls: string }> = {
                     critical: { label: 'Critical', cls: 'bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950/70 dark:text-rose-300 dark:border-rose-800/60 font-bold' },
@@ -729,77 +1083,146 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                         />
                       </td>
 
-                      <td
-                        className="py-3 px-2 font-mono font-extrabold text-cyan-700 dark:text-cyan-400 tabular-nums text-xs"
-                        onClick={() => onSelectTicket(t.id)}
-                      >
-                        {t.id}
-                      </td>
+                      {selectedColumns.includes('ticketId') && (
+                        <td
+                          className="py-3 px-2 font-mono font-extrabold text-cyan-700 dark:text-cyan-400 tabular-nums text-xs"
+                          onClick={() => onSelectTicket(t.id)}
+                        >
+                          {t.id}
+                        </td>
+                      )}
 
-                      <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                        <div className="font-bold text-slate-950 dark:text-white line-clamp-1 max-w-md text-xs">{t.subject}</div>
-                        <div className="text-[11px] text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mt-0.5 font-semibold">
-                          <span className="font-bold text-slate-800 dark:text-slate-200">{t.category}</span>
-                          {t.subcategory && (
-                            <>
-                              <span aria-hidden="true">/</span>
-                              <span>{t.subcategory}</span>
-                            </>
-                          )}
-                          {t.tags.length > 0 && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="text-cyan-700 dark:text-cyan-300 font-mono">#{t.tags.slice(0, 2).join(' #')}</span>
-                            </>
-                          )}
-                        </div>
-                      </td>
+                      {selectedColumns.includes('subjectCategory') && (
+                        <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-slate-950 dark:text-white line-clamp-1 max-w-md text-xs">{t.subject}</span>
+                            {t.attachments && t.attachments.length > 0 && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-100/80 dark:bg-cyan-950/70 text-cyan-800 dark:text-cyan-300 font-mono text-[10px] font-bold border border-cyan-300/80 dark:border-cyan-800/60"
+                                title={`${t.attachments.length} attachment(s) / snips attached`}
+                              >
+                                <Paperclip className="w-3 h-3 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                                {t.attachments.length}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mt-0.5 font-semibold">
+                            <span className="font-bold text-slate-800 dark:text-slate-200">{t.category}</span>
+                            {t.subcategory && (
+                              <>
+                                <span aria-hidden="true">/</span>
+                                <span>{t.subcategory}</span>
+                              </>
+                            )}
+                            {t.tags.length > 0 && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-cyan-700 dark:text-cyan-300 font-mono">#{t.tags.slice(0, 2).join(' #')}</span>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      )}
 
-                      <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                        <span className="capitalize px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800/50">
-                          {t.type.replace(/_/g, ' ')}
-                        </span>
-                      </td>
+                      {selectedColumns.includes('type') && (
+                        <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                          <span className="capitalize px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800/50">
+                            {t.type.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                      )}
 
-                      <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                        <div className="text-slate-950 dark:text-white font-bold">{t.requesterName}</div>
-                        <div className="text-[11px] text-slate-600 dark:text-slate-400 font-mono truncate max-w-[130px] font-medium">{t.requesterEmail}</div>
-                      </td>
+                      {selectedColumns.includes('requester') && (() => {
+                        const matchedUser = users.find((u) => u.email === t.requesterEmail || u.id === t.requesterId);
+                        const empCode = t.requesterEmployeeCode || matchedUser?.employeeCode || (t.requesterName?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010');
+                        return (
+                          <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                            <div className="text-slate-950 dark:text-white font-mono font-bold text-xs flex items-center gap-1.5 flex-wrap">
+                              <span>[{empCode}]{t.requesterName}</span>
+                            </div>
+                            <div className="text-[11px] text-slate-600 dark:text-slate-400 font-mono truncate max-w-[220px] font-medium mt-0.5">
+                              {t.requesterEmail}
+                            </div>
+                          </td>
+                        );
+                      })()}
 
-                      <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                        <span className={`capitalize px-2 py-0.5 rounded-md text-[10px] inline-block ${priorityBadge[t.priority]?.cls || 'bg-slate-200 text-slate-800'}`}>
-                          {priorityBadge[t.priority]?.label || t.priority}
-                        </span>
-                      </td>
+                      {selectedColumns.includes('organization') && (
+                        <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-cyan-100/70 dark:bg-cyan-950/60 text-cyan-900 dark:text-cyan-200 border border-cyan-300 dark:border-cyan-800/50">
+                            <Building2 className="w-3 h-3 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                            <span className="truncate max-w-[130px]">
+                              {t.organizationName || organizations?.find(o => o.id === t.organizationId)?.name || 'Lakhan Tech HQ'}
+                            </span>
+                          </span>
+                        </td>
+                      )}
 
-                      <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                        <span className={`capitalize px-2 py-0.5 rounded-md text-[10px] inline-block ${statusBadge[t.status]?.cls || 'bg-slate-200 text-slate-800'}`}>
-                          {statusBadge[t.status]?.label || t.status.replace(/_/g, ' ')}
-                        </span>
-                      </td>
+                      {selectedColumns.includes('priority') && (
+                        <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                          <span className={`capitalize px-2 py-0.5 rounded-md text-[10px] inline-block ${priorityBadge[t.priority]?.cls || 'bg-slate-200 text-slate-800'}`}>
+                            {priorityBadge[t.priority]?.label || t.priority}
+                          </span>
+                        </td>
+                      )}
 
-                      <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                        <span className="text-slate-900 dark:text-slate-100 text-[11px] font-semibold">
-                          {t.assignedTechnicianName || <span className="text-slate-400 dark:text-slate-500 italic">Unassigned</span>}
-                        </span>
-                      </td>
+                      {selectedColumns.includes('status') && (
+                        <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                          <span className={`capitalize px-2 py-0.5 rounded-md text-[10px] inline-block ${statusBadge[t.status]?.cls || 'bg-slate-200 text-slate-800'}`}>
+                            {statusBadge[t.status]?.label || t.status.replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                      )}
 
-                      <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md inline-block ${slaBadge[t.slaStatus]?.cls || 'bg-slate-200 text-slate-800'}`}>
-                          {slaBadge[t.slaStatus]?.label || t.slaStatus}
-                        </span>
-                      </td>
+                      {selectedColumns.includes('assignee') && (
+                        <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                          <span className="text-slate-900 dark:text-slate-100 text-[11px] font-semibold">
+                            {(() => {
+                              if (!t.assignedTechnicianId && !t.assignedTechnicianName) {
+                                return <span className="text-slate-400 dark:text-slate-500 italic">Unassigned</span>;
+                              }
+                              const tech = users.find((u) => u.id === t.assignedTechnicianId || u.name === t.assignedTechnicianName);
+                              if (tech && (tech.role === 'requester' || tech.role === 'auditor')) {
+                                return <span className="text-slate-400 dark:text-slate-500 italic">Unassigned</span>;
+                              }
+                              const code = tech?.employeeCode || 'CBPL1010';
+                              const name = t.assignedTechnicianName || tech?.name;
+                              return <span className="font-mono font-bold">[{code}]{name}</span>;
+                            })()}
+                          </span>
+                        </td>
+                      )}
+
+                      {selectedColumns.includes('slaStatus') && (
+                        <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md inline-block ${slaBadge[t.slaStatus]?.cls || 'bg-slate-200 text-slate-800'}`}>
+                              {slaBadge[t.slaStatus]?.label || t.slaStatus}
+                            </span>
+                            <SlaCountdownBadge
+                              targetDeadline={t.slaResolutionDeadline || t.dueDate || t.slaFirstResponseDeadline}
+                              slaStatus={t.slaStatus}
+                              isResolved={t.status === 'resolved' || t.status === 'closed'}
+                              createdAt={t.createdAt}
+                              priority={t.priority}
+                              showLivePulse={t.status !== 'resolved' && t.status !== 'closed'}
+                            />
+                          </div>
+                        </td>
+                      )}
 
                       {/* Display explicit Time of Ticket & Date */}
-                      <td className="py-3 px-3 text-right" onClick={() => onSelectTicket(t.id)}>
-                        <div className="font-mono tabular-nums text-slate-950 dark:text-white font-extrabold text-xs flex items-center justify-end gap-1">
-                          <Clock className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
-                          <span>{new Date(t.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                        <div className="text-slate-600 dark:text-slate-400 text-[10px] font-semibold">
-                          {new Date(t.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </div>
-                      </td>
+                      {selectedColumns.includes('createdTime') && (
+                        <td className="py-3 px-3 text-right" onClick={() => onSelectTicket(t.id)}>
+                          <div className="font-mono tabular-nums text-slate-950 dark:text-white font-extrabold text-xs flex items-center justify-end gap-1">
+                            <Clock className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                            <span>{new Date(t.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          <div className="text-slate-600 dark:text-slate-400 text-[10px] font-semibold">
+                            {new Date(t.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </div>
+                        </td>
+                      )}
 
                       {canDelete && (
                         <td className="py-3 px-2 text-center" onClick={(e) => e.stopPropagation()}>
@@ -819,6 +1242,127 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination & Limits Bar: 25 (default), 50, 200, Custom up to 500 */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 bg-slate-100/90 dark:bg-slate-900/80 border-t border-slate-200/90 dark:border-white/10 text-xs text-slate-700 dark:text-slate-300">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="font-semibold text-slate-800 dark:text-slate-200">
+              Showing <span className="font-bold text-cyan-700 dark:text-cyan-400 font-mono">{filteredTickets.length > 0 ? startIndex + 1 : 0}</span>–<span className="font-bold text-cyan-700 dark:text-cyan-400 font-mono">{endIndex}</span> of <span className="font-bold text-slate-900 dark:text-white font-mono">{filteredTickets.length}</span> tickets
+              {filteredTickets.length !== tickets.length && (
+                <span className="text-slate-400 dark:text-slate-500 font-normal ml-1">
+                  (filtered from {tickets.length} total)
+                </span>
+              )}
+            </span>
+
+            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-300 dark:border-white/10">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">Per page:</span>
+              <div className="inline-flex rounded-lg neu-flat p-0.5 border border-slate-300/80 dark:border-white/10">
+                {[25, 50, 200].map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => {
+                      setIsCustomMode(false);
+                      handlePageSizeChange(size);
+                    }}
+                    className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all cursor-pointer ${
+                      pageSize === size && !isCustomMode
+                        ? 'bg-cyan-600 text-white shadow-xs'
+                        : 'text-slate-700 dark:text-slate-300 hover:text-cyan-700 dark:hover:text-cyan-300'
+                    }`}
+                  >
+                    {size}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setIsCustomMode(true)}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all cursor-pointer ${
+                    isCustomMode || (pageSize !== 25 && pageSize !== 50 && pageSize !== 200)
+                      ? 'bg-cyan-600 text-white shadow-xs'
+                      : 'text-slate-700 dark:text-slate-300 hover:text-cyan-700 dark:hover:text-cyan-300'
+                  }`}
+                >
+                  Custom
+                </button>
+              </div>
+
+              {(isCustomMode || (pageSize !== 25 && pageSize !== 50 && pageSize !== 200)) && (
+                <div className="flex items-center gap-1 animate-in fade-in">
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={customPageInput}
+                    onChange={(e) => setCustomPageInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handlePageSizeChange(Number(customPageInput));
+                      }
+                    }}
+                    placeholder="1-500"
+                    className="w-16 px-2 py-1 text-xs neu-input rounded-md text-slate-900 dark:text-white font-mono text-center font-bold"
+                    title="Enter custom page size up to 500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handlePageSizeChange(Number(customPageInput))}
+                    className="px-2 py-1 text-[11px] font-bold bg-cyan-600 hover:bg-cyan-500 text-white rounded-md cursor-pointer"
+                  >
+                    Apply
+                  </button>
+                  <span className="text-[10px] text-slate-400">(Max 500)</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Page navigation buttons */}
+          <div className="flex items-center gap-1.5 self-end sm:self-auto">
+            <button
+              type="button"
+              disabled={safeCurrentPage <= 1}
+              onClick={() => setCurrentPage(1)}
+              className="p-1.5 rounded-lg neu-btn text-slate-700 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:text-cyan-600 cursor-pointer"
+              title="First Page"
+            >
+              <ChevronsLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              disabled={safeCurrentPage <= 1}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              className="p-1.5 rounded-lg neu-btn text-slate-700 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:text-cyan-600 cursor-pointer"
+              title="Previous Page"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <span className="px-2.5 py-1 text-xs font-bold text-slate-900 dark:text-white font-mono">
+              Page {safeCurrentPage} of {totalPages}
+            </span>
+
+            <button
+              type="button"
+              disabled={safeCurrentPage >= totalPages}
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              className="p-1.5 rounded-lg neu-btn text-slate-700 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:text-cyan-600 cursor-pointer"
+              title="Next Page"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              disabled={safeCurrentPage >= totalPages}
+              onClick={() => setCurrentPage(totalPages)}
+              className="p-1.5 rounded-lg neu-btn text-slate-700 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:text-cyan-600 cursor-pointer"
+              title="Last Page"
+            >
+              <ChevronsRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

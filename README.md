@@ -67,19 +67,32 @@ The application will be accessible at `http://localhost:3000`.
 ---
 
 ## 4. Docker Deployment
-
-### Using Docker Compose
+### Quick One-Click Setup on Ubuntu:
 ```bash
-docker-compose up -d --build
+chmod +x deploy-docker-ubuntu.sh
+./deploy-docker-ubuntu.sh
 ```
 
-### Standalone Docker Build
+### Using Docker Compose (Standard):
+```bash
+# Start container in detached mode with persistent volume
+docker compose up -d --build
+
+# View real-time logs
+docker compose logs -f
+
+# Check status
+docker compose ps
+```
+
+### Standalone Docker Build:
 ```bash
 docker build -t it-helpdesk-lakhan .
-docker run -d -p 3000:3000 -v helpdesk_data:/app/data --name it-helpdesk it-helpdesk-lakhan
+docker run -d -p 3000:3000 -v helpdesk_data:/app/data --name it-helpdesk-lakhan it-helpdesk-lakhan
 ```
 
----
+*For complete step-by-step export instructions from AI Studio to your Ubuntu server, see [LINUX_HOSTING_GUIDE.md](./LINUX_HOSTING_GUIDE.md).*
+
 
 ## 5. REST API Documentation
 

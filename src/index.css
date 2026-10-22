@@ -63,8 +63,7 @@ select option {
 
 /* Scroll helper classes */
 .custom-scrollbar {
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 /* ========================================================================= */
@@ -232,4 +231,103 @@ select option {
 /* Tabular figures for numbers */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* ========================================================================= */
+/* PRINT OPTION STYLES FOR TICKETS, ATTACHMENTS & ASSETS                      */
+/* Ensures high contrast, zero clipping, fully visible images & clean tables  */
+/* ========================================================================= */
+@media print {
+  /* Hide navigation, sidebars, interactive buttons, composers and floating widgets */
+  nav,
+  header:not(.print-header),
+  aside,
+  button,
+  input[type="checkbox"],
+  .no-print,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Reset body and background to pristine white for clean physical printing without cutoffs */
+  html, body, #root, main, .h-screen, .max-h-screen, .overflow-hidden, .flex-1, .min-h-0 {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    position: static !important;
+  }
+
+  /* Remove Neumorphic physical shadows that look muddy in ink printouts */
+  .neu-flat,
+  .neu-card,
+  .glass-panel,
+  .glass-card,
+  .neu-modal,
+  .neu-inset,
+  .neu-pressed {
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  /* Table rules for tickets & assets inventory printing */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 8.5pt !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    border: 1px solid #94a3b8 !important;
+    font-weight: 700 !important;
+    padding: 6px 8px !important;
+    text-transform: uppercase !important;
+    font-size: 7.5pt !important;
+  }
+
+  td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 6px 8px !important;
+    color: #1e293b !important;
+    background: #ffffff !important;
+  }
+
+  /* Attachment & Pasted Snip images: render fully without crop, high clarity */
+  .print-attachment-img,
+  img {
+    max-height: 380px !important;
+    max-width: 100% !important;
+    height: auto !important;
+    width: auto !important;
+    object-fit: contain !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: block !important;
+    margin: 6px auto !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 6px !important;
+  }
+
+  /* Prevent awkward page cutoffs */
+  .print-break-inside-avoid {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
 }

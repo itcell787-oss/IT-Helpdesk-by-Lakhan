@@ -38,8 +38,28 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   // Session & Auth
-  async getSession(): Promise<{ user: User; organization: Organization; availableUsers: User[] }> {
+  async getSession(): Promise<{ user: User | null; organization: Organization; availableUsers: User[] }> {
     return request('/api/session');
+  },
+
+  async login(payload: { email: string; password?: string; portalType?: 'user' | 'admin' }): Promise<{ user: User; organization: Organization }> {
+    return request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async logout(): Promise<{ success: boolean }> {
+    return request('/api/auth/logout', {
+      method: 'POST',
+    });
+  },
+
+  async updateUserPrivileges(userId: string, privileges: Partial<User['privileges']>): Promise<User> {
+    return request(`/api/users/${userId}/privileges`, {
+      method: 'PATCH',
+      body: JSON.stringify(privileges),
+    });
   },
 
   async switchUser(userId: string): Promise<{ user: User; organization: Organization }> {
@@ -76,11 +96,14 @@ export const api = {
   async registerUser(payload: {
     name: string;
     email: string;
+    employeeCode?: string;
     organizationId?: string;
     departmentId?: string;
     title?: string;
     phone?: string;
     otp?: string;
+    preSharedKey?: string;
+    password?: string;
   }): Promise<{ success: boolean; message: string; user: User }> {
     return request('/api/auth/register', {
       method: 'POST',
@@ -149,10 +172,10 @@ export const api = {
     });
   },
 
-  async addComment(ticketId: string, content: string, isInternal: boolean = false): Promise<TicketComment> {
+  async addComment(ticketId: string, content: string, isInternal: boolean = false, attachments: any[] = []): Promise<TicketComment> {
     return request(`/api/tickets/${ticketId}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ content, isInternal }),
+      body: JSON.stringify({ content, isInternal, attachments }),
     });
   },
 
@@ -329,6 +352,26 @@ export const api = {
     return request('/api/automation-rules');
   },
 
+  async createAutomationRule(rule: Partial<AutomationRule>): Promise<AutomationRule> {
+    return request('/api/automation-rules', {
+      method: 'POST',
+      body: JSON.stringify(rule),
+    });
+  },
+
+  async updateAutomationRule(id: string, updates: Partial<AutomationRule>): Promise<AutomationRule> {
+    return request(`/api/automation-rules/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  },
+
+  async deleteAutomationRule(id: string): Promise<{ success: boolean; message: string }> {
+    return request(`/api/automation-rules/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
   async toggleAutomationRule(id: string): Promise<AutomationRule> {
     return request(`/api/automation-rules/${id}/toggle`, {
       method: 'PATCH',
@@ -446,11 +489,102 @@ export const api = {
     return request('/api/audit-logs');
   },
 
-  // Surveys
+  // System Settings
+  async getSystemSettings(): Promise<any> {
+    return request('/api/system-settings');
+  },
+
+  async updateSystemSettings(payload: any): Promise<any> {
+    return request('/api/system-settings', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // Surveys & CSAT Ratings Management
+  async getSurveys(): Promise<SatisfactionSurvey[]> {
+    return request('/api/surveys');
+  },
+
   async submitSurvey(ticketId: string, rating: number, comment?: string): Promise<SatisfactionSurvey> {
     return request('/api/surveys', {
       method: 'POST',
       body: JSON.stringify({ ticketId, rating, comment }),
+    });
+  },
+
+  async deleteSurvey(id: string): Promise<{ success: boolean; deletedSurveyId: string }> {
+    return request(`/api/surveys/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // User Self-Service Password Change
+  async changePassword(userId: string, newPassword: string, currentPassword?: string): Promise<{ success: boolean; message: string }> {
+    return request(`/api/users/${userId}/change-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword, currentPassword }),
+    });
+  },
+
+  // Auth & PSK Password Setup
+  async setPasswordWithPsk(payload: { emailOrUserId: string; psk: string; newPassword: string }): Promise<any> {
+    return request('/api/auth/set-password-psk', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // Superadmin Reset Password for Any User
+  async resetUserPassword(userId: string, newPassword: string): Promise<any> {
+    return request(`/api/users/${userId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword }),
+    });
+  },
+
+  // SLA Policies (Superadmin Managed)
+  async updateSlaPolicy(id: string, data: Partial<SlaPolicy>): Promise<SlaPolicy> {
+    return request(`/api/sla-policies/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Superadmin Ticket Purge by Date Range
+  async purgeOldTickets(payload: { startDate: string; endDate: string; statusFilter?: string }): Promise<any> {
+    return request('/api/superadmin/tickets/purge', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // Asset Management: Status Update & Bulk Status
+  async updateAssetStatus(assetId: string, status: string): Promise<Asset> {
+    return request(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  },
+
+  async bulkUpdateAssetStatus(assetIds: string[], status: string): Promise<any> {
+    return request('/api/assets/bulk-update-status', {
+      method: 'POST',
+      body: JSON.stringify({ assetIds, status }),
+    });
+  },
+
+  async bulkDeleteAssets(assetIds: string[]): Promise<{ success: boolean; deletedCount: number; remainingCount: number }> {
+    return request('/api/assets/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify({ assetIds }),
+    });
+  },
+
+  async bulkCreateAssets(assets: Partial<Asset>[]): Promise<{ success: boolean; createdCount: number; createdAssets: Asset[] }> {
+    return request('/api/assets/bulk-create', {
+      method: 'POST',
+      body: JSON.stringify({ assets }),
     });
   },
 };

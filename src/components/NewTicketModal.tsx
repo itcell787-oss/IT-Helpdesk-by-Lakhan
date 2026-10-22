@@ -11,6 +11,11 @@ import {
   Send,
   Lock,
   Clock,
+  Paperclip,
+  Trash2,
+  Eye,
+  Upload,
+  MapPin,
 } from 'lucide-react';
 import { CustomFieldDefinition, KnowledgeArticle, User, Asset } from '../types';
 import { api } from '../services/api';
@@ -23,7 +28,8 @@ interface NewTicketModalProps {
   knowledgeArticles: KnowledgeArticle[];
   users: User[];
   assets: Asset[];
-  currentUser: User;
+  currentUser: User | null;
+  requireOtp?: boolean;
 }
 
 export const NewTicketModal: React.FC<NewTicketModalProps> = ({
@@ -35,22 +41,106 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
   users,
   assets,
   currentUser,
+  requireOtp = false,
 }) => {
-  const isRequester = currentUser.role === 'requester';
+  const isRequester = !currentUser || currentUser.role === 'requester';
 
   const [subject, setSubject] = useState('');
   const [category, setCategory] = useState('Software & Cloud Apps');
   const [priority, setPriority] = useState('normal');
   const [type, setType] = useState('incident');
   const [description, setDescription] = useState('');
-  const [requesterId, setRequesterId] = useState(currentUser.id);
-  const [requesterEmail, setRequesterEmail] = useState(currentUser.email);
+  const [requesterId, setRequesterId] = useState(currentUser?.id || 'guest');
+  const [guestName, setGuestName] = useState('');
+  const [requesterEmail, setRequesterEmail] = useState(currentUser?.email || '');
+  const [locationDesk, setLocationDesk] = useState('');
+  const [locationDeskError, setLocationDeskError] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState('');
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
   const [suggestedArticle, setSuggestedArticle] = useState<KnowledgeArticle | null>(null);
+  const [attachments, setAttachments] = useState<Array<{ id: string; name: string; size: number; type: string; url: string; }>>([]);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  // OTP Verification States for Normal Users
-  const [isEmailVerified, setIsEmailVerified] = useState(!isRequester);
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.indexOf('image') !== -1) {
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        const currentTotal = attachments.reduce((acc, a) => acc + (a.size || 0), 0);
+        if (attachments.length >= 4) {
+          alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+          return;
+        }
+        if (currentTotal + file.size > 2 * 1024 * 1024) {
+          alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (Current: ${(currentTotal / (1024 * 1024)).toFixed(2)} MB)`);
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (uploadEvent) => {
+          const dataUrl = uploadEvent.target?.result as string;
+          const newAttachment = {
+            id: `att-snip-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            name: `snip-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.png`,
+            size: file.size,
+            type: file.type || 'image/png',
+            url: dataUrl,
+          };
+          setAttachments((prev) => (prev.length < 4 ? [...prev, newAttachment] : prev));
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    let currentTotal = attachments.reduce((acc, a) => acc + (a.size || 0), 0);
+    let count = attachments.length;
+    const filesToAdd: File[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (count >= 4) {
+        alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+        break;
+      }
+      if (currentTotal + file.size > 2 * 1024 * 1024) {
+        alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (File "${file.name}" would exceed the 2 MB limit)`);
+        break;
+      }
+      currentTotal += file.size;
+      count++;
+      filesToAdd.push(file);
+    }
+
+    filesToAdd.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        const newAtt = {
+          id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          name: file.name,
+          size: file.size,
+          type: file.type || 'application/octet-stream',
+          url: dataUrl,
+        };
+        setAttachments((prev) => (prev.length < 4 ? [...prev, newAtt] : prev));
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  // OTP Verification States for Normal Users (defaults to true if requireOtp is false)
+  const [isEmailVerified, setIsEmailVerified] = useState(!requireOtp || (currentUser && currentUser.role !== 'requester'));
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otpLoading, setOtpLoading] = useState(false);
@@ -61,23 +151,21 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
   // Reset or initialize state
   useEffect(() => {
     if (isOpen) {
-      if (currentUser.role !== 'requester') {
+      if (!requireOtp || (currentUser && currentUser.role !== 'requester')) {
         setIsEmailVerified(true);
-      } else {
-        // Check if current user email is already confirmed in session
+      } else if (currentUser?.email) {
         const stored = sessionStorage.getItem(`otp_verified_${currentUser.email}`);
-        if (stored === 'true') {
-          setIsEmailVerified(true);
-        } else {
-          setIsEmailVerified(false);
-        }
+        setIsEmailVerified(stored === 'true');
+      } else {
+        setIsEmailVerified(false);
       }
-      setRequesterEmail(currentUser.email);
+      setRequesterEmail(currentUser?.email || '');
+      setRequesterId(currentUser?.id || 'guest');
       setOtpSent(false);
       setOtpMessage(null);
       setOtpError(null);
     }
-  }, [isOpen, currentUser]);
+  }, [isOpen, currentUser, requireOtp]);
 
   // Live KB Article Suggestion based on subject text
   useEffect(() => {
@@ -148,12 +236,17 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
     e.preventDefault();
     if (!subject.trim() || !description.trim()) return;
 
+    if (!locationDesk.trim()) {
+      setLocationDeskError('Location / Desk No is mandatory for IT support requests.');
+      return;
+    }
+
     if (!isEmailVerified) {
       setOtpError('Email confirmation required before ticket submission.');
       return;
     }
 
-    const reqUser = users.find((u) => u.id === requesterId) || currentUser;
+    const reqUser = currentUser ? (users.find((u) => u.id === requesterId) || currentUser) : null;
 
     onSubmit({
       subject,
@@ -161,11 +254,13 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
       category,
       priority,
       type,
-      requesterId: reqUser.id,
-      requesterName: reqUser.name,
-      requesterEmail: requesterEmail || reqUser.email,
+      locationDesk: locationDesk.trim(),
+      requesterId: reqUser ? reqUser.id : 'guest',
+      requesterName: reqUser ? reqUser.name : (guestName.trim() || 'Portal User'),
+      requesterEmail: requesterEmail || (reqUser ? reqUser.email : 'portal.guest@ithelpdesk.com'),
       relatedAssetIds: selectedAssetId ? [selectedAssetId] : [],
       customFields: customValues,
+      attachments,
       otpVerified: true,
     });
 
@@ -225,8 +320,8 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
           </div>
         )}
 
-        {/* STEP 1: Mandatory OTP Confirmation for Normal Users */}
-        {!isEmailVerified && (
+        {/* STEP 1: OTP Confirmation ONLY if enabled by Superadmin */}
+        {requireOtp && !isEmailVerified && (
           <div className="neu-flat p-4 rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50/50 dark:bg-amber-950/20 space-y-3">
             <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300">
               <KeyRound className="w-4 h-4 text-amber-600 dark:text-amber-400" />
@@ -309,7 +404,7 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
         )}
 
         {/* Verified Email Banner */}
-        {isEmailVerified && (
+        {requireOtp && isEmailVerified && (
           <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-500/30 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300">
             <span className="flex items-center gap-2 font-medium">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -323,6 +418,34 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
 
         {/* STEP 2: Main Ticket Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Guest Requester Info when not signed in */}
+          {!currentUser && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl neu-card bg-cyan-50/50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800/40">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Your Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. John Doe"
+                  value={guestName}
+                  onChange={(e) => setGuestName(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs font-medium neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Your Email Address *</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. john.doe@company.com"
+                  value={requesterEmail}
+                  onChange={(e) => setRequesterEmail(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs font-medium neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono"
+                />
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Type *</label>
@@ -383,32 +506,157 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Detailed Description *</label>
+            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+              <span>Detailed Description *</span>
+              <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-semibold">
+                Ctrl+V to paste snip / screenshot
+              </span>
+            </label>
             <textarea
               rows={3}
               required
-              placeholder="Describe what occurred, error messages, and reproduction steps..."
+              placeholder="Describe what occurred, error messages, and reproduction steps... (Direct snip paste supported: press Ctrl+V to attach screenshots)"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              onPaste={handlePaste}
               className="w-full p-2.5 text-xs font-medium neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500"
             />
           </div>
 
-          {/* Associated IT Asset */}
-          <div>
-            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Associated IT Asset (Optional)</label>
-            <select
-              value={selectedAssetId}
-              onChange={(e) => setSelectedAssetId(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-            >
-              <option value="">None / Not Applicable</option>
-              {assets.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.id} - {a.name} ({a.model})
-                </option>
-              ))}
-            </select>
+          {/* Attachments & Direct Snip Paste Zone */}
+          <div className="space-y-2 p-3 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-dashed border-cyan-500/40">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Paperclip className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                <div>
+                  <span className="text-xs font-bold text-slate-900 dark:text-white block flex items-center gap-1.5">
+                    <span>Attachments &amp; Direct Snip Paste</span>
+                    <span className="text-[10px] font-mono px-2 py-0.2 rounded-full bg-cyan-100 text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300 font-bold">
+                      {attachments.length}/4 ({(attachments.reduce((acc, a) => acc + (a.size || 0), 0) / 1024).toFixed(0)} KB / 2 MB max)
+                    </span>
+                  </span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Max 4 attachments, up to 2 MB total combined size. Press <kbd className="px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-cyan-700 dark:text-cyan-300 font-mono font-bold text-[10px]">Ctrl+V</kbd> to paste snips
+                  </span>
+                </div>
+              </div>
+
+              <label className="neu-btn px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-lg flex items-center gap-1.5 cursor-pointer hover:bg-cyan-50 dark:hover:bg-cyan-950/40 self-start sm:self-auto shrink-0">
+                <Upload className="w-3.5 h-3.5" />
+                <span>Attach Files / Snips</span>
+                <input
+                  type="file"
+                  multiple
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            {/* Attachment Pills / Previews */}
+            {attachments.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+                {attachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 text-xs shadow-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {att.type.startsWith('image/') ? (
+                        <img
+                          src={att.url}
+                          alt={att.name}
+                          onClick={() => setPreviewImage(att.url)}
+                          className="w-8 h-8 rounded object-cover border border-slate-300 dark:border-white/10 cursor-pointer shrink-0 hover:scale-105 transition-transform"
+                          title="Click to preview full size"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded bg-cyan-100 dark:bg-cyan-950 flex items-center justify-center text-cyan-600 shrink-0">
+                          <Paperclip className="w-4 h-4" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-bold text-slate-900 dark:text-white truncate" title={att.name}>
+                          {att.name}
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-mono">
+                          {(att.size / 1024).toFixed(1)} KB
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {att.type.startsWith('image/') && (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewImage(att.url)}
+                          className="p-1 rounded text-slate-500 hover:text-cyan-600 cursor-pointer"
+                          title="Preview image"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                        className="p-1 rounded text-slate-500 hover:text-rose-600 cursor-pointer"
+                        title="Remove attachment"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Location / Desk No (Mandatory Field as in Asset & Inventory) */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Location / Desk No *</span>
+                </span>
+                <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Mandatory</span>
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Floor 2 - Desk 14-B / Sales Bay 4"
+                value={locationDesk}
+                onChange={(e) => {
+                  setLocationDesk(e.target.value);
+                  if (locationDeskError) setLocationDeskError(null);
+                }}
+                className={`w-full px-3 py-1.5 text-xs font-medium neu-input bg-slate-50 dark:bg-slate-900 border rounded-lg text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500 ${
+                  locationDeskError ? 'border-rose-500 ring-1 ring-rose-500' : 'border-slate-300 dark:border-white/10'
+                }`}
+              />
+              {locationDeskError && (
+                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 mt-1">
+                  {locationDeskError}
+                </p>
+              )}
+            </div>
+
+            {/* Associated IT Asset */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Associated IT Asset (Optional)</label>
+              <select
+                value={selectedAssetId}
+                onChange={(e) => setSelectedAssetId(e.target.value)}
+                className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+              >
+                <option value="">None / Not Applicable</option>
+                {assets.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.id} - {a.name} ({a.model})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Dynamic Custom Fields Section with Scrollable Container so fields never overflow */}
@@ -508,6 +756,29 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Attachment Image Full Size Preview Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] p-2 bg-slate-900 rounded-2xl border border-white/20 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/60 text-white hover:bg-black/90 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <img
+              src={previewImage}
+              alt="Attachment preview"
+              className="max-h-[85vh] max-w-full rounded-xl object-contain mx-auto"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

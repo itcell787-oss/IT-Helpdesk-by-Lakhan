@@ -18,8 +18,17 @@ import {
   ExternalLink,
   Laptop,
   Trash2,
+  Paperclip,
+  Eye,
+  Download,
+  X,
+  Image as ImageIcon,
+  Printer,
+  CheckCheck,
+  MapPin,
 } from 'lucide-react';
-import { Ticket, TicketComment, TaskItem, WorkLog, AuditLog, User as UserType } from '../types';
+import { Ticket, TicketComment, TaskItem, WorkLog, AuditLog, User as UserType, formatUserBadge } from '../types';
+import { SlaCountdownBadge } from './SlaCountdownBadge';
 
 interface TicketDetailViewProps {
   ticket: Ticket;
@@ -31,7 +40,7 @@ interface TicketDetailViewProps {
   currentUser: UserType;
   onBack: () => void;
   onUpdateTicket: (id: string, updates: Partial<Ticket>) => void;
-  onAddComment: (ticketId: string, content: string, isInternal: boolean) => void;
+  onAddComment: (ticketId: string, content: string, isInternal: boolean, attachments?: any[]) => void;
   onAddTask: (ticketId: string, title: string) => void;
   onToggleTask: (ticketId: string, taskId: string, completed: boolean) => void;
   onAddWorkLog: (ticketId: string, minutes: number, notes: string, billable: boolean) => void;
@@ -65,16 +74,134 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
   const [resolutionSummary, setResolutionSummary] = useState(ticket.resolutionSummary || '');
   const [showResolveModal, setShowResolveModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [commentAttachments, setCommentAttachments] = useState<Array<{ id: string; name: string; size: number; type: string; url: string; }>>([]);
+  const [previewModalImg, setPreviewModalImg] = useState<{ url: string; name: string } | null>(null);
+
+  const matchedRequester = users.find((u) => u.email === ticket.requesterEmail || u.id === ticket.requesterId);
+  const requesterEmpCode = ticket.requesterEmployeeCode || matchedRequester?.employeeCode || (ticket.requesterName?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1001');
+
+  // Handle direct snip paste (Ctrl+V) into comment box with 4 attachments & 2 MB total limit
+  const handleCommentPaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.indexOf('image') !== -1) {
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        const currentTotal = commentAttachments.reduce((acc, a) => acc + (a.size || 0), 0);
+        if (commentAttachments.length >= 4) {
+          alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+          return;
+        }
+        if (currentTotal + file.size > 2 * 1024 * 1024) {
+          alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (Current: ${(currentTotal / 1024 / 1024).toFixed(2)} MB)`);
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (uploadEvent) => {
+          const dataUrl = uploadEvent.target?.result as string;
+          const newAttachment = {
+            id: `att-snip-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            name: `snip-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.png`,
+            size: file.size,
+            type: file.type || 'image/png',
+            url: dataUrl,
+          };
+          setCommentAttachments((prev) => {
+            if (prev.length >= 4) return prev;
+            return [...prev, newAttachment];
+          });
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  };
+
+  const handleCommentFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    let currentTotal = commentAttachments.reduce((acc, a) => acc + (a.size || 0), 0);
+    let count = commentAttachments.length;
+    const acceptedFiles: File[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (count >= 4) {
+        alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+        break;
+      }
+      if (currentTotal + file.size > 2 * 1024 * 1024) {
+        alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (${file.name} would exceed limit)`);
+        break;
+      }
+      currentTotal += file.size;
+      count++;
+      acceptedFiles.push(file);
+    }
+
+    acceptedFiles.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        const newAtt = {
+          id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          name: file.name,
+          size: file.size,
+          type: file.type || 'application/octet-stream',
+          url: dataUrl,
+        };
+        setCommentAttachments((prev) => (prev.length < 4 ? [...prev, newAtt] : prev));
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const handleRemoveCommentAttachment = (id: string) => {
+    setCommentAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
 
   // Strict Rule: Technician & basic users can only manage tickets, NO deletion of tickets
   const canDelete = currentUser.role === 'superadmin' || currentUser.role === 'admin';
 
+  // Business Rule: Requesters & Auditors cannot be assigned tickets.
+  // Only technicians, managers, admins, and superadmins are assignable.
+  const assignableTechnicians = React.useMemo(() => {
+    return users.filter((u) => u.role === 'technician' || u.role === 'manager' || u.role === 'admin' || u.role === 'superadmin');
+  }, [users]);
+
+  // Check if current assignee is invalidly a requester
+  const isCurrentAssigneeInvalid = React.useMemo(() => {
+    if (ticket.assignedTechnicianId) {
+      const assignedUser = users.find((u) => u.id === ticket.assignedTechnicianId);
+      if (assignedUser && (assignedUser.role === 'requester' || assignedUser.role === 'auditor')) return true;
+    }
+    if (ticket.assignedTechnicianName) {
+      const assignedByName = users.find((u) => u.name.toLowerCase() === ticket.assignedTechnicianName?.toLowerCase());
+      if (assignedByName && (assignedByName.role === 'requester' || assignedByName.role === 'auditor')) return true;
+    }
+    return false;
+  }, [ticket.assignedTechnicianId, ticket.assignedTechnicianName, users]);
+
+  // If a requester was somehow previously assigned, automatically fix/unassign it
+  React.useEffect(() => {
+    if (isCurrentAssigneeInvalid && onUpdateTicket) {
+      onUpdateTicket(ticket.id, { assignedTechnicianId: undefined, assignedTechnicianName: undefined });
+    }
+  }, [isCurrentAssigneeInvalid, ticket.id, onUpdateTicket]);
+
   // Handle comment submit
   const handleSendComment = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!commentText.trim()) return;
-    onAddComment(ticket.id, commentText, isInternalNote);
+    if (!commentText.trim() && commentAttachments.length === 0) return;
+    onAddComment(ticket.id, commentText, isInternalNote, commentAttachments);
     setCommentText('');
+    setCommentAttachments([]);
   };
 
   // Handle task add
@@ -183,6 +310,16 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                 <Clock className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
                 Reported: {new Date(ticket.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at {new Date(ticket.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
+              <span className="text-slate-400">·</span>
+              <SlaCountdownBadge
+                targetDeadline={ticket.slaResolutionDeadline || ticket.dueDate || ticket.slaFirstResponseDeadline}
+                slaStatus={ticket.slaStatus}
+                isResolved={ticket.status === 'resolved' || ticket.status === 'closed'}
+                createdAt={ticket.createdAt}
+                priority={ticket.priority}
+                showLivePulse={ticket.status !== 'resolved' && ticket.status !== 'closed'}
+                size="md"
+              />
             </div>
             <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight mt-1">{ticket.subject}</h1>
           </div>
@@ -212,6 +349,15 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
             <Clock className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" /> Log Time ({ticket.actualMinutesSpent}m)
           </button>
 
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="neu-btn flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 rounded-lg cursor-pointer whitespace-nowrap hover:bg-slate-100 dark:hover:bg-white/5 shadow-xs"
+            title="Print ticket audit report with attachments & comments"
+          >
+            <Printer className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" /> Print Ticket
+          </button>
+
           {canDelete && onDeleteTicket && (
             <button
               onClick={() => setShowDeleteModal(true)}
@@ -224,19 +370,47 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
         </div>
       </div>
 
+      {/* Print-Only Header for Full Ticket Report */}
+      <div className="hidden print:block mb-4 p-4 border-b-2 border-slate-900 text-slate-900 space-y-2">
+        <div className="flex justify-between items-start">
+          <div>
+            <div className="text-[10px] font-mono font-bold text-cyan-800 uppercase tracking-wider">IT Service Desk Support Record</div>
+            <h1 className="text-xl font-bold">{ticket.id}: {ticket.subject}</h1>
+          </div>
+          <div className="text-right text-xs">
+            <div className="font-bold">Status: {ticket.status.toUpperCase()}</div>
+            <div className="font-semibold text-slate-700">Priority: {ticket.priority.toUpperCase()}</div>
+          </div>
+        </div>
+        <div className="text-xs text-slate-800 pt-2 border-t border-slate-200 flex flex-wrap justify-between gap-2">
+          <span><strong>Requester:</strong> [{requesterEmpCode}]{ticket.requesterName} &lt;{ticket.requesterEmail}&gt;</span>
+          <span><strong>Location / Desk:</strong> {ticket.locationDesk || 'Desk #14-B'}</span>
+          <span><strong>Category:</strong> {ticket.category}</span>
+          <span><strong>Created:</strong> {new Date(ticket.createdAt).toLocaleString()}</span>
+        </div>
+      </div>
+
       {/* Main Two-Column Detail View */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column (2 cols): Conversation Feed, Description, Tasks */}
         <div className="lg:col-span-2 space-y-6">
           {/* Ticket Description Box */}
           <div className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10 text-xs text-slate-500 dark:text-slate-400">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10 text-xs text-slate-500 dark:text-slate-400 flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <div className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center font-bold text-white text-[10px]">
                   {ticket.requesterName.charAt(0)}
                 </div>
-                <span className="font-bold text-slate-900 dark:text-slate-200">{ticket.requesterName}</span>
-                <span className="text-slate-600 dark:text-slate-400">({ticket.requesterEmail})</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">
+                  [{requesterEmpCode}]{ticket.requesterName}
+                </span>
+                <span className="text-slate-600 dark:text-slate-400 font-mono text-[11px]">({ticket.requesterEmail})</span>
+                {ticket.locationDesk && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/60 px-2 py-0.5 rounded-full border border-cyan-200 dark:border-cyan-800/40">
+                    <MapPin className="w-3 h-3" />
+                    <span>{ticket.locationDesk}</span>
+                  </span>
+                )}
               </div>
               <span className="font-mono text-[11px] tabular-nums font-semibold text-slate-700 dark:text-slate-300">
                 {new Date(ticket.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at {new Date(ticket.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -246,6 +420,60 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
             <div className="mt-3 text-sm text-slate-900 dark:text-slate-100 whitespace-pre-wrap leading-relaxed font-normal">
               {ticket.description}
             </div>
+
+            {/* Ticket Attachments & Direct Pasted Snips */}
+            {ticket.attachments && ticket.attachments.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-slate-200 dark:border-white/10 space-y-2 print-break-inside-avoid">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+                  <Paperclip className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Attachments &amp; Pasted Snips ({ticket.attachments.length})</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 print:grid-cols-2">
+                  {ticket.attachments.map((att) => {
+                    const isImg = att.type?.startsWith('image/') || att.url?.startsWith('data:image/');
+                    return (
+                      <div
+                        key={att.id}
+                        className="p-2 rounded-xl neu-card border border-slate-200/80 dark:border-white/10 space-y-1.5 group hover:border-cyan-500/50 transition-all print-break-inside-avoid"
+                      >
+                        {isImg ? (
+                          <div
+                            onClick={() => setPreviewModalImg({ url: att.url, name: att.name })}
+                            className="w-full h-24 print:h-auto print:max-h-72 rounded-lg bg-slate-900/10 dark:bg-slate-950 overflow-hidden relative cursor-pointer flex items-center justify-center group-hover:opacity-90"
+                          >
+                            <img src={att.url} alt={att.name} className="w-full h-full print:w-auto print:max-h-72 object-cover print:object-contain select-none print-attachment-img" />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-xs font-bold gap-1 print:hidden">
+                              <Eye className="w-4 h-4" /> View Snip
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-full h-24 rounded-lg bg-slate-100 dark:bg-slate-900 flex flex-col items-center justify-center p-2 text-slate-500">
+                            <FileText className="w-6 h-6 text-cyan-600" />
+                            <span className="text-[10px] font-mono mt-1 uppercase">{att.type?.split('/')[1] || 'FILE'}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between text-[11px] gap-1">
+                          <span className="font-semibold text-slate-800 dark:text-slate-200 truncate" title={att.name}>
+                            {att.name}
+                          </span>
+                          <a
+                            href={att.url}
+                            download={att.name}
+                            className="p-1 text-slate-400 hover:text-cyan-600 transition-colors"
+                            title="Download attachment"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                        <div className="text-[10px] font-mono text-slate-500">
+                          {Math.round(att.size / 1024)} KB
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Custom Field Values Display */}
             {Object.keys(ticket.customFields || {}).length > 0 && (
@@ -338,7 +566,13 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                 >
                   <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-white/5 text-xs">
                     <div className="flex items-center gap-2">
-                      <div className="font-bold text-slate-950 dark:text-white">{cmt.authorName}</div>
+                      <div className="font-bold text-slate-950 dark:text-white">
+                        {(() => {
+                          const author = users.find(u => u.id === cmt.authorId || u.name === cmt.authorName);
+                          const empCode = author?.employeeCode || (cmt.authorName?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010');
+                          return `[${empCode}]${cmt.authorName}`;
+                        })()}
+                      </div>
                       <span className="text-slate-400">·</span>
                       <span className="font-mono text-[10px] text-slate-600 dark:text-slate-400 uppercase font-bold">{cmt.authorRole}</span>
 
@@ -356,6 +590,54 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                   <div className="mt-3 text-xs text-slate-900 dark:text-slate-100 whitespace-pre-wrap leading-relaxed font-normal">
                     {cmt.content}
                   </div>
+
+                  {/* Comment Attachments & Snips */}
+                  {cmt.attachments && cmt.attachments.length > 0 && (
+                    <div className="mt-3 pt-2.5 border-t border-slate-200/60 dark:border-white/5 space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                        <Paperclip className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
+                        <span>Attached Snips &amp; Files ({cmt.attachments.length})</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {cmt.attachments.map((att: any) => {
+                          const isImg = att.type?.startsWith('image/') || att.url?.startsWith('data:image/');
+                          return (
+                            <div
+                              key={att.id}
+                              className="p-1.5 rounded-lg neu-card border border-slate-200 dark:border-white/10 flex items-center gap-2 group hover:border-cyan-500/40 print-break-inside-avoid"
+                            >
+                              {isImg ? (
+                                <div
+                                  onClick={() => setPreviewModalImg({ url: att.url, name: att.name })}
+                                  className="w-12 h-12 print:w-auto print:h-auto print:max-h-60 rounded bg-slate-900/10 dark:bg-slate-950 overflow-hidden cursor-pointer relative shrink-0"
+                                >
+                                  <img src={att.url} alt={att.name} className="w-full h-full print:w-auto print:max-h-60 object-cover print:object-contain select-none print-attachment-img" />
+                                </div>
+                              ) : (
+                                <FileText className="w-5 h-5 text-cyan-600 shrink-0" />
+                              )}
+                              <div className="text-[11px] max-w-[140px]">
+                                <div className="font-semibold text-slate-800 dark:text-slate-200 truncate" title={att.name}>
+                                  {att.name}
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-mono">
+                                  {Math.round(att.size / 1024)} KB
+                                </div>
+                              </div>
+                              <a
+                                href={att.url}
+                                download={att.name}
+                                className="p-1 text-slate-400 hover:text-cyan-600"
+                                title="Download"
+                              >
+                                <Download className="w-3 h-3" />
+                              </a>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -417,22 +699,77 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               )}
 
               <form onSubmit={handleSendComment} className="space-y-3">
-                <textarea
-                  rows={4}
-                  placeholder={
-                    isInternalNote
-                      ? 'Type internal troubleshooting notes, escalation instructions, or diagnostic findings...'
-                      : 'Type response to user (this will trigger an outgoing email notification)...'
-                  }
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  className="w-full p-3 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
-                />
-
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
-                    Supports plain text &amp; sanitized markdown.
+                <div>
+                  <textarea
+                    rows={4}
+                    placeholder={
+                      isInternalNote
+                        ? 'Type internal troubleshooting notes, escalation instructions, or diagnostic findings... (Direct snip paste supported: press Ctrl+V to attach screenshots)'
+                        : 'Type response to user (this will trigger an outgoing email notification)... (Direct snip paste supported: press Ctrl+V to attach screenshots)'
+                    }
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    onPaste={handleCommentPaste}
+                    className="w-full p-3 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
+                  />
+                  <div className="flex items-center justify-between pt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    <span className="flex items-center gap-1 font-semibold text-cyan-600 dark:text-cyan-400">
+                      <Paperclip className="w-3 h-3" />
+                      Press <kbd className="px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-mono text-[10px] font-bold">Ctrl+V</kbd> to paste snip / screenshot
+                    </span>
+                    <span>Supports plain text &amp; sanitized markdown</span>
                   </div>
+                </div>
+
+                {/* Staged Comment Attachments */}
+                {commentAttachments.length > 0 && (
+                  <div className="p-3 rounded-xl bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-2">
+                    <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                      Attachments to include ({commentAttachments.length}):
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {commentAttachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-white/10 text-xs shadow-xs"
+                        >
+                          {att.type.startsWith('image/') ? (
+                            <ImageIcon className="w-3.5 h-3.5 text-cyan-600" />
+                          ) : (
+                            <FileText className="w-3.5 h-3.5 text-slate-500" />
+                          )}
+                          <span className="max-w-[150px] truncate font-semibold text-slate-800 dark:text-slate-200">
+                            {att.name}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-500">
+                            ({Math.round(att.size / 1024)} KB)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCommentAttachment(att.id)}
+                            className="p-0.5 text-rose-500 hover:text-rose-700"
+                            title="Remove attachment"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-2">
+                  <label className="cursor-pointer neu-btn px-3 py-1.5 text-xs font-semibold rounded-xl flex items-center gap-1.5 text-slate-700 dark:text-slate-300 hover:text-cyan-700">
+                    <Paperclip className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                    <span>Attach Files / Snips</span>
+                    <input
+                      type="file"
+                      multiple
+                      onChange={handleCommentFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+
                   <button
                     type="submit"
                     className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer ${
@@ -472,26 +809,32 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               </span>
             </div>
 
-            <div className="p-3 rounded-lg bg-slate-100 dark:bg-slate-900/80 border border-slate-200 dark:border-white/5 space-y-2">
+            <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-900/80 border border-slate-200 dark:border-white/5 space-y-3">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-700 dark:text-slate-400 font-semibold">Target Resolution</span>
-                <span className={`font-mono font-bold tabular-nums ${isOverdue ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-slate-200'}`}>
-                  {isOverdue ? `${Math.abs(minutesRemaining)}m overdue` : `${minutesRemaining}m remaining`}
-                </span>
+                <span className="text-slate-700 dark:text-slate-400 font-bold">Live Target Timer</span>
+                <SlaCountdownBadge
+                  targetDeadline={ticket.slaResolutionDeadline || ticket.dueDate || ticket.slaFirstResponseDeadline}
+                  slaStatus={ticket.slaStatus}
+                  isResolved={ticket.status === 'resolved' || ticket.status === 'closed'}
+                  createdAt={ticket.createdAt}
+                  priority={ticket.priority}
+                  showLivePulse={ticket.status !== 'resolved' && ticket.status !== 'closed'}
+                  size="md"
+                />
               </div>
 
               {/* Progress bar */}
-              <div className="w-full bg-slate-200 dark:bg-slate-950 h-1.5 rounded-full overflow-hidden">
+              <div className="w-full bg-slate-200 dark:bg-slate-950 h-2 rounded-full overflow-hidden">
                 <div
-                  className={`h-full ${
-                    isOverdue ? 'bg-rose-500 w-full' : ticket.slaStatus === 'warning' ? 'bg-amber-400 w-3/4' : 'bg-cyan-500 w-1/3'
+                  className={`h-full transition-all duration-500 ${
+                    isOverdue ? 'bg-rose-500 w-full animate-pulse' : ticket.slaStatus === 'warning' ? 'bg-amber-400 w-3/4' : 'bg-emerald-500 w-1/3'
                   }`}
                 />
               </div>
 
               <div className="text-[10px] text-slate-600 dark:text-slate-400 font-medium flex items-center justify-between pt-1">
                 <span>Created: {new Date(ticket.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-                <span>Deadline: {new Date(ticket.slaResolutionDeadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>Deadline: {new Date(ticket.slaResolutionDeadline || ticket.dueDate || '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
             </div>
 
@@ -548,13 +891,30 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               Ticket Properties
             </h3>
 
-            {/* Status */}
+            {/* Status with Direct Resolve & Close Action Buttons */}
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">Status</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300">Status</label>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
+                  ticket.status === 'resolved' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800/40' :
+                  ticket.status === 'closed' ? 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700' :
+                  ticket.status === 'in_progress' ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300 border-cyan-300 dark:border-cyan-800/40' :
+                  'bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                }`}>
+                  {ticket.status.replace(/_/g, ' ')}
+                </span>
+              </div>
               <select
                 value={ticket.status}
-                onChange={(e) => onUpdateTicket(ticket.id, { status: e.target.value as any })}
-                className="w-full px-2.5 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500"
+                onChange={(e) => {
+                  const val = e.target.value as any;
+                  if (val === 'resolved') {
+                    setShowResolveModal(true);
+                  } else {
+                    onUpdateTicket(ticket.id, { status: val });
+                  }
+                }}
+                className="w-full px-2.5 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 mb-2 cursor-pointer"
               >
                 <option value="new">New</option>
                 <option value="open">Open</option>
@@ -565,6 +925,68 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                 <option value="resolved">Resolved</option>
                 <option value="closed">Closed</option>
               </select>
+
+              {/* Quick Resolve & Close Action Buttons in Status Field */}
+              <div className="grid grid-cols-2 gap-1.5">
+                {ticket.status !== 'resolved' ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowResolveModal(true)}
+                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs cursor-pointer transition-colors"
+                    title="Mark ticket as resolved with resolution summary"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Resolve</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onUpdateTicket(ticket.id, { status: 'in_progress' })}
+                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white cursor-pointer transition-colors"
+                    title="Reopen ticket to In Progress"
+                  >
+                    <span>Reopen</span>
+                  </button>
+                )}
+
+                {ticket.status !== 'closed' ? (
+                  <button
+                    type="button"
+                    onClick={() => onUpdateTicket(ticket.id, { status: 'closed' })}
+                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white shadow-xs cursor-pointer transition-colors"
+                    title="Permanently close ticket"
+                  >
+                    <CheckCheck className="w-3.5 h-3.5" />
+                    <span>Close</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onUpdateTicket(ticket.id, { status: 'open' })}
+                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg neu-btn text-slate-800 dark:text-slate-200 cursor-pointer"
+                    title="Reopen closed ticket"
+                  >
+                    <span>Reopen</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Location / Desk No (Mandatory Field as in Asset & Inventory) */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Location / Desk No *</span>
+                </label>
+                <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Mandatory</span>
+              </div>
+              <div className="p-2.5 rounded-lg neu-inset bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-slate-100 flex items-center justify-between">
+                <span className="font-mono">{ticket.locationDesk || 'Desk #14-B (Main Floor)'}</span>
+                <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300">
+                  Assigned
+                </span>
+              </div>
             </div>
 
             {/* Priority */}
@@ -585,19 +1007,52 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
 
             {/* Assignee Technician */}
             <div>
-              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">Assigned Technician</label>
-              <select
-                value={ticket.assignedTechnicianId || ''}
-                onChange={(e) => onUpdateTicket(ticket.id, { assignedTechnicianId: e.target.value || undefined })}
-                className="w-full px-2.5 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500"
-              >
-                <option value="">Unassigned</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} ({u.role})
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300">Assigned Technician</label>
+                {currentUser.role !== 'requester' && (
+                  <span className="text-[10px] text-cyan-700 dark:text-cyan-400 font-semibold">IT Staff Only</span>
+                )}
+              </div>
+              {currentUser.role === 'requester' ? (
+                <div className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                  <span className="font-bold">
+                    {(() => {
+                      if (!ticket.assignedTechnicianId && !ticket.assignedTechnicianName) return 'Not assigned yet';
+                      const tech = users.find(u => u.id === ticket.assignedTechnicianId || u.name === ticket.assignedTechnicianName);
+                      if (tech && tech.role === 'requester') return 'Not assigned yet';
+                      const name = ticket.assignedTechnicianName || tech?.name || 'Not assigned yet';
+                      const code = tech?.employeeCode || 'CBPL1010';
+                      return `[${code}]${name}`;
+                    })()}
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-normal">IT Support</span>
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={isCurrentAssigneeInvalid ? '' : (ticket.assignedTechnicianId || '')}
+                    onChange={(e) => {
+                      const selId = e.target.value;
+                      const selTech = users.find((u) => u.id === selId);
+                      onUpdateTicket(ticket.id, {
+                        assignedTechnicianId: selId || undefined,
+                        assignedTechnicianName: selTech?.name || undefined,
+                      });
+                    }}
+                    className="w-full px-2.5 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 cursor-pointer"
+                  >
+                    <option value="">Unassigned</option>
+                    {assignableTechnicians.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        [{u.employeeCode || 'CBPL1010'}]{u.name} ({u.role.toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-medium">
+                    Requesters are excluded from ticket assignment.
+                  </p>
+                </>
+              )}
             </div>
 
             {/* Related Assets */}
@@ -632,28 +1087,28 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
 
       {/* Modal: Resolve with mandatory fields */}
       {showResolveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-md glass-modal p-6 rounded-2xl border border-white/15 space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md neu-modal p-6 rounded-2xl border border-slate-200 dark:border-white/15 space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
               Resolve Ticket &amp; Closure Validation
             </h3>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
               Please document the solution and classification code before closing.
             </p>
 
             {errorMessage && (
-              <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs">
+              <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-500/30 text-rose-800 dark:text-rose-300 text-xs font-semibold">
                 {errorMessage}
               </div>
             )}
 
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">Resolution Code *</label>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Resolution Code *</label>
               <select
                 value={resolutionCode}
                 onChange={(e) => setResolutionCode(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-slate-950 border border-white/10 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 text-xs neu-select rounded-lg font-semibold"
               >
                 <option value="solved">Solved (Standard Fix)</option>
                 <option value="workaround">Workaround Provided</option>
@@ -664,13 +1119,13 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">Resolution Summary &amp; Root Cause *</label>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Resolution Summary &amp; Root Cause *</label>
               <textarea
                 rows={3}
                 placeholder="Describe what was fixed so future technicians can reference this..."
                 value={resolutionSummary}
                 onChange={(e) => setResolutionSummary(e.target.value)}
-                className="w-full p-2.5 text-xs bg-slate-950 border border-white/10 rounded-lg text-slate-100 focus:outline-none focus:border-cyan-500"
+                className="w-full p-2.5 text-xs neu-input rounded-lg font-medium"
               />
             </div>
 
@@ -678,14 +1133,14 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               <button
                 type="button"
                 onClick={() => setShowResolveModal(false)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                className="neu-btn px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 rounded-lg cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleConfirmResolve}
-                className="px-4 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-sm"
+                className="neu-btn-primary px-4 py-1.5 text-xs font-bold rounded-lg cursor-pointer"
               >
                 Confirm Resolution
               </button>
@@ -696,33 +1151,33 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
 
       {/* Modal: Log Work Time */}
       {showWorkLogModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-sm glass-modal p-6 rounded-2xl border border-white/15 space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Clock className="w-5 h-5 text-cyan-400" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-sm neu-modal p-6 rounded-2xl border border-slate-200 dark:border-white/15 space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Clock className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
               Log Labor Work Time
             </h3>
 
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">Minutes Spent</label>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Minutes Spent</label>
               <input
                 type="number"
                 min={5}
                 step={5}
                 value={workLogMinutes}
                 onChange={(e) => setWorkLogMinutes(Number(e.target.value))}
-                className="w-full px-3 py-2 text-xs bg-slate-950 border border-white/10 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 text-xs neu-input rounded-lg font-mono font-bold"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">Work Description</label>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Work Description</label>
               <input
                 type="text"
                 placeholder="e.g. Diagnosed packet capture, replaced transceiver"
                 value={workLogNotes}
                 onChange={(e) => setWorkLogNotes(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-slate-950 border border-white/10 rounded-lg text-slate-100"
+                className="w-full px-3 py-2 text-xs neu-input rounded-lg font-medium"
               />
             </div>
 
@@ -732,9 +1187,9 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                 id="billableCheck"
                 checked={workLogBillable}
                 onChange={(e) => setWorkLogBillable(e.target.checked)}
-                className="rounded border-slate-700 bg-slate-950 text-cyan-500"
+                className="rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-cyan-600 cursor-pointer"
               />
-              <label htmlFor="billableCheck" className="text-xs text-slate-300 cursor-pointer">
+              <label htmlFor="billableCheck" className="text-xs text-slate-700 dark:text-slate-300 font-semibold cursor-pointer">
                 Billable to client / department cost center
               </label>
             </div>
@@ -743,7 +1198,7 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               <button
                 type="button"
                 onClick={() => setShowWorkLogModal(false)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                className="neu-btn px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 rounded-lg cursor-pointer"
               >
                 Cancel
               </button>
@@ -753,10 +1208,43 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                   onAddWorkLog(ticket.id, workLogMinutes, workLogNotes, workLogBillable);
                   setShowWorkLogModal(false);
                 }}
-                className="px-4 py-1.5 text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-500 rounded-lg shadow-sm"
+                className="neu-btn-primary px-4 py-1.5 text-xs font-bold rounded-lg cursor-pointer"
               >
                 Record Time
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Lightbox Modal: Image & Snip Full Preview */}
+      {previewModalImg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in">
+          <div className="relative max-w-4xl w-full max-h-[90vh] flex flex-col items-center">
+            <div className="w-full flex items-center justify-between pb-2 text-white">
+              <span className="text-xs font-mono font-bold truncate max-w-md">{previewModalImg.name}</span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewModalImg.url}
+                  download={previewModalImg.name}
+                  className="px-3 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewModalImg(null)}
+                  className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[80vh] overflow-auto rounded-2xl border border-white/20 shadow-2xl p-2 bg-slate-950 flex items-center justify-center">
+              <img
+                src={previewModalImg.url}
+                alt={previewModalImg.name}
+                className="max-h-[76vh] w-auto max-w-full object-contain rounded-xl select-none"
+              />
             </div>
           </div>
         </div>

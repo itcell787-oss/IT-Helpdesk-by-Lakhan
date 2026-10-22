@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { ShieldCheck, ShieldAlert } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
@@ -15,6 +16,7 @@ import { SettingsView } from './components/SettingsView';
 import { SuperadminView } from './components/SuperadminView';
 import { NewTicketModal } from './components/NewTicketModal';
 import { CommandPalette } from './components/CommandPalette';
+import { AuthLoginModal } from './components/AuthLoginModal';
 import { api } from './services/api';
 import {
   Ticket,
@@ -91,9 +93,10 @@ export default function App() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [metrics, setMetrics] = useState<any>(null);
   const [superadminStats, setSuperadminStats] = useState<any>(null);
+  const [systemSettings, setSystemSettings] = useState<any>(null);
 
-  // Active View Navigation
-  const [activeView, setActiveView] = useState<string>('dashboard');
+  // Active View Navigation - Default to end-user portal dashboard
+  const [activeView, setActiveView] = useState<string>('portal');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketDetailData, setTicketDetailData] = useState<{
     ticket: Ticket;
@@ -103,10 +106,12 @@ export default function App() {
     auditLogs: AuditLog[];
   } | null>(null);
 
-  // UI state
+  // UI state & Separate Login Modal state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [loginModalPortalType, setLoginModalPortalType] = useState<'user' | 'admin'>('user');
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -115,10 +120,12 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Initial load
-  const loadData = useCallback(async () => {
+  // Initial load & silent background synchronization
+  const loadData = useCallback(async (isInitial = false) => {
     try {
-      setLoading(true);
+      if (isInitial) {
+        setLoading(true);
+      }
       const session = await api.getSession();
       setCurrentUser(session.user);
       setOrganization(session.organization);
@@ -140,22 +147,24 @@ export default function App() {
         saStatsData,
         adminMailboxesData,
         defaultGatewayData,
+        settingsData,
       ] = await Promise.all([
-        api.getTickets(),
-        api.getAssets(),
-        api.getKnowledgeArticles(),
-        api.getServiceCatalog(),
-        api.getApprovals(),
-        api.getCustomFields(),
-        api.getSlaPolicies(),
-        api.getAutomationRules(),
-        api.getEmailChannels(),
-        api.getReportsMetrics(),
-        api.getAuditLogs(),
-        api.getOrganizations(),
-        api.getSuperadminStats(),
-        api.getAdminMailboxes(),
-        api.getDefaultGatewayConfig(),
+        api.getTickets().catch(() => []),
+        api.getAssets().catch(() => []),
+        api.getKnowledgeArticles().catch(() => []),
+        api.getServiceCatalog().catch(() => []),
+        api.getApprovals().catch(() => []),
+        api.getCustomFields().catch(() => []),
+        api.getSlaPolicies().catch(() => []),
+        api.getAutomationRules().catch(() => []),
+        api.getEmailChannels().catch(() => []),
+        api.getReportsMetrics().catch(() => null),
+        api.getAuditLogs().catch(() => []),
+        api.getOrganizations().catch(() => []),
+        api.getSuperadminStats().catch(() => null),
+        api.getAdminMailboxes().catch(() => []),
+        api.getDefaultGatewayConfig().catch(() => null),
+        api.getSystemSettings().catch(() => null),
       ]);
 
       setTickets(ticketsData);
@@ -175,15 +184,20 @@ export default function App() {
       if (defaultGatewayData) {
         setDefaultGateway(defaultGatewayData);
       }
+      if (settingsData) {
+        setSystemSettings(settingsData);
+      }
     } catch (err) {
-      console.error('Error loading initial data:', err);
+      console.error('Error loading data:', err);
     } finally {
-      setLoading(false);
+      if (isInitial) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    loadData();
+    loadData(true);
   }, [loadData]);
 
   // Load ticket details when selected
@@ -212,6 +226,20 @@ export default function App() {
       loadData();
     } catch (err: any) {
       console.error(err);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+      setCurrentUser(null);
+      setActiveView('portal');
+      showToast('Signed out. You are now browsing as Guest.');
+      loadData();
+    } catch (err: any) {
+      console.error('Logout error:', err);
+      setCurrentUser(null);
+      setActiveView('portal');
     }
   };
 
@@ -262,9 +290,9 @@ export default function App() {
     }
   };
 
-  const handleAddComment = async (ticketId: string, content: string, isInternal: boolean) => {
+  const handleAddComment = async (ticketId: string, content: string, isInternal: boolean, attachments: any[] = []) => {
     try {
-      const comment = await api.addComment(ticketId, content, isInternal);
+      const comment = await api.addComment(ticketId, content, isInternal, attachments);
       if (ticketDetailData && ticketDetailData.ticket.id === ticketId) {
         setTicketDetailData({
           ...ticketDetailData,
@@ -358,6 +386,40 @@ export default function App() {
     }
   };
 
+  const handleUpdateAsset = async (assetId: string, data: Partial<Asset>) => {
+    try {
+      const updated = await api.updateAsset(assetId, data);
+      setAssets((prev) => prev.map((a) => (a.id === assetId ? updated : a)));
+      showToast(`Asset [${assetId}] updated.`);
+      loadData();
+      return updated;
+    } catch (err: any) {
+      alert(err.message || 'Failed updating asset');
+    }
+  };
+
+  const handleBulkDeleteAssets = async (assetIds: string[]) => {
+    try {
+      const res = await api.bulkDeleteAssets(assetIds);
+      setAssets((prev) => prev.filter((a) => !assetIds.includes(a.id)));
+      showToast(`Permanently deleted ${res.deletedCount} assets.`);
+      loadData();
+    } catch (err: any) {
+      alert(err.message || 'Failed bulk deleting assets');
+    }
+  };
+
+  const handleBulkCreateAssets = async (newAssets: Partial<Asset>[]) => {
+    try {
+      const res = await api.bulkCreateAssets(newAssets);
+      setAssets((prev) => [...res.createdAssets, ...prev]);
+      showToast(`Bulk registered ${res.createdCount} assets!`);
+      loadData();
+    } catch (err: any) {
+      alert(err.message || 'Failed bulk creating assets');
+    }
+  };
+
   const handleCreateOrganization = async (data: Partial<Organization>) => {
     try {
       const created = await api.createOrganization(data);
@@ -427,6 +489,11 @@ export default function App() {
   };
 
   const handleDeleteUser = async (id: string) => {
+    const target = availableUsers.find((u) => u.id === id);
+    if (target?.role === 'superadmin') {
+      alert('Super Admin accounts are permanently protected system identities and cannot be deleted by anyone.');
+      return;
+    }
     try {
       await api.deleteUser(id);
       setAvailableUsers((prev) => prev.filter((u) => u.id !== id));
@@ -623,6 +690,36 @@ export default function App() {
     }
   };
 
+  const handleCreateAutomationRule = async (ruleData: Partial<AutomationRule>) => {
+    try {
+      const created = await api.createAutomationRule(ruleData);
+      setAutomationRules((prev) => [...prev, created]);
+      showToast(`Automation rule "${created.name}" created successfully!`);
+    } catch (err: any) {
+      alert(err.message || 'Failed to create automation rule');
+    }
+  };
+
+  const handleUpdateAutomationRule = async (id: string, updates: Partial<AutomationRule>) => {
+    try {
+      const updated = await api.updateAutomationRule(id, updates);
+      setAutomationRules((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      showToast(`Automation rule "${updated.name}" updated successfully!`);
+    } catch (err: any) {
+      alert(err.message || 'Failed to update automation rule');
+    }
+  };
+
+  const handleDeleteAutomationRule = async (id: string) => {
+    try {
+      await api.deleteAutomationRule(id);
+      setAutomationRules((prev) => prev.filter((r) => r.id !== id));
+      showToast('Automation rule deleted successfully.');
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete automation rule');
+    }
+  };
+
   const handleSimulateInboundEmail = async (from: string, subject: string, body: string) => {
     const res = await api.simulateInboundEmail(from, subject, body);
     showToast(
@@ -644,7 +741,7 @@ export default function App() {
     }
   };
 
-  if (loading || !currentUser || !organization) {
+  if (loading || !organization) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-4">
         <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 animate-pulse flex items-center justify-center">
@@ -658,17 +755,23 @@ export default function App() {
   }
 
   // Calculate ticket counts for sidebar badges
+  const totalOpenTickets = tickets.filter(
+    (t) => t.status !== 'resolved' && t.status !== 'closed' && t.status !== 'cancelled'
+  ).length;
+
   const ticketCounts = {
     all: tickets.length,
-    open: tickets.filter((t) => t.status === 'open' || t.status === 'in_progress').length,
+    open: totalOpenTickets,
     unassigned: tickets.filter((t) => !t.assignedTechnicianId && t.status !== 'resolved' && t.status !== 'closed').length,
     critical: tickets.filter((t) => t.priority === 'critical' && t.status !== 'resolved').length,
     overdue: tickets.filter((t) => t.dueDate && t.dueDate < new Date().toISOString() && t.status !== 'resolved').length,
     pendingApprovals: approvals.filter((a) => a.status === 'pending').length,
   };
 
+  const isStaffLoggedIn = currentUser && currentUser.role !== 'requester';
+
   return (
-    <div className={`min-h-screen ${isDark ? 'dark bg-[#0b1120] text-slate-100' : 'bg-[#f1f5f9] text-slate-900'} flex flex-col font-sans transition-colors`}>
+    <div className={`h-screen max-h-screen overflow-hidden ${isDark ? 'dark bg-[#0b1120] text-slate-100' : 'bg-[#f1f5f9] text-slate-900'} flex flex-col font-sans transition-colors`}>
       {/* Toast Notification Banner */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 glass-modal px-4 py-2.5 rounded-xl border border-cyan-500/50 shadow-2xl flex items-center gap-2 text-xs font-medium text-cyan-200 animate-in fade-in slide-in-from-bottom-2">
@@ -702,12 +805,17 @@ export default function App() {
         isDark={isDark}
         onToggleTheme={toggleTheme}
         onOpenNewTicket={() => setIsNewTicketOpen(true)}
+        onOpenLogin={(type) => {
+          setLoginModalPortalType(type || 'user');
+          setIsLoginModalOpen(true);
+        }}
+        onLogout={handleLogout}
       />
 
-      {/* Main Layout Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar Navigation (Hidden in portal mode or for requesters) */}
-        {activeView !== 'portal' && (
+      {/* Main Layout Area - Static Left Sidebar & Scrollable Main Canvas */}
+      <div className="flex-1 flex overflow-hidden min-h-0 relative">
+        {/* Sidebar Navigation (Only visible for authenticated IT staff outside portal) */}
+        {activeView !== 'portal' && isStaffLoggedIn && (
           <Sidebar
             activeView={activeView}
             onNavigate={(view) => {
@@ -728,12 +836,45 @@ export default function App() {
         )}
 
         {/* Viewport Content Canvas */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 overflow-y-auto h-full min-h-0 p-4 sm:p-6 lg:p-8 custom-scrollbar">
           <div className="max-w-7xl mx-auto">
-            {activeView === 'dashboard' && metrics && (
+            {/* If unauthenticated guest accesses an administrative view, show Admin Login Required guard */}
+            {!currentUser && activeView !== 'portal' && activeView !== 'kb' && activeView !== 'catalog' && (
+              <div className="max-w-md mx-auto my-12 p-8 neu-flat rounded-2xl border border-slate-300 dark:border-white/10 text-center space-y-4">
+                <div className="w-12 h-12 rounded-xl bg-violet-100 dark:bg-violet-950/60 border border-violet-300 dark:border-violet-700/50 flex items-center justify-center mx-auto text-violet-600 dark:text-violet-400">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">Admin Authentication Required</h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                    This administrative view is reserved for authorized IT Administrators, Managers, and Technicians.
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-3 pt-2">
+                  <button
+                    onClick={() => setActiveView('portal')}
+                    className="neu-btn px-4 py-2 text-xs font-semibold rounded-xl cursor-pointer"
+                  >
+                    Back to Portal
+                  </button>
+                  <button
+                    onClick={() => {
+                      setLoginModalPortalType('admin');
+                      setIsLoginModalOpen(true);
+                    }}
+                    className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                  >
+                    Sign In as Admin
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {currentUser && activeView === 'dashboard' && metrics && (
               <DashboardView
                 metrics={metrics}
                 tickets={tickets}
+                users={availableUsers}
                 auditLogs={auditLogs}
                 onSelectTicket={handleSelectTicket}
                 onNavigate={(v) => {
@@ -745,10 +886,11 @@ export default function App() {
               />
             )}
 
-            {activeView === 'tickets' && (
+            {currentUser && activeView === 'tickets' && (
               <TicketListView
                 tickets={tickets}
                 users={availableUsers}
+                organizations={organizations}
                 onSelectTicket={handleSelectTicket}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onBulkUpdate={handleBulkUpdate}
@@ -758,10 +900,11 @@ export default function App() {
               />
             )}
 
-            {activeView === 'tickets-my' && (
+            {currentUser && activeView === 'tickets-my' && (
               <TicketListView
                 tickets={tickets}
                 users={availableUsers}
+                organizations={organizations}
                 onSelectTicket={handleSelectTicket}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onBulkUpdate={handleBulkUpdate}
@@ -771,10 +914,11 @@ export default function App() {
               />
             )}
 
-            {activeView === 'tickets-unassigned' && (
+            {currentUser && activeView === 'tickets-unassigned' && (
               <TicketListView
                 tickets={tickets}
                 users={availableUsers}
+                organizations={organizations}
                 onSelectTicket={handleSelectTicket}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onBulkUpdate={handleBulkUpdate}
@@ -784,10 +928,11 @@ export default function App() {
               />
             )}
 
-            {activeView === 'tickets-critical' && (
+            {currentUser && activeView === 'tickets-critical' && (
               <TicketListView
                 tickets={tickets}
                 users={availableUsers}
+                organizations={organizations}
                 onSelectTicket={handleSelectTicket}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onBulkUpdate={handleBulkUpdate}
@@ -797,7 +942,7 @@ export default function App() {
               />
             )}
 
-            {activeView === 'ticket-detail' && ticketDetailData && (
+            {currentUser && activeView === 'ticket-detail' && ticketDetailData && (
               <TicketDetailView
                 ticket={ticketDetailData.ticket}
                 comments={ticketDetailData.comments}
@@ -826,6 +971,13 @@ export default function App() {
                 knowledgeArticles={knowledgeArticles}
                 serviceCatalog={serviceCatalog}
                 customFields={customFields}
+                organization={organization}
+                organizations={organizations}
+                assets={assets}
+                allowRequesterAssetSelfService={systemSettings?.allowRequesterAssetSelfService ?? organization?.systemSettings?.allowRequesterAssetSelfService ?? true}
+                onCreateAsset={handleCreateAsset}
+                onUpdateAsset={handleUpdateAsset}
+                onDeleteAsset={handleDeleteAsset}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onSelectTicket={handleSelectTicket}
                 onNavigateToCatalog={() => setActiveView('catalog')}
@@ -836,13 +988,35 @@ export default function App() {
               />
             )}
 
-            {activeView === 'assets' && (
+            {currentUser && activeView === 'assets' && (
               <AssetListView
                 assets={assets}
                 users={availableUsers}
                 onCreateAsset={handleCreateAsset}
+                onUpdateAsset={handleUpdateAsset}
                 onDeleteAsset={handleDeleteAsset}
+                onBulkDeleteAssets={handleBulkDeleteAssets}
+                onBulkCreateAssets={handleBulkCreateAssets}
                 currentUserRole={currentUser.role}
+                defaultCurrency={organization?.systemSettings?.defaultCurrency || '₹'}
+                allowRequesterAssetSelfService={systemSettings?.allowRequesterAssetSelfService ?? organization?.systemSettings?.allowRequesterAssetSelfService ?? true}
+                onToggleRequesterAssetSelfService={async () => {
+                  const currentVal = systemSettings?.allowRequesterAssetSelfService ?? organization?.systemSettings?.allowRequesterAssetSelfService ?? true;
+                  const nextVal = !currentVal;
+                  try {
+                    await api.updateSystemSettings({ allowRequesterAssetSelfService: nextVal });
+                    setSystemSettings((prev: any) => ({ ...(prev || {}), allowRequesterAssetSelfService: nextVal }));
+                    if (organization) {
+                      setOrganization((prev: any) => ({
+                        ...prev,
+                        systemSettings: { ...(prev?.systemSettings || {}), allowRequesterAssetSelfService: nextVal },
+                      }));
+                    }
+                    showToast(`Requester Asset Self-Service is now ${nextVal ? 'ENABLED' : 'DISABLED'}`);
+                  } catch (err: any) {
+                    alert(err.message || 'Failed to update asset self-service toggle');
+                  }
+                }}
               />
             )}
 
@@ -868,7 +1042,7 @@ export default function App() {
               />
             )}
 
-            {activeView === 'approvals' && (
+            {currentUser && activeView === 'approvals' && (
               <ApprovalsView
                 approvals={approvals}
                 onDecideApproval={handleDecideApproval}
@@ -876,11 +1050,11 @@ export default function App() {
               />
             )}
 
-            {activeView === 'reports' && metrics && (
-              <ReportsView metrics={metrics} tickets={tickets} />
+            {currentUser && activeView === 'reports' && metrics && (
+              <ReportsView metrics={metrics} tickets={tickets} users={availableUsers} />
             )}
 
-            {activeView === 'email-channels' && (
+            {currentUser && activeView === 'email-channels' && (
               <EmailChannelsView
                 channels={emailChannels}
                 adminMailboxes={adminMailboxes}
@@ -894,9 +1068,10 @@ export default function App() {
               />
             )}
 
-            {activeView === 'settings' && (
+            {currentUser && activeView === 'settings' && (
               <SettingsView
                 organization={organization}
+                organizations={organizations}
                 currentUser={currentUser}
                 availableUsers={availableUsers}
                 customFields={customFields}
@@ -904,16 +1079,26 @@ export default function App() {
                 automationRules={automationRules}
                 adminMailboxes={adminMailboxes}
                 defaultGateway={defaultGateway || fallbackGateway}
+                assets={assets}
+                onCreateAsset={handleCreateAsset}
+                onUpdateAsset={handleUpdateAsset}
+                onDeleteAsset={handleDeleteAsset}
+                onBulkDeleteAssets={handleBulkDeleteAssets}
+                onBulkCreateAssets={handleBulkCreateAssets}
                 onUpdateOrganization={(id, payload) => {
                   api.updateOrganization(id, payload);
                   setOrganization({ ...organization, ...payload });
-                  showToast('Organization branding updated!');
+                  setOrganizations(prev => prev.map(o => o.id === id ? { ...o, ...payload } : o));
+                  showToast('Organization settings updated!');
                 }}
                 onCreateCustomField={handleCreateCustomField}
                 onUpdateCustomField={handleUpdateCustomField}
                 onDeleteCustomField={handleDeleteCustomField}
                 onReorderCustomFields={handleReorderCustomFields}
                 onToggleRule={handleToggleRule}
+                onCreateAutomationRule={handleCreateAutomationRule}
+                onUpdateAutomationRule={handleUpdateAutomationRule}
+                onDeleteAutomationRule={handleDeleteAutomationRule}
                 onSaveUserMailbox={handleSaveUserMailbox}
                 onTestUserMailbox={handleTestUserMailbox}
                 onSaveDefaultGateway={handleSaveDefaultGateway}
@@ -925,7 +1110,27 @@ export default function App() {
               />
             )}
 
-            {activeView === 'superadmin' && superadminStats && (
+            {currentUser && activeView === 'superadmin' && currentUser.role !== 'superadmin' && (
+              <div className="max-w-md mx-auto my-12 p-8 neu-flat rounded-2xl border border-rose-300 dark:border-rose-900/60 text-center space-y-4">
+                <div className="w-12 h-12 rounded-xl bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-700/50 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">Super Admin Access Required</h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                    The Super Admin Console is strictly reserved for the Super Administrator. Technicians, managers, and standard administrators do not have access to multi-tenant tenant controls or system-wide purge capabilities.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveView('tickets')}
+                  className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                >
+                  Return to Tickets
+                </button>
+              </div>
+            )}
+
+            {currentUser && activeView === 'superadmin' && currentUser.role === 'superadmin' && superadminStats && (
               <SuperadminView
                 organizations={organizations}
                 auditLogs={auditLogs}
@@ -957,6 +1162,33 @@ export default function App() {
         users={availableUsers}
         assets={assets}
         currentUser={currentUser}
+        requireOtp={systemSettings?.ticketSubmissionOtpEnabled ?? false}
+      />
+
+      {/* Separate User Portal & Admin Login Modal */}
+      <AuthLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        initialPortalType={loginModalPortalType}
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          setIsLoginModalOpen(false);
+          showToast(`Welcome back, ${user.name}!`);
+          if (user.role === 'requester') {
+            setActiveView('portal');
+          } else {
+            setActiveView('dashboard');
+          }
+          loadData();
+        }}
+        onSwitchToRegister={() => {
+          setIsLoginModalOpen(false);
+          setActiveView('portal');
+        }}
+        onContinueAsGuest={() => {
+          setIsLoginModalOpen(false);
+          setActiveView('portal');
+        }}
       />
 
       {/* Command Palette Modal (⌘K) */}

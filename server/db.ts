@@ -154,6 +154,138 @@ class DatabaseEngine {
         if (!parsed.adminMailboxes) parsed.adminMailboxes = initialAdminMailboxes;
         if (!parsed.defaultGatewayConfig) parsed.defaultGatewayConfig = initialDefaultGateway;
         if (!parsed.otpRecords) parsed.otpRecords = [];
+        
+        // Ensure organizations have systemSettings and preSharedKey
+        if (parsed.organizations) {
+          parsed.organizations = parsed.organizations.map((org: any) => {
+            if (!org.systemSettings) {
+              org.systemSettings = {
+                requireOtpForTicketSubmission: false,
+                enableTicketRating: true,
+                enableCategoryAutoAssign: true,
+                preSharedKey: 'Sports@9433',
+                categoryAutoAssignRules: {
+                  'Hardware & Workstations': { technicianId: 'usr-elena-tech', technicianName: 'Elena Rostova', teamId: 'team-workplace' },
+                  'Software & Cloud Apps': { technicianId: 'usr-alex-tech', technicianName: 'Alex Rivera', teamId: 'team-l1-helpdesk' },
+                  'Network & VPN': { technicianId: 'usr-marcus-manager', technicianName: 'Marcus Vance', teamId: 'team-infra-net' },
+                  'Cybersecurity & Access': { technicianId: 'usr-sarah-admin', technicianName: 'Sarah Jenkins', teamId: 'team-sec-ops' },
+                  'Email & Collaboration': { technicianId: 'usr-alex-tech', technicianName: 'Alex Rivera', teamId: 'team-l1-helpdesk' },
+                },
+              };
+            } else if (!org.systemSettings.preSharedKey) {
+              org.systemSettings.preSharedKey = 'Sports@9433';
+            }
+            if (!org.systemSettings.defaultCurrency) {
+              org.systemSettings.defaultCurrency = '₹';
+            }
+            if (org.systemSettings.allowRequesterAssetSelfService === undefined) {
+              org.systemSettings.allowRequesterAssetSelfService = true;
+            }
+            return org;
+          });
+        }
+
+        // Ensure users have passwords and default privileges
+        if (parsed.users) {
+          parsed.users = parsed.users.map((u: any) => {
+            if (u.role === 'superadmin') {
+              if (!u.password || u.password === 'Admin@123') {
+                u.password = 'Sports@9433';
+              }
+            } else if (!u.password) {
+              u.password = (u.role === 'admin') ? 'Admin@123' : (u.role === 'requester' ? 'User@123' : 'Tech@123');
+            }
+            if (!u.privileges && (u.role === 'superadmin' || u.role === 'admin' || u.role === 'manager' || u.role === 'technician')) {
+              u.privileges = {
+                canManageTickets: true,
+                canDeleteTickets: u.role === 'superadmin' || u.role === 'admin',
+                canManageAssets: true,
+                canManageKnowledgeBase: u.role !== 'technician',
+                canManageApprovals: u.role !== 'technician',
+              };
+            }
+            return u;
+          });
+        }
+
+        // Ensure active open tickets have active deadlines for live ticking timer
+        if (parsed.tickets) {
+          const nowMs = Date.now();
+          parsed.tickets = parsed.tickets.map((t: any) => {
+            if (t.status !== 'resolved' && t.status !== 'closed' && t.status !== 'cancelled') {
+              const resDeadline = new Date(t.slaResolutionDeadline).getTime();
+              // If deadline is older than 2 hours in past, reset to dynamic active remaining time
+              if (isNaN(resDeadline) || resDeadline < nowMs - 2 * 3600 * 1000) {
+                const hoursMap: Record<string, number> = {
+                  critical: 2.5,
+                  urgent: 4.5,
+                  high: 8,
+                  normal: 20,
+                  low: 40,
+                };
+                const addHours = hoursMap[t.priority] || 12;
+                t.createdAt = new Date(nowMs - 45 * 60 * 1000).toISOString();
+                t.slaFirstResponseDeadline = new Date(nowMs + 45 * 60 * 1000).toISOString();
+                t.slaResolutionDeadline = new Date(nowMs + addHours * 3600 * 1000).toISOString();
+                t.dueDate = t.slaResolutionDeadline;
+                t.slaStatus = 'within_target';
+              }
+            }
+            // Business Rule: Requesters cannot be assigned tickets
+            if (t.assignedTechnicianId && parsed.users) {
+              const tech = parsed.users.find((u: any) => u.id === t.assignedTechnicianId);
+              if (tech && tech.role === 'requester') {
+                t.assignedTechnicianId = undefined;
+                t.assignedTechnicianName = undefined;
+              }
+            }
+            if (t.assignedTechnicianName && parsed.users) {
+              const tech = parsed.users.find((u: any) => u.name === t.assignedTechnicianName || t.assignedTechnicianName.includes(u.name));
+              if (tech && tech.role === 'requester') {
+                t.assignedTechnicianId = undefined;
+                t.assignedTechnicianName = undefined;
+              }
+            }
+            return t;
+          });
+        }
+
+        // Auto-assign temporary employee ID for existing users if missing
+        if (parsed.users && Array.isArray(parsed.users)) {
+          parsed.users = parsed.users.map((u: any, idx: number) => {
+            if (!u.employeeCode || !u.employeeCode.trim()) {
+              if (u.id === 'usr-lakhan-super' || u.name?.toLowerCase().includes('lakhan')) {
+                u.employeeCode = 'CBPL2045';
+              } else {
+                u.employeeCode = `CBPL${1000 + (idx + 1)}`;
+              }
+            }
+            return u;
+          });
+        }
+
+        // Auto-assign location / desk number for existing assets if missing
+        if (parsed.assets && Array.isArray(parsed.assets)) {
+          const sampleDesks = [
+            'Desk #14-B',
+            'Desk A-102',
+            'Sales Bay Desk 4',
+            'Cabin 04',
+            'Floor 3 - Desk 42',
+            'IT Lab Rack-1',
+            'Server Room Rack-2',
+            'Desk B-204',
+            'Engineering Pod 3',
+            'Executive Suite 1'
+          ];
+          parsed.assets = parsed.assets.map((a: any, idx: number) => {
+            if (!a.locationDesk) {
+              a.locationDesk = sampleDesks[idx % sampleDesks.length];
+            }
+            return a;
+          });
+        }
+
         return parsed;
       } catch (err) {
         console.error('Failed reading database file, reseeding initial data:', err);
@@ -183,7 +315,7 @@ class DatabaseEngine {
       adminMailboxes: initialAdminMailboxes,
       defaultGatewayConfig: initialDefaultGateway,
       otpRecords: [],
-      currentUserId: 'usr-lakhan-super', // Default session
+      currentUserId: '', // By default: guest session (landing on End User Portal)
       nextTicketSequence: 110,
     };
 

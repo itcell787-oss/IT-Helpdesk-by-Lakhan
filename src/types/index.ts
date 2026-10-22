@@ -1,17 +1,40 @@
 export type UserRole = 'superadmin' | 'admin' | 'manager' | 'technician' | 'requester' | 'auditor';
 
+export interface AdminPrivileges {
+  canManageTickets: boolean;
+  canDeleteTickets: boolean;
+  canManageAssets: boolean;
+  canManageKnowledgeBase: boolean;
+  canManageApprovals: boolean;
+}
+
+export interface SystemSettings {
+  requireOtpForTicketSubmission: boolean;
+  enableTicketRating: boolean;
+  enableCategoryAutoAssign: boolean;
+  preSharedKey?: string;
+  defaultCurrency?: '₹' | '$' | '€' | '£' | string;
+  categoryAutoAssignRules?: Record<string, { technicianId?: string; technicianName?: string; teamId?: string }>;
+  allowRequesterAssetSelfService?: boolean; // Requesters can view and add/remove assigned assets from portal
+  requesterAssetOptions?: string[]; // Customizable dropdown options for requesters: CPU, Keyboard, Mouse, Display, Laptop, Headphone, Webcam
+}
+
 export interface User {
   id: string;
   name: string;
   email: string;
+  employeeCode?: string; // e.g. "CBPL2045"
+  password?: string;
   role: UserRole;
   title?: string;
   avatar?: string;
   organizationId: string;
   departmentId?: string;
+  team?: string;
   locationId?: string;
   phone?: string;
   status: 'active' | 'suspended' | 'invited';
+  privileges?: AdminPrivileges;
   createdAt: string;
 }
 
@@ -31,7 +54,12 @@ export interface Organization {
     portalTitle: string;
     portalWelcome: string;
     footerText: string;
+    logoTemplate?: 'round' | 'square' | 'rectangle';
+    logoWidth?: number;
+    logoHeight?: number;
   };
+  systemSettings?: SystemSettings;
+  preSharedKey?: string;
   storageUsedMb: number;
   ticketCount: number;
   createdAt: string;
@@ -94,9 +122,12 @@ export interface Ticket {
   requesterId: string;
   requesterName: string;
   requesterEmail: string;
+  requesterEmployeeCode?: string;
   requesterPhone?: string;
+  locationDesk?: string; // Location / Assigned desk no (e.g. Desk #14-B)
   
   organizationId: string;
+  organizationName?: string;
   departmentId?: string;
   locationId?: string;
   
@@ -132,6 +163,13 @@ export interface Ticket {
   
   linkedTicketIds?: string[];
   parentTicketId?: string;
+  attachments?: Array<{
+    id: string;
+    name: string;
+    size: number;
+    type: string;
+    url: string;
+  }>;
 }
 
 export interface TicketComment {
@@ -264,6 +302,7 @@ export interface Asset {
   id: string; // e.g. "AST-1042"
   name: string;
   type: 'laptop' | 'desktop' | 'server' | 'monitor' | 'switch' | 'license' | 'mobile' | 'peripheral';
+  locationDesk?: string; // e.g. "Desk #14-B", "Cabin 04", "Rack A-02"
   manufacturer: string;
   model: string;
   serialNumber: string;
@@ -272,14 +311,23 @@ export interface Asset {
   macAddress?: string;
   os?: string;
   lifecycleStatus: 'in_service' | 'in_stock' | 'in_repair' | 'retired';
+  status?: string;
   assignedUserId?: string;
   assignedUserName?: string;
+  assignedToUserId?: string;
+  assignedToUserName?: string;
+  assignedToUserEmail?: string;
+  assignedDate?: string;
   organizationId: string;
   departmentId?: string;
   locationId?: string;
   purchaseDate: string;
   warrantyExpiry: string;
+  warrantyPeriod?: '6Months' | '1 year' | '2 year' | '3 year' | string;
   purchaseCost?: number;
+  costStatus?: 'Verified' | 'Pending' | 'Pending (Admin Verification)' | string;
+  costCurrency?: '$' | '₹' | '€' | '£' | string;
+  customFields?: Record<string, string>;
 }
 
 export interface KnowledgeArticle {
@@ -390,4 +438,31 @@ export interface SatisfactionSurvey {
   rating: number; // 1-5 stars
   comment?: string;
   submittedAt: string;
+}
+
+export function formatUserBadge(
+  user?: { name?: string; employeeCode?: string; role?: string; email?: string } | string | null,
+  fallbackEmpCode?: string
+): string {
+  if (!user) return '';
+  if (typeof user === 'string') {
+    const raw = user.trim();
+    const match = raw.match(/^\[([^\]]+)\](.*)$/);
+    if (match) {
+      const code = fallbackEmpCode || match[1];
+      const name = match[2].trim();
+      return `[${code}]${name}`;
+    }
+    const code = fallbackEmpCode || (raw.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010');
+    return `[${code}]${raw}`;
+  }
+  let rawName = (user.name || user.email || '').trim();
+  let existingCode = user.employeeCode;
+  const match = rawName.match(/^\[([^\]]+)\](.*)$/);
+  if (match) {
+    if (!existingCode) existingCode = match[1];
+    rawName = match[2].trim();
+  }
+  const empCode = existingCode || fallbackEmpCode || (rawName.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010');
+  return `[${empCode}]${rawName}`.trim();
 }

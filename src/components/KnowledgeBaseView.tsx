@@ -22,7 +22,7 @@ import { KnowledgeArticle, User as UserType } from '../types';
 
 interface KnowledgeBaseViewProps {
   articles: KnowledgeArticle[];
-  currentUser: UserType;
+  currentUser: UserType | null;
   onCreateArticle: (data: Partial<KnowledgeArticle>) => void;
   onUpdateArticle?: (id: string, data: Partial<KnowledgeArticle>) => void;
   onDeleteArticle?: (id: string) => void;
@@ -44,6 +44,35 @@ export const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({
   const [showEditModal, setShowEditModal] = useState(false);
   const [articleToDelete, setArticleToDelete] = useState<KnowledgeArticle | null>(null);
 
+  // User Voting Lock State (Only logged in user, strictly 1 vote per article)
+  const [userVotes, setUserVotes] = useState<Record<string, 'yes' | 'no'>>(() => {
+    if (typeof window !== 'undefined' && currentUser) {
+      try {
+        const stored = localStorage.getItem(`kb_user_votes_${currentUser.id}`);
+        return stored ? JSON.parse(stored) : {};
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  });
+
+  const handleVote = (articleId: string, helpful: boolean) => {
+    if (!currentUser) return;
+    if (userVotes[articleId]) return; // strictly 1 vote per article
+
+    const updated = { ...userVotes, [articleId]: helpful ? ('yes' as const) : ('no' as const) };
+    setUserVotes(updated);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(`kb_user_votes_${currentUser.id}`, JSON.stringify(updated));
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    onVoteArticle(articleId, helpful);
+  };
+
   // New article form states
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('Software & Cloud Apps');
@@ -61,7 +90,7 @@ export const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({
   const [editStatus, setEditStatus] = useState<'published' | 'draft' | 'review'>('published');
 
   // Rule: Knowledge base should be modifiable ONLY by super admins & admins
-  const canManageKB = currentUser.role === 'superadmin' || currentUser.role === 'admin';
+  const canManageKB = !!currentUser && (currentUser.role === 'superadmin' || currentUser.role === 'admin' || currentUser.privileges?.canManageKnowledgeBase === true);
 
   const categories = Array.from(new Set(articles.map((a) => a.category)));
 
@@ -339,31 +368,50 @@ export const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({
                 </div>
               )}
 
-              {/* Feedback Widget */}
-              <div className="mt-6 pt-4 border-t border-slate-200 dark:border-white/10 flex items-center justify-between p-4 rounded-xl neu-card">
-                <div className="text-xs">
+              {/* Feedback Widget - Strictly Logged in users & 1 vote per user */}
+              <div className="mt-6 pt-4 border-t border-slate-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl neu-card">
+                <div className="text-xs space-y-0.5">
                   <span className="font-bold text-slate-900 dark:text-white block">Was this article helpful to you?</span>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                     {activeArticle.helpfulCount} users found this solution helpful.
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => onVoteArticle(activeArticle.id, true)}
-                    className="neu-btn flex items-center gap-1 px-3 py-1.5 text-xs text-emerald-700 dark:text-emerald-400 font-semibold rounded-lg cursor-pointer"
-                  >
-                    <ThumbsUp className="w-3.5 h-3.5" />
-                    <span>Yes ({activeArticle.helpfulCount})</span>
-                  </button>
-                  <button
-                    onClick={() => onVoteArticle(activeArticle.id, false)}
-                    className="neu-btn flex items-center gap-1 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-400 font-semibold rounded-lg cursor-pointer"
-                  >
-                    <ThumbsDown className="w-3.5 h-3.5" />
-                    <span>No</span>
-                  </button>
-                </div>
+                {!currentUser ? (
+                  /* Guest user notification */
+                  <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/40 px-3 py-1.5 rounded-xl font-medium">
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Please sign in to vote on this article</span>
+                  </div>
+                ) : userVotes[activeArticle.id] ? (
+                  /* User already voted */
+                  <div className="flex items-center gap-1.5 text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/40 px-3 py-1.5 rounded-xl font-bold animate-in fade-in">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>
+                      Vote recorded: You found this {userVotes[activeArticle.id] === 'yes' ? 'Helpful (Yes)' : 'Not Helpful (No)'}
+                    </span>
+                  </div>
+                ) : (
+                  /* Unvoted authenticated user */
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleVote(activeArticle.id, true)}
+                      className="neu-btn flex items-center gap-1.5 px-3 py-1.5 text-xs text-emerald-700 dark:text-emerald-400 font-bold rounded-xl cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
+                      title="Vote Yes - This article helped resolve my issue"
+                    >
+                      <ThumbsUp className="w-3.5 h-3.5" />
+                      <span>Yes ({activeArticle.helpfulCount})</span>
+                    </button>
+                    <button
+                      onClick={() => handleVote(activeArticle.id, false)}
+                      className="neu-btn flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-400 font-bold rounded-xl cursor-pointer hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                      title="Vote No - This article did not resolve my issue"
+                    >
+                      <ThumbsDown className="w-3.5 h-3.5" />
+                      <span>No</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ) : (

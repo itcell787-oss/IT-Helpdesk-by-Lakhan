@@ -11,10 +11,24 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   const isProd = process.env.NODE_ENV === 'production';
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // Mount API endpoints
   app.use('/api', apiRouter);
+
+  // Global API error handler (e.g. payload too large, invalid json)
+  app.use('/api', (err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err) {
+      console.error('API Error:', err);
+      const status = err.status || err.statusCode || 500;
+      return res.status(status).json({
+        error: err.message || 'An error occurred processing the request.',
+        code: err.type || err.code || 'SERVER_ERROR',
+      });
+    }
+    next();
+  });
 
   if (!isProd) {
     // In dev: mount Vite middlewares

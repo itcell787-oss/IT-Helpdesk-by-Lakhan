@@ -30,7 +30,21 @@ import {
   Terminal,
   ShieldAlert,
   Cpu,
+  KeyRound,
+  ShieldCheck,
+  HardDrive,
+  CheckSquare,
+  Square,
+  Download,
+  Key,
+  Search,
+  EyeOff,
+  Sparkles,
+  Building2,
+  Upload,
+  Laptop,
 } from 'lucide-react';
+import { api } from '../services/api';
 import {
   CustomFieldDefinition,
   SlaPolicy,
@@ -38,12 +52,17 @@ import {
   Organization,
   User,
   UserRole,
+  AdminPrivileges,
   MailboxConnectionConfig,
   DefaultEmailGatewayConfig,
+  Asset,
 } from '../types';
+import { AssetFormModal } from './AssetFormModal';
+import { SearchableEmployeeSelect } from './SearchableEmployeeSelect';
 
 interface SettingsViewProps {
   organization: Organization;
+  organizations?: Organization[];
   currentUser: User;
   availableUsers: User[];
   customFields: CustomFieldDefinition[];
@@ -51,12 +70,16 @@ interface SettingsViewProps {
   automationRules: AutomationRule[];
   adminMailboxes: MailboxConnectionConfig[];
   defaultGateway: DefaultEmailGatewayConfig;
+  assets?: Asset[];
   onUpdateOrganization: (id: string, payload: Partial<Organization>) => void;
   onCreateCustomField: (data: Partial<CustomFieldDefinition>) => void;
   onUpdateCustomField: (id: string, data: Partial<CustomFieldDefinition>) => void;
   onDeleteCustomField: (id: string) => void;
   onReorderCustomFields: (orderedIds: string[]) => void;
   onToggleRule: (id: string) => void;
+  onCreateAutomationRule?: (rule: Partial<AutomationRule>) => Promise<void>;
+  onUpdateAutomationRule?: (id: string, updates: Partial<AutomationRule>) => Promise<void>;
+  onDeleteAutomationRule?: (id: string) => Promise<void>;
   onSaveUserMailbox: (userId: string, data: Partial<MailboxConnectionConfig>) => Promise<any>;
   onTestUserMailbox: (data: any) => Promise<any>;
   onSaveDefaultGateway: (data: Partial<DefaultEmailGatewayConfig>) => Promise<any>;
@@ -64,11 +87,17 @@ interface SettingsViewProps {
   onUpdateUser?: (id: string, data: Partial<User>) => Promise<any>;
   onCreateUser?: (data: Partial<User>) => Promise<any>;
   onDeleteUser?: (id: string) => Promise<any>;
+  onCreateAsset?: (data: Partial<Asset>) => void;
+  onUpdateAsset?: (id: string, data: Partial<Asset>) => void;
+  onDeleteAsset?: (id: string) => void;
+  onBulkDeleteAssets?: (ids: string[]) => void;
+  onBulkCreateAssets?: (assets: Partial<Asset>[]) => void;
   initialTab?: string;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   organization,
+  organizations = [],
   currentUser,
   availableUsers,
   customFields,
@@ -76,12 +105,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   automationRules,
   adminMailboxes,
   defaultGateway,
+  assets = [],
   onUpdateOrganization,
   onCreateCustomField,
   onUpdateCustomField,
   onDeleteCustomField,
   onReorderCustomFields,
   onToggleRule,
+  onCreateAutomationRule,
+  onUpdateAutomationRule,
+  onDeleteAutomationRule,
   onSaveUserMailbox,
   onTestUserMailbox,
   onSaveDefaultGateway,
@@ -89,11 +122,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onUpdateUser,
   onCreateUser,
   onDeleteUser,
+  onCreateAsset,
+  onUpdateAsset,
+  onDeleteAsset,
+  onBulkDeleteAssets,
+  onBulkCreateAssets,
   initialTab,
 }) => {
+  const allOrganizations = organizations && organizations.length > 0 ? organizations : [organization];
+
   const [activeTab, setActiveTab] = useState<
-    'profile' | 'users' | 'fields' | 'admin-mailbox' | 'default-gateway' | 'sla' | 'automations' | 'branding' | 'linux-host'
-  >((initialTab as any) || 'profile');
+    'profile' | 'users' | 'assets' | 'fields' | 'admin-mailbox' | 'default-gateway' | 'sla' | 'automations' | 'branding' | 'linux-host'
+  >(() => {
+    // If initialTab is branding but user is not superadmin, fallback to profile
+    if (initialTab === 'branding' && currentUser.role !== 'superadmin') return 'profile';
+    return (initialTab as any) || 'profile';
+  });
 
   // -------------------------------------------------------------
   // Profile Management State (Super Admin & Admin Profile Editing)
@@ -106,6 +150,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
 
+  // Profile Change Password State (Super Admin & Users can change password in Profile Settings)
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordSuccessMsg, setPasswordSuccessMsg] = useState<string | null>(null);
+  const [passwordErrMsg, setPasswordErrMsg] = useState<string | null>(null);
+
+  const [userFormOrgId, setUserFormOrgId] = useState(organization.id);
+  const [copiedOrgId, setCopiedOrgId] = useState<string | null>(null);
+
   useEffect(() => {
     setProfileName(currentUser.name);
     setProfileEmail(currentUser.email);
@@ -117,19 +172,377 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // -------------------------------------------------------------
   // User Management State (All Admins Manage Users & Registration)
   // -------------------------------------------------------------
+  const [userSegmentTab, setUserSegmentTab] = useState<'all' | 'admins' | 'staff' | 'requesters'>('all');
   const [userSearch, setUserSearch] = useState('');
   const [userRoleFilter, setUserRoleFilter] = useState('all');
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [userFormName, setUserFormName] = useState('');
   const [userFormEmail, setUserFormEmail] = useState('');
+  const [userFormEmployeeCode, setUserFormEmployeeCode] = useState('');
   const [userFormRole, setUserFormRole] = useState<UserRole>('requester');
   const [userFormTitle, setUserFormTitle] = useState('');
   const [userFormPhone, setUserFormPhone] = useState('');
+  const [userFormTeam, setUserFormTeam] = useState('General Operations');
   const [userFormStatus, setUserFormStatus] = useState<'active' | 'suspended'>('active');
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+
+  // Super Admin Reset Password of Everyone State
+  const [resetUserTarget, setResetUserTarget] = useState<User | null>(null);
+  const [newPasswordVal, setNewPasswordVal] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSuccessMsg, setResetSuccessMsg] = useState<string | null>(null);
+  const [resetErrMsg, setResetErrMsg] = useState<string | null>(null);
+
   const [linkCopied, setLinkCopied] = useState(false);
   const [linuxDistro, setLinuxDistro] = useState<'ubuntu' | 'debian' | 'rhel' | 'docker'>('ubuntu');
+
+  // Pre-Shared Key (PSK) State (Point 3: Super Admin Option to Create/Update PSK)
+  const [pskValue, setPskValue] = useState('Sports@9433');
+  const [pskVisible, setPskVisible] = useState(false);
+  const [pskSaving, setPskSaving] = useState(false);
+  const [pskCopied, setPskCopied] = useState(false);
+  const [pskSuccessMsg, setPskSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getSystemSettings().then((res) => {
+      if (res && res.preSharedKey) {
+        setPskValue(res.preSharedKey);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Per-Organization PSK and Custom Registration Link State
+  const [orgPskValues, setOrgPskValues] = useState<Record<string, string>>({});
+  const [orgPskVisible, setOrgPskVisible] = useState<Record<string, boolean>>({});
+  const [orgPskSaving, setOrgPskSaving] = useState<Record<string, boolean>>({});
+  const [orgCopiedLink, setOrgCopiedLink] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const initial: Record<string, string> = {};
+    allOrganizations.forEach((org) => {
+      initial[org.id] = org.preSharedKey || org.systemSettings?.preSharedKey || 'Sports@9433';
+    });
+    setOrgPskValues(initial);
+  }, [allOrganizations]);
+
+  const handleCopyOrgLink = (orgId: string) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    const link = `${origin}/?view=portal&tab=register&orgId=${orgId}`;
+    navigator.clipboard.writeText(link);
+    setOrgCopiedLink((prev) => ({ ...prev, [orgId]: true }));
+    setTimeout(() => {
+      setOrgCopiedLink((prev) => ({ ...prev, [orgId]: false }));
+    }, 2500);
+  };
+
+  const handleGenerateOrgPsk = (orgId: string) => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let generated = '';
+    for (let i = 0; i < 12; i++) {
+      generated += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setOrgPskValues((prev) => ({ ...prev, [orgId]: generated }));
+  };
+
+  const handleSaveOrgPsk = async (orgId: string) => {
+    const newKey = orgPskValues[orgId]?.trim();
+    if (!newKey) {
+      alert('Pre-Shared Key cannot be empty');
+      return;
+    }
+    setOrgPskSaving((prev) => ({ ...prev, [orgId]: true }));
+    try {
+      if (onUpdateOrganization) {
+        await onUpdateOrganization(orgId, { preSharedKey: newKey });
+      } else {
+        await api.updateOrganization(orgId, { preSharedKey: newKey });
+      }
+      setPskSuccessMsg(`Pre-Shared Key for organization updated successfully!`);
+      setTimeout(() => setPskSuccessMsg(null), 3500);
+    } catch (err: any) {
+      alert(err.message || 'Failed updating Pre-Shared Key');
+    } finally {
+      setOrgPskSaving((prev) => ({ ...prev, [orgId]: false }));
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Automation Rules Management State (Super Admin & Admin Custom Automations)
+  // -------------------------------------------------------------
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [ruleName, setRuleName] = useState('');
+  const [ruleDescription, setRuleDescription] = useState('');
+  const [ruleTrigger, setRuleTrigger] = useState<'ticket_created' | 'ticket_updated' | 'status_changed' | 'priority_changed'>('ticket_created');
+  const [ruleConditions, setRuleConditions] = useState<Array<{ field: string; operator: 'equals' | 'contains' | 'is_empty' | 'not_equals'; value: string }>>([
+    { field: 'category', operator: 'contains', value: '' }
+  ]);
+  const [ruleActions, setRuleActions] = useState<Array<{ type: 'assign_technician' | 'assign_team' | 'set_priority' | 'set_status' | 'add_internal_note' | 'add_tag'; value: string }>>([
+    { type: 'assign_team', value: 'team-infra-net' }
+  ]);
+  const [ruleEnabled, setRuleEnabled] = useState(true);
+  const [ruleSaving, setRuleSaving] = useState(false);
+  const [ruleError, setRuleError] = useState<string | null>(null);
+  const [ruleToDelete, setRuleToDelete] = useState<AutomationRule | null>(null);
+
+  const AVAILABLE_TEAMS = [
+    { id: 'team-l1-helpdesk', name: 'Tier 1 Service Desk' },
+    { id: 'team-infra-net', name: 'Cloud & Network Operations' },
+    { id: 'team-sec-ops', name: 'Cybersecurity & Compliance' },
+    { id: 'team-workplace', name: 'Workplace Hardware Logistics' },
+  ];
+
+  const AUTOMATION_TEMPLATES = [
+    {
+      name: 'Auto-Route Network & VPN to Cloud & NetOps',
+      description: 'Directly assign all network incidents to the Cloud & Network Operations team with High priority.',
+      trigger: 'ticket_created' as const,
+      conditions: [{ field: 'category', operator: 'contains' as const, value: 'Network' }],
+      actions: [
+        { type: 'assign_team' as const, value: 'team-infra-net' },
+        { type: 'set_priority' as const, value: 'high' },
+        { type: 'add_tag' as const, value: 'netops-auto' }
+      ],
+    },
+    {
+      name: 'Auto-Escalate Critical Incidents to P1',
+      description: 'When ticket priority is critical, mark with tag and post internal emergency incident protocol.',
+      trigger: 'ticket_created' as const,
+      conditions: [{ field: 'priority', operator: 'equals' as const, value: 'critical' }],
+      actions: [
+        { type: 'add_internal_note' as const, value: '[AUTO-ESCALATION]: Critical Sev-1 ticket created. Incident commander notified per P1 SLA Runbook.' },
+        { type: 'add_tag' as const, value: 'p1-escalated' }
+      ],
+    },
+    {
+      name: 'Auto-Assign Hardware Faults to Workplace Logistics',
+      description: 'Route defective hardware, laptop, and monitor tickets to Hardware Logistics.',
+      trigger: 'ticket_created' as const,
+      conditions: [{ field: 'category', operator: 'contains' as const, value: 'Hardware' }],
+      actions: [
+        { type: 'assign_team' as const, value: 'team-workplace' },
+        { type: 'add_tag' as const, value: 'hw-logistics' }
+      ],
+    },
+    {
+      name: 'Auto-Prioritize Security & Phishing Reports',
+      description: 'Elevate security reports to High and route immediately to SecOps team.',
+      trigger: 'ticket_created' as const,
+      conditions: [{ field: 'category', operator: 'contains' as const, value: 'Security' }],
+      actions: [
+        { type: 'set_priority' as const, value: 'high' },
+        { type: 'assign_team' as const, value: 'team-sec-ops' },
+        { type: 'add_tag' as const, value: 'sec-alert' }
+      ],
+    },
+    {
+      name: 'Auto-Resolution Protocol on Resolved Status',
+      description: 'When status changes to resolved, automatically append resolution audit note.',
+      trigger: 'status_changed' as const,
+      conditions: [{ field: 'status', operator: 'equals' as const, value: 'resolved' }],
+      actions: [
+        { type: 'add_internal_note' as const, value: 'System note: Ticket marked resolved. Requester has been notified for feedback.' },
+        { type: 'add_tag' as const, value: 'auto-notified' }
+      ],
+    },
+  ];
+
+  const handleOpenCreateRule = () => {
+    setEditingRuleId(null);
+    setRuleName('');
+    setRuleDescription('');
+    setRuleTrigger('ticket_created');
+    setRuleConditions([{ field: 'category', operator: 'contains', value: '' }]);
+    setRuleActions([{ type: 'assign_team', value: 'team-infra-net' }]);
+    setRuleEnabled(true);
+    setRuleError(null);
+    setShowRuleModal(true);
+  };
+
+  const handleOpenEditRule = (rule: AutomationRule) => {
+    setEditingRuleId(rule.id);
+    setRuleName(rule.name);
+    setRuleDescription(rule.description || '');
+    setRuleTrigger(rule.trigger);
+    setRuleConditions(rule.conditions && rule.conditions.length > 0 ? rule.conditions : [{ field: 'category', operator: 'contains', value: '' }]);
+    setRuleActions(rule.actions && rule.actions.length > 0 ? rule.actions : [{ type: 'assign_team', value: 'team-infra-net' }]);
+    setRuleEnabled(rule.enabled);
+    setRuleError(null);
+    setShowRuleModal(true);
+  };
+
+  const handleApplyTemplate = (template: typeof AUTOMATION_TEMPLATES[0]) => {
+    setRuleName(template.name);
+    setRuleDescription(template.description);
+    setRuleTrigger(template.trigger);
+    setRuleConditions([...template.conditions]);
+    setRuleActions([...template.actions]);
+  };
+
+  const handleAddCondition = () => {
+    setRuleConditions((prev) => [...prev, { field: 'category', operator: 'equals', value: '' }]);
+  };
+
+  const handleRemoveCondition = (index: number) => {
+    setRuleConditions((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleConditionChange = (index: number, key: 'field' | 'operator' | 'value', val: string) => {
+    setRuleConditions((prev) =>
+      prev.map((c, i) => {
+        if (i !== index) return c;
+        if (key === 'field') {
+          return { ...c, field: val, value: '' };
+        }
+        return { ...c, [key]: val };
+      })
+    );
+  };
+
+  const handleAddAction = () => {
+    setRuleActions((prev) => [...prev, { type: 'add_tag', value: '' }]);
+  };
+
+  const handleRemoveAction = (index: number) => {
+    setRuleActions((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleActionChange = (index: number, key: 'type' | 'value', val: string) => {
+    setRuleActions((prev) =>
+      prev.map((a, i) => {
+        if (i !== index) return a;
+        if (key === 'type') {
+          let defaultValue = '';
+          if (val === 'assign_team') defaultValue = 'team-infra-net';
+          else if (val === 'assign_technician') {
+            const firstStaff = availableUsers.find(u => u.role === 'technician' || u.role === 'admin' || u.role === 'superadmin');
+            defaultValue = firstStaff?.id || '';
+          } else if (val === 'set_priority') defaultValue = 'high';
+          else if (val === 'set_status') defaultValue = 'in_progress';
+          return { type: val as any, value: defaultValue };
+        }
+        return { ...a, [key]: val };
+      })
+    );
+  };
+
+  const handleSaveRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ruleName.trim()) {
+      setRuleError('Rule name is required.');
+      return;
+    }
+    if (ruleConditions.length === 0) {
+      setRuleError('Please configure at least one trigger condition.');
+      return;
+    }
+    if (ruleActions.length === 0) {
+      setRuleError('Please configure at least one automated action.');
+      return;
+    }
+
+    for (let i = 0; i < ruleConditions.length; i++) {
+      const c = ruleConditions[i];
+      if (c.operator !== 'is_empty' && (!c.value || !c.value.trim())) {
+        setRuleError(`Condition #${i + 1} (${c.field}) requires a target value.`);
+        return;
+      }
+    }
+
+    for (let i = 0; i < ruleActions.length; i++) {
+      const a = ruleActions[i];
+      if (!a.value || !a.value.trim()) {
+        setRuleError(`Action #${i + 1} (${a.type}) requires a target value.`);
+        return;
+      }
+    }
+
+    setRuleSaving(true);
+    setRuleError(null);
+
+    try {
+      const payload: Partial<AutomationRule> = {
+        name: ruleName.trim(),
+        description: ruleDescription.trim(),
+        trigger: ruleTrigger,
+        conditions: ruleConditions,
+        actions: ruleActions,
+        enabled: ruleEnabled,
+        organizationId: organization.id,
+      };
+
+      if (editingRuleId) {
+        if (onUpdateAutomationRule) {
+          await onUpdateAutomationRule(editingRuleId, payload);
+        } else {
+          await api.updateAutomationRule(editingRuleId, payload);
+        }
+      } else {
+        if (onCreateAutomationRule) {
+          await onCreateAutomationRule(payload);
+        } else {
+          await api.createAutomationRule(payload);
+        }
+      }
+
+      setShowRuleModal(false);
+    } catch (err: any) {
+      setRuleError(err.message || 'Failed to save automation rule');
+    } finally {
+      setRuleSaving(false);
+    }
+  };
+
+  const handleConfirmDeleteRule = async () => {
+    if (!ruleToDelete) return;
+    try {
+      if (onDeleteAutomationRule) {
+        await onDeleteAutomationRule(ruleToDelete.id);
+      } else {
+        await api.deleteAutomationRule(ruleToDelete.id);
+      }
+      setRuleToDelete(null);
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete automation rule');
+    }
+  };
+
+  // Admin Access Level & Privileges Modal State
+  const [privilegeUser, setPrivilegeUser] = useState<User | null>(null);
+  const [privCanManageTickets, setPrivCanManageTickets] = useState(true);
+  const [privCanDeleteTickets, setPrivCanDeleteTickets] = useState(false);
+  const [privCanManageAssets, setPrivCanManageAssets] = useState(true);
+  const [privCanManageKb, setPrivCanManageKb] = useState(false);
+  const [privCanManageApprovals, setPrivCanManageApprovals] = useState(false);
+  const [privSaving, setPrivSaving] = useState(false);
+
+  // -------------------------------------------------------------
+  // Hardware Asset Management State in Settings (Point 4)
+  // -------------------------------------------------------------
+  const [showAssetModal, setShowAssetModal] = useState(false);
+  const [settingsAssetToEdit, setSettingsAssetToEdit] = useState<Asset | null>(null);
+  const [settingsAssetToDelete, setSettingsAssetToDelete] = useState<Asset | null>(null);
+  const [assetSearch, setAssetSearch] = useState('');
+  const [assetTypeFilter, setAssetTypeFilter] = useState('all');
+  const [assetAssignedFilter, setAssetAssignedFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
+  const [markedSettingsAssetIds, setMarkedSettingsAssetIds] = useState<string[]>([]);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+
+  // Quick Add Asset Form State (Point 4)
+  const [quickAssetName, setQuickAssetName] = useState('');
+  const [quickAssetCost, setQuickAssetCost] = useState('');
+  const [quickAssetCostCurrency, setQuickAssetCostCurrency] = useState<'$' | '₹'>('$');
+  const [quickAssetType, setQuickAssetType] = useState<Asset['type']>('laptop');
+  const [quickAssetManufacturer, setQuickAssetManufacturer] = useState('Apple');
+  const [quickAssetModel, setQuickAssetModel] = useState('');
+  const [quickAssetSerial, setQuickAssetSerial] = useState(`SN-${Math.random().toString(36).substring(2, 9).toUpperCase()}`);
+  const [quickAssetAssignedUserId, setQuickAssetAssignedUserId] = useState<string | undefined>(undefined);
+  const [quickAssetUnassigned, setQuickAssetUnassigned] = useState(true);
+  const [quickAssetLifecycleStatus, setQuickAssetLifecycleStatus] = useState<Asset['lifecycleStatus']>('in_stock');
+  const [quickAssetPurchaseDate, setQuickAssetPurchaseDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [quickAssetWarrantyPeriod, setQuickAssetWarrantyPeriod] = useState<'6Months' | '1 year' | '2 year' | '3 year'>('1 year');
+  const [quickAssetCustomFields, setQuickAssetCustomFields] = useState<Array<{ key: string; value: string }>>([]);
 
   // -------------------------------------------------------------
   // Custom Fields & Form Builder State
@@ -240,10 +653,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // -------------------------------------------------------------
   // Organization Branding State
   // -------------------------------------------------------------
+  const [brandLogoUrl, setBrandLogoUrl] = useState(organization.branding?.logoUrl || '');
+  const [brandLogoLoadError, setBrandLogoLoadError] = useState(false);
   const [brandTitle, setBrandTitle] = useState(organization.branding.productName);
   const [brandEmail, setBrandEmail] = useState(organization.branding.supportEmail);
   const [portalWelcome, setPortalWelcome] = useState(organization.branding.portalWelcome);
   const [savedBranding, setSavedBranding] = useState(false);
+
+  useEffect(() => {
+    if (organization?.branding) {
+      if (organization.branding.logoUrl !== undefined) {
+        setBrandLogoUrl(organization.branding.logoUrl || '');
+      }
+      if (organization.branding.productName) {
+        setBrandTitle(organization.branding.productName);
+      }
+      if (organization.branding.supportEmail) {
+        setBrandEmail(organization.branding.supportEmail);
+      }
+      if (organization.branding.portalWelcome) {
+        setPortalWelcome(organization.branding.portalWelcome);
+      }
+    }
+  }, [organization]);
+
+  useEffect(() => {
+    setBrandLogoLoadError(false);
+  }, [brandLogoUrl]);
 
   // Handlers for Custom Fields
   const handleOpenNewField = () => {
@@ -423,13 +859,93 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     onUpdateOrganization(organization.id, {
       branding: {
         ...organization.branding,
-        productName: brandTitle,
-        supportEmail: brandEmail,
-        portalWelcome,
+        logoUrl: brandLogoUrl.trim() || undefined,
+        productName: brandTitle.trim(),
+        supportEmail: brandEmail.trim(),
+        portalWelcome: portalWelcome.trim(),
       },
     });
     setSavedBranding(true);
-    setTimeout(() => setSavedBranding(false), 2000);
+    setTimeout(() => setSavedBranding(false), 2500);
+  };
+
+  const handleToggleRequesterAssetSelfService = async () => {
+    const currentVal = organization.systemSettings?.allowRequesterAssetSelfService !== false;
+    const nextVal = !currentVal;
+    try {
+      await api.updateSystemSettings({ allowRequesterAssetSelfService: nextVal });
+      if (onUpdateOrganization) {
+        onUpdateOrganization(organization.id, {
+          systemSettings: {
+            ...organization.systemSettings,
+            allowRequesterAssetSelfService: nextVal,
+          } as any,
+        });
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to update asset setting');
+    }
+  };
+
+  // Requester Asset Name Dropdown Options Customization (Admin control)
+  const defaultRequesterOptions = ['CPU', 'Keyboard', 'Mouse', 'Display', 'Laptop', 'Headphone', 'Webcam'];
+  const [requesterAssetOptions, setRequesterAssetOptions] = useState<string[]>(
+    organization.systemSettings?.requesterAssetOptions || defaultRequesterOptions
+  );
+  const [newDropdownOption, setNewDropdownOption] = useState('');
+  const [assetOptionsSaveMsg, setAssetOptionsSaveMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (organization.systemSettings?.requesterAssetOptions) {
+      setRequesterAssetOptions(organization.systemSettings.requesterAssetOptions);
+    }
+  }, [organization.systemSettings?.requesterAssetOptions]);
+
+  const handleSaveRequesterAssetOptions = async (updated: string[]) => {
+    try {
+      setAssetOptionsSaveMsg('Saving...');
+      await api.updateSystemSettings({ requesterAssetOptions: updated });
+      if (onUpdateOrganization) {
+        onUpdateOrganization(organization.id, {
+          systemSettings: {
+            ...organization.systemSettings,
+            requesterAssetOptions: updated,
+          } as any,
+        });
+      }
+      setRequesterAssetOptions(updated);
+      setAssetOptionsSaveMsg('✓ Requester dropdown options updated!');
+      setTimeout(() => setAssetOptionsSaveMsg(null), 3000);
+    } catch (err: any) {
+      setAssetOptionsSaveMsg('Failed to save options');
+    }
+  };
+
+  const handleAddRequesterOption = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newDropdownOption.trim();
+    if (!trimmed) return;
+    if (requesterAssetOptions.some((o) => o.toLowerCase() === trimmed.toLowerCase())) {
+      setAssetOptionsSaveMsg('Option already exists.');
+      setTimeout(() => setAssetOptionsSaveMsg(null), 2500);
+      return;
+    }
+    const next = [...requesterAssetOptions, trimmed];
+    setNewDropdownOption('');
+    handleSaveRequesterAssetOptions(next);
+  };
+
+  const handleRemoveRequesterOption = (optToRemove: string) => {
+    if (requesterAssetOptions.length <= 1) {
+      alert('At least one dropdown option is required.');
+      return;
+    }
+    const next = requesterAssetOptions.filter((o) => o !== optToRemove);
+    handleSaveRequesterAssetOptions(next);
+  };
+
+  const handleResetRequesterOptions = () => {
+    handleSaveRequesterAssetOptions(defaultRequesterOptions);
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
@@ -456,14 +972,61 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordErrMsg(null);
+    setPasswordSuccessMsg(null);
+    if (!newPassword || newPassword.length < 6) {
+      setPasswordErrMsg('New password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordErrMsg('New passwords do not match. Please verify.');
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      const res = await api.changePassword(currentUser.id, newPassword, currentPassword || undefined);
+      setPasswordSuccessMsg(res.message || 'Password changed successfully!');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setPasswordSuccessMsg(null), 4000);
+    } catch (err: any) {
+      setPasswordErrMsg(err.message || 'Failed to update password');
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
+  const handleLogoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const validTypes = ['image/png', 'image/svg+xml', 'image/jpeg', 'image/jpg'];
+    if (!validTypes.includes(file.type) && !file.name.match(/\.(png|svg|jpg|jpeg)$/i)) {
+      alert('Please upload a valid PNG, SVG, or JPG image file.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setBrandLogoUrl(event.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleOpenNewUser = () => {
     setEditingUserId(null);
     setUserFormName('');
     setUserFormEmail('');
+    setUserFormEmployeeCode('');
     setUserFormRole('requester');
-    setUserFormTitle('Staff Member');
+    setUserFormTitle('Staff Requester');
     setUserFormPhone('');
+    setUserFormTeam('General Operations');
     setUserFormStatus('active');
+    setUserFormOrgId(organization.id);
     setShowUserModal(true);
   };
 
@@ -471,10 +1034,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setEditingUserId(user.id);
     setUserFormName(user.name);
     setUserFormEmail(user.email);
+    setUserFormEmployeeCode(user.employeeCode || '');
     setUserFormRole(user.role);
     setUserFormTitle(user.title || '');
     setUserFormPhone(user.phone || '');
+    setUserFormTeam(user.team || 'General Operations');
     setUserFormStatus(user.status === 'suspended' ? 'suspended' : 'active');
+    setUserFormOrgId(user.organizationId || organization.id);
     setShowUserModal(true);
   };
 
@@ -487,10 +1053,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           await onUpdateUser(editingUserId, {
             name: userFormName.trim(),
             email: userFormEmail.trim(),
+            employeeCode: userFormEmployeeCode.trim().toUpperCase() || undefined,
             role: userFormRole,
             title: userFormTitle.trim(),
             phone: userFormPhone.trim(),
+            team: userFormTeam,
             status: userFormStatus,
+            organizationId: userFormOrgId,
           });
         }
       } else {
@@ -498,11 +1067,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           await onCreateUser({
             name: userFormName.trim(),
             email: userFormEmail.trim(),
+            employeeCode: userFormEmployeeCode.trim().toUpperCase() || undefined,
             role: userFormRole,
             title: userFormTitle.trim(),
             phone: userFormPhone.trim(),
+            team: userFormTeam,
             status: userFormStatus,
-            organizationId: organization.id,
+            organizationId: userFormOrgId,
           });
         }
       }
@@ -512,8 +1083,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  const handleResetUserPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetUserTarget || !newPasswordVal.trim()) return;
+    if (newPasswordVal.trim().length < 6) {
+      setResetErrMsg('New password must contain at least 6 characters.');
+      return;
+    }
+    setResetLoading(true);
+    setResetErrMsg(null);
+    setResetSuccessMsg(null);
+    try {
+      const res = await api.resetUserPassword(resetUserTarget.id, newPasswordVal.trim());
+      setResetSuccessMsg(res.message || `Password for ${resetUserTarget.name} has been reset.`);
+      setTimeout(() => {
+        setResetUserTarget(null);
+        setResetSuccessMsg(null);
+        setNewPasswordVal('');
+      }, 1800);
+    } catch (err: any) {
+      setResetErrMsg(err.message || 'Failed to reset password');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   const executeDeleteUser = async () => {
     if (!userToDelete || !onDeleteUser) return;
+    if (userToDelete.role === 'superadmin') {
+      alert('Super Admin accounts are permanently protected system identities and cannot be deleted by anyone.');
+      setUserToDelete(null);
+      return;
+    }
     try {
       await onDeleteUser(userToDelete.id);
       setUserToDelete(null);
@@ -530,8 +1131,87 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTimeout(() => setLinkCopied(false), 2500);
   };
 
+  const handleGeneratePsk = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    let generated = 'Helpdesk@';
+    for (let i = 0; i < 6; i++) {
+      generated += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    generated += '!2026';
+    setPskValue(generated);
+  };
+
+  const handleCopyPsk = () => {
+    navigator.clipboard.writeText(pskValue);
+    setPskCopied(true);
+    setTimeout(() => setPskCopied(false), 2500);
+  };
+
+  const handleSavePsk = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pskValue.trim()) {
+      alert('Pre-Shared Key cannot be empty.');
+      return;
+    }
+    setPskSaving(true);
+    try {
+      await api.updateSystemSettings({ preSharedKey: pskValue.trim() });
+      setPskSuccessMsg('Pre-Shared Key (PSK) updated successfully! Users can now use this key to set passwords.');
+      setTimeout(() => setPskSuccessMsg(null), 3500);
+    } catch (err: any) {
+      alert(err.message || 'Failed updating Pre-Shared Key');
+    } finally {
+      setPskSaving(false);
+    }
+  };
+
+  const openPrivilegeModal = (user: User) => {
+    setPrivilegeUser(user);
+    setPrivCanManageTickets(user.privileges?.canManageTickets ?? true);
+    setPrivCanDeleteTickets(user.privileges?.canDeleteTickets ?? (user.role === 'superadmin'));
+    setPrivCanManageAssets(user.privileges?.canManageAssets ?? true);
+    setPrivCanManageKb(user.privileges?.canManageKnowledgeBase ?? (user.role === 'admin' || user.role === 'superadmin'));
+    setPrivCanManageApprovals(user.privileges?.canManageApprovals ?? (user.role === 'manager' || user.role === 'admin' || user.role === 'superadmin'));
+  };
+
+  const handleSavePrivileges = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!privilegeUser) return;
+    setPrivSaving(true);
+    try {
+      const updated = await api.updateUserPrivileges(privilegeUser.id, {
+        canManageTickets: privCanManageTickets,
+        canDeleteTickets: privCanDeleteTickets,
+        canManageAssets: privCanManageAssets,
+        canManageKnowledgeBase: privCanManageKb,
+        canManageApprovals: privCanManageApprovals,
+      });
+      if (onUpdateUser) {
+        await onUpdateUser(privilegeUser.id, updated);
+      }
+      setPrivilegeUser(null);
+    } catch (err: any) {
+      alert(err.message || 'Failed to update access privileges');
+    } finally {
+      setPrivSaving(false);
+    }
+  };
+
+  // Counts for Segmented Views
+  const adminsCount = availableUsers.filter((u) => u.role === 'admin' || u.role === 'superadmin').length;
+  const staffCount = availableUsers.filter((u) => u.role === 'manager' || u.role === 'technician').length;
+  const requestersCount = availableUsers.filter((u) => u.role === 'requester' || u.role === 'auditor').length;
+
   const filteredUsers = availableUsers.filter((u) => {
+    // Segment Tab Filter
+    if (userSegmentTab === 'admins' && !(u.role === 'admin' || u.role === 'superadmin')) return false;
+    if (userSegmentTab === 'staff' && !(u.role === 'manager' || u.role === 'technician')) return false;
+    if (userSegmentTab === 'requesters' && !(u.role === 'requester' || u.role === 'auditor')) return false;
+
+    // Direct Role Filter
     if (userRoleFilter !== 'all' && u.role !== userRoleFilter) return false;
+
+    // Search Query
     if (userSearch.trim()) {
       const q = userSearch.toLowerCase();
       const match =
@@ -560,18 +1240,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <div className="w-full overflow-x-auto custom-scrollbar pb-1">
         <div className="inline-flex items-center gap-2 p-1.5 neu-flat rounded-2xl border border-slate-200 dark:border-white/10 min-w-max">
           {[
-            { id: 'profile', label: 'My Profile & Role', icon: UserIcon },
-            { id: 'users', label: 'User Directory & Registration', icon: Users },
-            { id: 'fields', label: 'Custom Fields & Form Builder', icon: Sliders },
-            { id: 'admin-mailbox', label: 'Admin Mailboxes (IMAP/POP3/SMTP)', icon: Mail },
-            { id: 'default-gateway', label: 'Default Reply & Polling Gateway', icon: Server },
-            { id: 'sla', label: 'SLA Target Matrix', icon: Clock },
-            { id: 'automations', label: 'Automation Rules', icon: Zap },
-            { id: 'branding', label: 'Branding & Identity', icon: Palette },
-            { id: 'linux-host', label: 'Linux Self-Hosting Guide', icon: Terminal },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
+            { id: 'profile', label: 'My Profile & Role', icon: UserIcon, roles: ['superadmin', 'admin', 'manager', 'technician', 'requester', 'auditor'] },
+            { id: 'users', label: 'User Directory & Registration', icon: Users, roles: ['superadmin', 'admin'] },
+            { id: 'assets', label: 'Hardware Assets & CMDB', icon: HardDrive, roles: ['superadmin', 'admin', 'manager', 'technician'] },
+            { id: 'fields', label: 'Custom Fields & Form Builder', icon: Sliders, roles: ['superadmin', 'admin'] },
+            { id: 'admin-mailbox', label: 'Admin Mailboxes (IMAP/POP3/SMTP)', icon: Mail, roles: ['superadmin', 'admin'] },
+            { id: 'default-gateway', label: 'Default Reply & Polling Gateway', icon: Server, roles: ['superadmin', 'admin'] },
+            { id: 'sla', label: 'SLA Target Matrix', icon: Clock, roles: ['superadmin', 'admin'] },
+            { id: 'automations', label: 'Automation Rules', icon: Zap, roles: ['superadmin', 'admin'] },
+            { id: 'branding', label: 'Branding & Identity', icon: Palette, roles: ['superadmin'] },
+            { id: 'linux-host', label: 'Linux Self-Hosting Guide', icon: Terminal, roles: ['superadmin', 'admin'] },
+          ]
+            .filter((tab) => tab.roles.includes(currentUser.role))
+            .map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
@@ -778,6 +1461,87 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </li>
                 </ul>
               </div>
+
+              {/* Account Password Change Form */}
+              <div className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <KeyRound className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                    Change Account Password
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Update your personal login password. Must be at least 6 characters.
+                  </p>
+                </div>
+
+                {passwordSuccessMsg && (
+                  <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center gap-1.5">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>{passwordSuccessMsg}</span>
+                  </div>
+                )}
+
+                {passwordErrMsg && (
+                  <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300 text-xs font-semibold">
+                    {passwordErrMsg}
+                  </div>
+                )}
+
+                <form onSubmit={handleChangePassword} className="space-y-2.5">
+                  {currentUser.role !== 'superadmin' && (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Current Password
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="••••••••"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      New Password *
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      placeholder="At least 6 characters"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Confirm New Password *
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      placeholder="Re-enter new password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={passwordSaving}
+                    className="w-full neu-btn-primary py-2 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50 transition-all"
+                  >
+                    {passwordSaving ? 'Updating Password...' : 'Update Password'}
+                  </button>
+                </form>
+              </div>
             </div>
           </div>
         </div>
@@ -806,35 +1570,212 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </button>
           </div>
 
-          {/* Registration Link Share Banner */}
-          <div className="neu-flat p-4.5 rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-cyan-500/10 via-indigo-500/10 to-transparent space-y-2">
+          {/* Organization-Specific Self-Registration Links & Custom PSK Configuration */}
+          <div className="space-y-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
-                <ExternalLink className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                Self-Registration Link for Normal Users &amp; Employees
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  Organization Custom Registration Links &amp; Pre-Shared Keys
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  Each organization has a custom registration link. When users join via this link, their account is automatically provisioned under that organization.
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={handleCopyRegistrationLink}
-                className="neu-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer"
-              >
-                {linkCopied ? (
-                  <>
-                    <Check className="w-3.5 h-3.5" /> Copied Link!
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" /> Copy Registration Link
-                  </>
-                )}
-              </button>
+              <div className="text-[11px] font-mono font-bold text-slate-500 dark:text-slate-400">
+                {allOrganizations.length} Registered Organizations
+              </div>
             </div>
-            <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-              Share this link with employees so they can self-register with their email. The portal sends a 6-digit OTP to verify ownership before account creation and ticket submission.
-            </p>
-            <div className="p-2.5 rounded-xl neu-inset bg-slate-100 dark:bg-slate-950/80 border border-slate-300 dark:border-white/10 font-mono text-[11px] font-bold text-cyan-800 dark:text-cyan-300 break-all select-all">
-              {typeof window !== 'undefined' ? `${window.location.origin}/?view=portal&tab=register` : 'http://localhost:3000/?view=portal&tab=register'}
+
+            {pskSuccessMsg && (
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+                <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>{pskSuccessMsg}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4">
+              {allOrganizations.map((org) => {
+                const orgPsk = orgPskValues[org.id] || org.preSharedKey || org.systemSettings?.preSharedKey || 'Sports@9433';
+                const isPskVis = orgPskVisible[org.id] || false;
+                const isSaving = orgPskSaving[org.id] || false;
+                const isLinkCopied = orgCopiedLink[org.id] || false;
+                const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+                const customRegUrl = `${origin}/?view=portal&tab=register&orgId=${org.id}`;
+
+                return (
+                  <div
+                    key={org.id}
+                    className="neu-flat p-4.5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3 bg-white/70 dark:bg-slate-900/60"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-white/5">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-cyan-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                          {org.name.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                            <span>{org.name}</span>
+                            <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/10">
+                              {org.domain || org.id}
+                            </span>
+                            {org.id === organization.id && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300">
+                                Primary Org
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                            Plan: <span className="capitalize font-semibold text-slate-700 dark:text-slate-300">{org.plan}</span> · Status: <span className="capitalize text-emerald-600 dark:text-emerald-400 font-semibold">{org.status}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCopyOrgLink(org.id)}
+                        className="neu-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-colors cursor-pointer self-start sm:self-auto"
+                      >
+                        {isLinkCopied ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" /> Copied Link!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" /> Copy Custom Link
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Custom Registration URL */}
+                    <div>
+                      <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                        <span>Organization Registration URL:</span>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">
+                          Auto-assigns user to {org.name}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-xl neu-inset bg-slate-100 dark:bg-slate-950/80 border border-slate-300 dark:border-white/10 font-mono text-[11px] font-bold text-cyan-800 dark:text-cyan-300 break-all select-all flex items-center justify-between gap-2">
+                        <span>{customRegUrl}</span>
+                        <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      </div>
+                    </div>
+
+                    {/* Pre-Shared Key (PSK) Setting for this organization (Super Admin only can edit/generate) */}
+                    {currentUser.role === 'superadmin' ? (
+                      <div className="pt-2 border-t border-slate-200/80 dark:border-white/5 space-y-2">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <label className="text-[11px] font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                            <KeyRound className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
+                            <span>Pre-Shared Key (PSK) for {org.name}</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300 font-bold">
+                              Super Admin Restricted
+                            </span>
+                          </label>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleGenerateOrgPsk(org.id)}
+                              className="px-2 py-1 text-[11px] neu-btn rounded-lg text-violet-700 dark:text-violet-300 font-bold flex items-center gap-1 cursor-pointer"
+                              title="Generate new secure Pre-Shared Key"
+                            >
+                              <Sparkles className="w-3 h-3 text-violet-600" /> Generate Key
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(orgPsk);
+                                alert(`Copied Pre-Shared Key for ${org.name}`);
+                              }}
+                              className="px-2 py-1 text-[11px] neu-btn rounded-lg text-slate-700 dark:text-slate-300 font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Copy className="w-3 h-3" /> Copy Key
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <input
+                              type={isPskVis ? 'text' : 'password'}
+                              value={orgPsk}
+                              onChange={(e) =>
+                                setOrgPskValues((prev) => ({ ...prev, [org.id]: e.target.value }))
+                              }
+                              placeholder="e.g. Sports@9433 or Helpdesk#2026!"
+                              className="w-full pl-3 pr-9 py-1.5 text-xs font-mono font-bold neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOrgPskVisible((prev) => ({ ...prev, [org.id]: !isPskVis }))
+                              }
+                              className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            >
+                              {isPskVis ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => handleSaveOrgPsk(org.id)}
+                            className="neu-btn-primary px-3.5 py-1.5 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                          >
+                            {isSaving ? 'Saving...' : 'Save PSK'}
+                          </button>
+                        </div>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-medium">
+                          Employees registering under {org.name} enter this key to verify their organization membership and set their password.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="pt-2 border-t border-slate-200/80 dark:border-white/5 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                        <span className="flex items-center gap-1.5">
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                          Pre-Shared Key configured and managed by Super Administrator.
+                        </span>
+                        <span className="font-mono text-[10px] bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded text-slate-600 dark:text-slate-300">
+                          PSK Protected
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+          </div>
+
+          {/* Segmented User Role Category Deck: Admins, Staff/Managers, Requesters */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-200/60 dark:bg-slate-900/60 rounded-xl border border-slate-300/80 dark:border-white/5 w-fit overflow-x-auto custom-scrollbar">
+            {[
+              { id: 'all', label: 'All Accounts', count: availableUsers.length, icon: Users },
+              { id: 'admins', label: 'Admins & Super Admins', count: adminsCount, icon: ShieldCheck },
+              { id: 'staff', label: 'Ticket Managers & Technicians', count: staffCount, icon: KeyRound },
+              { id: 'requesters', label: 'End Users & Requesters', count: requestersCount, icon: UserIcon },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = userSegmentTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setUserSegmentTab(tab.id as any)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    isActive
+                      ? 'neu-btn-primary shadow-xs'
+                      : 'text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
+                  <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-slate-300 dark:bg-white/10 text-slate-800 dark:text-slate-200'}`}>
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           {/* Search & Filter Bar */}
@@ -874,10 +1815,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-white/10 bg-slate-100/80 dark:bg-white/[0.04] text-slate-800 dark:text-slate-200 font-bold">
                     <th className="py-3 px-4">User</th>
-                    <th className="py-3 px-4">Role</th>
-                    <th className="py-3 px-4">Designation / Post</th>
-                    <th className="py-3 px-4">Contact</th>
-                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-3">Role</th>
+                    <th className="py-3 px-3">Organization</th>
+                    <th className="py-3 px-3">Access Privileges</th>
+                    <th className="py-3 px-3">Designation / Post</th>
+                    <th className="py-3 px-3">Contact</th>
+                    <th className="py-3 px-3">Status</th>
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -894,13 +1837,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             </div>
                           )}
                           <div>
-                            <div className="font-semibold text-slate-900 dark:text-white">{user.name}</div>
+                            <div className="font-semibold text-slate-900 dark:text-white font-mono text-xs">
+                              [{user.employeeCode || (user.name.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010')}]{user.name}
+                            </div>
                             <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">{user.email}</div>
                           </div>
                         </div>
                       </td>
 
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-3">
                         <span
                           className={`inline-block font-mono text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${
                             user.role === 'superadmin'
@@ -918,15 +1863,83 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         </span>
                       </td>
 
-                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300 font-medium">
+                      <td className="py-3 px-3">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-cyan-50 dark:bg-cyan-950/40 text-cyan-900 dark:text-cyan-200 border border-cyan-200 dark:border-cyan-800/30">
+                          <Building2 className="w-3 h-3 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                          <span className="truncate max-w-[130px]">
+                            {allOrganizations.find((o) => o.id === user.organizationId)?.name || organization.name}
+                          </span>
+                        </span>
+                      </td>
+
+                      <td className="py-3 px-3">
+                        {user.role === 'requester' ? (
+                          <span className="text-[10px] text-slate-400 font-medium italic">Standard Portal Access</span>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1 max-w-[230px]">
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                                user.privileges?.canManageTickets !== false
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                  : 'bg-slate-200 text-slate-500'
+                              }`}
+                              title="Can view and respond to tickets"
+                            >
+                              Tickets
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                                user.privileges?.canDeleteTickets
+                                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800/40'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
+                              }`}
+                              title={user.privileges?.canDeleteTickets ? 'Can permanently delete tickets' : 'No delete privilege'}
+                            >
+                              {user.privileges?.canDeleteTickets ? 'Delete' : 'No-Del'}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                                user.privileges?.canManageAssets !== false
+                                  ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300'
+                                  : 'bg-slate-200 text-slate-500'
+                              }`}
+                              title="Can manage IT hardware assets & CMDB"
+                            >
+                              Assets
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                                user.privileges?.canManageKnowledgeBase
+                                  ? 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300'
+                                  : 'bg-slate-200 text-slate-500'
+                              }`}
+                              title="Can author & manage knowledge base articles"
+                            >
+                              KB
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                                user.privileges?.canManageApprovals
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                  : 'bg-slate-200 text-slate-500'
+                              }`}
+                              title="Can approve change and asset procurement requests"
+                            >
+                              Approvals
+                            </span>
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-3 text-slate-700 dark:text-slate-300 font-medium">
                         {user.title || <span className="text-slate-400 italic">Not specified</span>}
                       </td>
 
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
+                      <td className="py-3 px-3 text-slate-600 dark:text-slate-400 font-mono text-[11px]">
                         {user.phone || <span className="text-slate-400">—</span>}
                       </td>
 
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-3">
                         <span
                           className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                             user.status === 'suspended'
@@ -945,6 +1958,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          {/* Superadmin can manage access privileges of staff */}
+                          {currentUser.role === 'superadmin' && user.role !== 'requester' && (
+                            <button
+                              type="button"
+                              onClick={() => openPrivilegeModal(user)}
+                              className="p-1.5 text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-white rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/40 transition-colors cursor-pointer"
+                              title="Configure Access Level & Privileges (Delete Ticket, Manage Assets, KB, Approvals)"
+                            >
+                              <KeyRound className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {/* Superadmin can reset password of everyone */}
+                          {currentUser.role === 'superadmin' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setResetUserTarget(user);
+                                setNewPasswordVal('');
+                                setResetErrMsg(null);
+                                setResetSuccessMsg(null);
+                              }}
+                              className="p-1.5 text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/40 border border-amber-200 dark:border-amber-800/40 transition-colors cursor-pointer"
+                              title={`Reset password for ${user.name} (${user.role})`}
+                            >
+                              <Lock className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleEditUser(user)}
@@ -953,25 +1993,785 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setUserToDelete(user)}
-                            className="p-1.5 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
-                            title="Delete user"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {user.role === 'superadmin' ? (
+                            <span
+                              className="p-1.5 text-amber-600 dark:text-amber-400 rounded-lg inline-flex items-center cursor-not-allowed opacity-80"
+                              title="Super Admin account is permanently protected and cannot be deleted by anyone"
+                            >
+                              <Shield className="w-3.5 h-3.5" />
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setUserToDelete(user)}
+                              className="p-1.5 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                              title="Delete user"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
                   ))}
                   {filteredUsers.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
+                      <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
                         No users found matching your search.
                       </td>
                     </tr>
                   )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* TAB: Hardware Assets & IT Inventory CMDB (Point 4)             */}
+      {/* ============================================================= */}
+      {activeTab === 'assets' && (
+        <div className="space-y-6">
+          {/* Asset Form Modal for Full / Edit Operations */}
+          <AssetFormModal
+            isOpen={showAssetModal || !!settingsAssetToEdit}
+            onClose={() => {
+              setShowAssetModal(false);
+              setSettingsAssetToEdit(null);
+            }}
+            users={availableUsers}
+            initialData={settingsAssetToEdit}
+            title={settingsAssetToEdit ? `Edit Asset: ${settingsAssetToEdit.name}` : 'Add New Hardware Asset'}
+            onSubmit={(payload) => {
+              if (settingsAssetToEdit && onUpdateAsset) {
+                onUpdateAsset(settingsAssetToEdit.id, payload);
+              } else if (onCreateAsset) {
+                onCreateAsset(payload);
+              }
+            }}
+          />
+
+          {/* Delete Asset Modal */}
+          {settingsAssetToDelete && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+              <div className="glass-modal max-w-md w-full p-6 rounded-2xl border border-rose-500/30 shadow-2xl space-y-4">
+                <div className="flex items-center gap-3 text-rose-500">
+                  <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                    <Trash2 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Hardware Asset</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Permanently remove from database</p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-700 dark:text-slate-300">
+                  Are you sure you want to permanently delete{' '}
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    &ldquo;{settingsAssetToDelete.name}&rdquo;
+                  </span>{' '}
+                  ({settingsAssetToDelete.id})?
+                </p>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsAssetToDelete(null)}
+                    className="px-3.5 py-1.5 text-xs font-medium rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 border border-slate-200 dark:border-white/10 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onDeleteAsset) onDeleteAsset(settingsAssetToDelete.id);
+                      setSettingsAssetToDelete(null);
+                    }}
+                    className="px-4 py-1.5 text-xs font-bold rounded-lg text-white bg-rose-600 hover:bg-rose-500 shadow-sm transition-all cursor-pointer"
+                  >
+                    Yes, Delete Asset
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                Hardware Assets &amp; Inventory CMDB Management
+              </h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                Register hardware equipment, track serials &amp; models, assign to verified staff, configure warranty periods, and manage custom attributes.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  setSettingsAssetToEdit(null);
+                  setShowAssetModal(true);
+                }}
+                className="neu-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl cursor-pointer shadow-md"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Asset (Modal Form)
+              </button>
+            </div>
+          </div>
+
+          {/* Requester Portal Asset Self-Service Card (Admin Console Toggle) */}
+          <div className="neu-flat p-4 rounded-2xl border border-cyan-500/30 bg-cyan-50/20 dark:bg-cyan-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                <Laptop className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  Requester Portal Asset Self-Service (Add &amp; Remove Feature)
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${
+                    organization.systemSettings?.allowRequesterAssetSelfService !== false
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300'
+                      : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300'
+                  }`}>
+                    {organization.systemSettings?.allowRequesterAssetSelfService !== false ? 'ENABLED' : 'DISABLED'}
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                  Allow requesters and employees to view their assigned hardware assets in their portal and register or remove equipment.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleToggleRequesterAssetSelfService}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  organization.systemSettings?.allowRequesterAssetSelfService !== false ? 'bg-cyan-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+                role="switch"
+                aria-checked={organization.systemSettings?.allowRequesterAssetSelfService !== false}
+                title="Toggle Requester Asset Self-Service"
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    organization.systemSettings?.allowRequesterAssetSelfService !== false ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Requester Asset Name Dropdown Customization Card (Admin Customization) */}
+          <div className="neu-flat p-4 rounded-2xl border border-cyan-500/30 bg-cyan-50/20 dark:bg-cyan-950/20 space-y-3.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-cyan-500/20">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    Requester Asset Name Dropdown Options
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 font-bold border border-cyan-300">
+                      {requesterAssetOptions.length} Options Configured
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                    Customize the equipment categories employees can pick when adding their assigned hardware (Default: CPU, Keyboard, Mouse, Display, Laptop, Headphone, Webcam).
+                  </p>
+                </div>
+              </div>
+
+              {assetOptionsSaveMsg && (
+                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 animate-in fade-in">
+                  {assetOptionsSaveMsg}
+                </span>
+              )}
+            </div>
+
+            {/* Badges of current allowed options */}
+            <div className="flex flex-wrap items-center gap-2">
+              {requesterAssetOptions.map((opt) => (
+                <div
+                  key={opt}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-xl neu-card text-xs font-bold text-slate-800 dark:text-slate-200 border border-slate-200/90 dark:border-white/10 shadow-xs"
+                >
+                  <span>{opt}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveRequesterOption(opt)}
+                    className="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer transition-colors ml-0.5 text-xs font-bold"
+                    title={`Remove ${opt} from dropdown`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Add new option input and Reset button */}
+            <form onSubmit={handleAddRequesterOption} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+              <input
+                type="text"
+                placeholder="Enter new dropdown option (e.g. Docking Station, iPad, Desk Phone)..."
+                value={newDropdownOption}
+                onChange={(e) => setNewDropdownOption(e.target.value)}
+                className="flex-1 px-3 py-1.5 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-medium"
+              />
+              <button
+                type="submit"
+                disabled={!newDropdownOption.trim()}
+                className="neu-btn-primary px-3.5 py-1.5 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                + Add Option
+              </button>
+              <button
+                type="button"
+                onClick={handleResetRequesterOptions}
+                className="neu-btn px-3 py-1.5 text-xs text-slate-600 dark:text-slate-400 font-semibold rounded-xl cursor-pointer hover:text-slate-900 dark:hover:text-white whitespace-nowrap"
+                title="Reset to default 7 options"
+              >
+                Reset Defaults
+              </button>
+            </form>
+          </div>
+
+          {/* POINT 4: DEDICATED QUICK ASSET ADD FIELD CONTAINER */}
+          <div className="neu-flat p-5 rounded-2xl border border-cyan-500/30 bg-cyan-50/20 dark:bg-cyan-950/20 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-cyan-500/20">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900 dark:text-white">
+                    Add New Hardware Asset to System
+                  </h3>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Direct asset registration with specifications, cost, warranty period, and custom fields
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-100 dark:bg-cyan-950/70 text-cyan-800 dark:text-cyan-300 font-bold border border-cyan-300">
+                Administration CMDB
+              </span>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!quickAssetName.trim() || !quickAssetSerial.trim() || !onCreateAsset) {
+                  alert('Asset Name and Serial Number are required.');
+                  return;
+                }
+
+                const assignedUser = !quickAssetUnassigned && quickAssetAssignedUserId
+                  ? availableUsers.find((u) => u.id === quickAssetAssignedUserId)
+                  : null;
+
+                const expiryDate = new Date(quickAssetPurchaseDate || new Date());
+                switch (quickAssetWarrantyPeriod) {
+                  case '6Months':
+                    expiryDate.setMonth(expiryDate.getMonth() + 6);
+                    break;
+                  case '1 year':
+                    expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+                    break;
+                  case '2 year':
+                    expiryDate.setFullYear(expiryDate.getFullYear() + 2);
+                    break;
+                  case '3 year':
+                    expiryDate.setFullYear(expiryDate.getFullYear() + 3);
+                    break;
+                }
+
+                const customFieldsObj: Record<string, string> = {};
+                for (const cf of quickAssetCustomFields) {
+                  if (cf.key.trim()) customFieldsObj[cf.key.trim()] = cf.value.trim();
+                }
+
+                onCreateAsset({
+                  name: quickAssetName.trim(),
+                  type: quickAssetType,
+                  manufacturer: quickAssetManufacturer.trim(),
+                  model: quickAssetModel.trim(),
+                  serialNumber: quickAssetSerial.trim(),
+                  purchaseCost: quickAssetCost ? Number(quickAssetCost) : undefined,
+                  costCurrency: quickAssetCostCurrency,
+                  lifecycleStatus: quickAssetUnassigned ? 'in_stock' : quickAssetLifecycleStatus,
+                  assignedUserId: assignedUser?.id,
+                  assignedUserName: assignedUser?.name,
+                  purchaseDate: quickAssetPurchaseDate,
+                  warrantyPeriod: quickAssetWarrantyPeriod,
+                  warrantyExpiry: expiryDate.toISOString().split('T')[0],
+                  customFields: Object.keys(customFieldsObj).length > 0 ? customFieldsObj : undefined,
+                });
+
+                // Reset quick form
+                setQuickAssetName('');
+                setQuickAssetCost('');
+                setQuickAssetModel('');
+                setQuickAssetSerial(`SN-${Math.random().toString(36).substring(2, 9).toUpperCase()}`);
+                setQuickAssetAssignedUserId(undefined);
+                setQuickAssetUnassigned(true);
+                setQuickAssetLifecycleStatus('in_stock');
+                setQuickAssetCustomFields([]);
+              }}
+              className="space-y-4"
+            >
+              {/* Row 1: Asset Name & Cost */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Asset Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={quickAssetName}
+                    onChange={(e) => setQuickAssetName(e.target.value)}
+                    placeholder="e.g. Apple MacBook Pro 16 / Dell Latitude 7440"
+                    className="w-full px-3 py-2 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Cost (Optional) in $, ₹
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={quickAssetCostCurrency}
+                      onChange={(e) => setQuickAssetCostCurrency(e.target.value as '$' | '₹')}
+                      className="w-16 px-2 py-2 text-xs font-bold neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                    >
+                      <option value="$">$ (USD)</option>
+                      <option value="₹">₹ (INR)</option>
+                    </select>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={quickAssetCost}
+                      onChange={(e) => setQuickAssetCost(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full px-3 py-2 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 font-mono font-medium focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Type, Manufacturer, Model Specification */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Type *
+                  </label>
+                  <select
+                    value={quickAssetType}
+                    onChange={(e) => setQuickAssetType(e.target.value as Asset['type'])}
+                    className="w-full px-3 py-2 text-xs font-semibold neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                  >
+                    <option value="laptop">Laptop Computer</option>
+                    <option value="desktop">Desktop / Workstation</option>
+                    <option value="server">Server / Rack Unit</option>
+                    <option value="monitor">Display / Monitor</option>
+                    <option value="mobile">Mobile / Tablet</option>
+                    <option value="switch">Network Switch / Router</option>
+                    <option value="peripheral">Printer / Peripheral</option>
+                    <option value="license">Software License</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Manufacturer *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={quickAssetManufacturer}
+                    onChange={(e) => setQuickAssetManufacturer(e.target.value)}
+                    placeholder="e.g. Apple, Dell, Lenovo, HP, Cisco"
+                    className="w-full px-3 py-2 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Model Specification *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={quickAssetModel}
+                    onChange={(e) => setQuickAssetModel(e.target.value)}
+                    placeholder="e.g. 16-inch M3 Max 32GB"
+                    className="w-full px-3 py-2 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                  />
+                </div>
+              </div>
+
+              {/* Row 3: Serial Number */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Serial Number / Service Tag *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={quickAssetSerial}
+                    onChange={(e) => setQuickAssetSerial(e.target.value)}
+                    placeholder="e.g. C02G789XYZ12"
+                    className="w-full px-3 py-2 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                  />
+                </div>
+
+                {/* Assignment & Unassigned (In Pool) toggle */}
+                <div className="relative z-20">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Assigned Employee (Point 6 Search)
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-slate-700 dark:text-slate-300 select-none">
+                      <input
+                        type="checkbox"
+                        checked={quickAssetUnassigned}
+                        onChange={(e) => {
+                          setQuickAssetUnassigned(e.target.checked);
+                          if (e.target.checked) {
+                            setQuickAssetAssignedUserId(undefined);
+                            setQuickAssetLifecycleStatus('in_stock');
+                          } else {
+                            if (quickAssetLifecycleStatus === 'in_stock') setQuickAssetLifecycleStatus('in_service');
+                          }
+                        }}
+                        className="rounded text-cyan-600 focus:ring-cyan-500 w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <span>Unassigned (In Pool)</span>
+                    </label>
+                  </div>
+                  <SearchableEmployeeSelect
+                    users={availableUsers}
+                    selectedUserId={quickAssetAssignedUserId}
+                    disabled={quickAssetUnassigned}
+                    allowUnassigned={true}
+                    placeholder="Search 1000+ employees by name, email..."
+                    onSelect={(user) => {
+                      if (user) {
+                        setQuickAssetAssignedUserId(user.id);
+                        setQuickAssetUnassigned(false);
+                        if (quickAssetLifecycleStatus === 'in_stock') setQuickAssetLifecycleStatus('in_service');
+                      } else {
+                        setQuickAssetAssignedUserId(undefined);
+                        setQuickAssetUnassigned(true);
+                        setQuickAssetLifecycleStatus('in_stock');
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Row 4: Lifecycle Status, Purchase Date, Warranty Period */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Lifecycle Status *
+                  </label>
+                  <select
+                    value={quickAssetLifecycleStatus}
+                    onChange={(e) => setQuickAssetLifecycleStatus(e.target.value as Asset['lifecycleStatus'])}
+                    className="w-full px-3 py-2 text-xs font-semibold neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                  >
+                    <option value="in_service">In Service (Active / Deployed)</option>
+                    <option value="in_stock">In Stock (In Pool / Available)</option>
+                    <option value="in_repair">In Repair (Maintenance)</option>
+                    <option value="retired">Retired (Decommissioned)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Purchase Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={quickAssetPurchaseDate}
+                    onChange={(e) => setQuickAssetPurchaseDate(e.target.value)}
+                    className="w-full px-3 py-2 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 font-mono font-medium focus:outline-none focus:ring-2 focus:ring-cyan-500/40 cursor-pointer"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Warranty Period *
+                  </label>
+                  <select
+                    value={quickAssetWarrantyPeriod}
+                    onChange={(e) =>
+                      setQuickAssetWarrantyPeriod(e.target.value as '6Months' | '1 year' | '2 year' | '3 year')
+                    }
+                    className="w-full px-3 py-2 text-xs font-bold neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                  >
+                    <option value="6Months">6 Months</option>
+                    <option value="1 year">1 Year (Default)</option>
+                    <option value="2 year">2 Years</option>
+                    <option value="3 year">3 Years</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Dynamic Custom Fields builder */}
+              <div className="p-3 rounded-xl neu-card bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Custom Fields &amp; Specs (can be added custom field)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setQuickAssetCustomFields([...quickAssetCustomFields, { key: '', value: '' }])}
+                    className="text-[11px] font-bold text-cyan-700 dark:text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" /> Add Custom Field
+                  </button>
+                </div>
+
+                {quickAssetCustomFields.map((cf, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Field Name (e.g. RAM, Processor, Location)"
+                      value={cf.key}
+                      onChange={(e) => {
+                        const copy = [...quickAssetCustomFields];
+                        copy[idx].key = e.target.value;
+                        setQuickAssetCustomFields(copy);
+                      }}
+                      className="w-1/2 px-2.5 py-1 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-lg text-slate-900 dark:text-slate-100"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Value (e.g. 32GB DDR5, M3 Max)"
+                      value={cf.value}
+                      onChange={(e) => {
+                        const copy = [...quickAssetCustomFields];
+                        copy[idx].value = e.target.value;
+                        setQuickAssetCustomFields(copy);
+                      }}
+                      className="w-1/2 px-2.5 py-1 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-lg text-slate-900 dark:text-slate-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setQuickAssetCustomFields(quickAssetCustomFields.filter((_, i) => i !== idx))}
+                      className="p-1 text-rose-500 hover:text-rose-700 cursor-pointer shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-end pt-1">
+                <button
+                  type="submit"
+                  className="neu-btn-primary flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl cursor-pointer shadow-md"
+                >
+                  <Plus className="w-4 h-4" />
+                  Save Hardware Asset to CMDB
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Asset CMDB Table Section */}
+          <div className="neu-card p-4 rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+                <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                <input
+                  type="text"
+                  value={assetSearch}
+                  onChange={(e) => setAssetSearch(e.target.value)}
+                  placeholder="Filter assets by device name, serial, user, model..."
+                  className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <select
+                  value={assetTypeFilter}
+                  onChange={(e) => setAssetTypeFilter(e.target.value)}
+                  className="px-3 py-1.5 text-xs font-bold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                >
+                  <option value="all">All Types</option>
+                  <option value="laptop">Laptops</option>
+                  <option value="desktop">Desktops</option>
+                  <option value="server">Servers</option>
+                  <option value="monitor">Monitors</option>
+                  <option value="mobile">Mobiles</option>
+                  <option value="switch">Switches</option>
+                  <option value="peripheral">Peripherals</option>
+                </select>
+
+                <select
+                  value={assetAssignedFilter}
+                  onChange={(e) => setAssetAssignedFilter(e.target.value as any)}
+                  className="px-3 py-1.5 text-xs font-bold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                >
+                  <option value="all">All Allocation</option>
+                  <option value="assigned">Assigned Staff</option>
+                  <option value="unassigned">In Pool (Unassigned)</option>
+                </select>
+
+                {markedSettingsAssetIds.length > 0 && onBulkDeleteAssets && (
+                  <button
+                    type="button"
+                    onClick={() => setShowBulkDeleteModal(true)}
+                    className="px-3 py-1.5 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-500 text-white cursor-pointer flex items-center gap-1.5 shadow-xs"
+                    title="Bulk delete all checked assets from CMDB"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Marked ({markedSettingsAssetIds.length})</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto custom-scrollbar">
+              <table className="w-full text-left text-xs min-w-[900px]">
+                <thead className="bg-slate-100 dark:bg-slate-900/90 text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-white/10 uppercase tracking-wider font-extrabold text-[10px]">
+                  <tr>
+                    <th className="py-2.5 px-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={assets.length > 0 && markedSettingsAssetIds.length === assets.length}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setMarkedSettingsAssetIds(assets.map((a) => a.id));
+                          } else {
+                            setMarkedSettingsAssetIds([]);
+                          }
+                        }}
+                        className="rounded text-cyan-600 cursor-pointer"
+                      />
+                    </th>
+                    <th className="py-2.5 px-3">Asset ID</th>
+                    <th className="py-2.5 px-3">Name &amp; Model</th>
+                    <th className="py-2.5 px-3">Category</th>
+                    <th className="py-2.5 px-3">Serial</th>
+                    <th className="py-2.5 px-3">Assigned User</th>
+                    <th className="py-2.5 px-3">Cost</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Warranty</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-white/5">
+                  {assets
+                    .filter((a) => {
+                      if (assetTypeFilter !== 'all' && a.type !== assetTypeFilter) return false;
+                      if (assetAssignedFilter === 'assigned' && !a.assignedUserId) return false;
+                      if (assetAssignedFilter === 'unassigned' && a.assignedUserId) return false;
+                      if (assetSearch.trim()) {
+                        const q = assetSearch.toLowerCase();
+                        const match =
+                          a.name.toLowerCase().includes(q) ||
+                          a.serialNumber.toLowerCase().includes(q) ||
+                          a.id.toLowerCase().includes(q) ||
+                          (a.assignedUserName && a.assignedUserName.toLowerCase().includes(q));
+                        if (!match) return false;
+                      }
+                      return true;
+                    })
+                    .map((a) => {
+                      const isMarked = markedSettingsAssetIds.includes(a.id);
+                      return (
+                        <tr key={a.id} className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
+                          <td className="py-2.5 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isMarked}
+                              onChange={() => {
+                                setMarkedSettingsAssetIds((prev) =>
+                                  prev.includes(a.id) ? prev.filter((id) => id !== a.id) : [...prev, a.id]
+                                );
+                              }}
+                              className="rounded text-cyan-600 cursor-pointer"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-cyan-700 dark:text-cyan-400">
+                            {a.id}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="font-bold text-slate-900 dark:text-white">{a.name}</div>
+                            <div className="text-[10px] text-slate-500 font-medium">
+                              {a.manufacturer} {a.model}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 capitalize font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                            {a.type}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-slate-800 dark:text-slate-300">
+                            {a.serialNumber}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            {a.assignedUserName ? (
+                              <span className="font-bold text-slate-900 dark:text-white">{a.assignedUserName}</span>
+                            ) : (
+                              <span className="text-slate-500 italic text-[11px]">Unassigned (In Pool)</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-semibold">
+                            {a.purchaseCost !== undefined ? `${(a.costCurrency && a.costCurrency !== '$' ? a.costCurrency : (organization.systemSettings?.defaultCurrency || '₹'))}${Number(a.purchaseCost).toLocaleString()}` : '—'}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                a.lifecycleStatus === 'in_service'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300'
+                                  : a.lifecycleStatus === 'in_stock'
+                                  ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 border-cyan-300'
+                                  : a.lifecycleStatus === 'in_repair'
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300'
+                                  : 'bg-slate-200 text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              {a.lifecycleStatus}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                            {a.warrantyExpiry || '—'} {a.warrantyPeriod ? `(${a.warrantyPeriod})` : ''}
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setSettingsAssetToEdit(a)}
+                                className="p-1 text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 rounded hover:bg-cyan-50 dark:hover:bg-cyan-950/40 cursor-pointer"
+                                title="Edit Asset"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSettingsAssetToDelete(a)}
+                                className="p-1 text-rose-500 hover:text-rose-700 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                                title="Delete Asset"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -986,8 +2786,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-semibold text-white">Dynamic Form Fields &amp; Attributes</h2>
-              <p className="text-xs text-slate-400">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Dynamic Form Fields &amp; Attributes</h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
                 Create custom fields, set closure validation gates, configure conditional logic, and preview form layouts.
               </p>
             </div>
@@ -1764,46 +3564,267 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* ============================================================= */}
       {/* TAB 5: Automation Rules */}
       {/* ============================================================= */}
+      {/* ============================================================= */}
+      {/* TAB 5: Automation Rules */}
+      {/* ============================================================= */}
       {activeTab === 'automations' && (
-        <div className="neu-flat p-6 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4 max-w-full overflow-x-hidden">
-          <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Zap className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-              Automated Incident Routing &amp; Escalation Rules
-            </h2>
-            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-              Event-driven routing triggers, auto-assignment, and SLA warning notifications.
-            </p>
+        <div className="neu-flat p-6 rounded-2xl border border-slate-200 dark:border-white/10 space-y-6 max-w-full overflow-x-hidden">
+          {/* Header & Create Action */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-white/10">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    Ticket Automation &amp; Escalation Rules
+                    <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-normal">
+                      {automationRules.length} rules
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                    Automate incident triage, team assignments, SLA escalations, tags, and internal runbook updates.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Super Admin / Admin Create Custom Automation Rule Button */}
+            {(currentUser.role === 'superadmin' || currentUser.role === 'admin') && (
+              <button
+                type="button"
+                onClick={handleOpenCreateRule}
+                className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl flex items-center gap-2 cursor-pointer shadow-sm hover:scale-[1.02] active:scale-[0.98] transition-all self-start sm:self-auto shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                Create Custom Automation Rule
+              </button>
+            )}
           </div>
 
-          <div className="space-y-3">
-            {automationRules.map((rule) => (
-              <div key={rule.id} className="neu-card p-4.5 rounded-xl border border-slate-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">{rule.name}</h3>
-                    <span className="text-[10px] font-mono font-bold text-cyan-800 dark:text-cyan-300 bg-cyan-100 dark:bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-300 dark:border-cyan-800/40">
-                      Trigger: {rule.trigger}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">{rule.description}</p>
-                  <div className="text-[11px] text-slate-500 font-mono">
-                    Executed {rule.executionCount || 0} times &bull; Last run: {rule.lastExecutedAt ? new Date(rule.lastExecutedAt).toLocaleTimeString() : 'Never'}
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => onToggleRule(rule.id)}
-                  className={`px-3.5 py-1.5 text-xs rounded-xl font-bold transition-all cursor-pointer whitespace-nowrap self-start sm:self-auto ${
-                    rule.enabled
-                      ? 'neu-btn-primary'
-                      : 'neu-btn text-slate-500'
-                  }`}
+          {/* Quick-Start Preset Templates */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                Quick-Start Automation Templates
+              </span>
+              <span className="text-[11px] text-slate-500">Click to customize &amp; activate</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {AUTOMATION_TEMPLATES.map((tmpl, idx) => (
+                <div
+                  key={idx}
+                  className="p-3.5 rounded-xl neu-card border border-slate-200 dark:border-white/10 hover:border-cyan-500/40 transition-all flex flex-col justify-between gap-2.5 bg-slate-50/50 dark:bg-slate-900/40"
                 >
-                  {rule.enabled ? 'Active Rule' : 'Disabled'}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">{tmpl.name}</h4>
+                      <span className="text-[10px] font-mono font-bold text-amber-700 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 shrink-0">
+                        {tmpl.trigger.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2">{tmpl.description}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleApplyTemplate(tmpl);
+                      setEditingRuleId(null);
+                      setRuleEnabled(true);
+                      setRuleError(null);
+                      setShowRuleModal(true);
+                    }}
+                    className="w-full py-1.5 px-3 text-[11px] font-bold rounded-lg neu-btn text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-300 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Use Template
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Existing Rules List */}
+          <div className="space-y-3 pt-2">
+            <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">Configured Rules ({automationRules.length})</h3>
+            
+            {automationRules.length === 0 ? (
+              <div className="p-8 text-center neu-card rounded-2xl border border-dashed border-slate-300 dark:border-white/15 space-y-3">
+                <div className="w-12 h-12 mx-auto rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                  <Zap className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">No automation rules configured</h4>
+                  <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                    Create custom automations to route incoming tickets, assign teams, or trigger notifications.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenCreateRule}
+                  className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl inline-flex items-center gap-2 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  Create First Automation Rule
                 </button>
               </div>
-            ))}
+            ) : (
+              automationRules.map((rule) => {
+                const triggerLabels: Record<string, string> = {
+                  ticket_created: 'On Ticket Created',
+                  ticket_updated: 'On Ticket Updated',
+                  status_changed: 'On Status Changed',
+                  priority_changed: 'On Priority Changed',
+                };
+
+                return (
+                  <div
+                    key={rule.id}
+                    className={`neu-card p-4.5 rounded-xl border transition-all space-y-3.5 ${
+                      rule.enabled
+                        ? 'border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900/60'
+                        : 'border-slate-200/60 dark:border-white/5 bg-slate-50/50 dark:bg-slate-950/40 opacity-75'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`w-2 h-2 rounded-full ${rule.enabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                          <h3 className="text-sm font-bold text-slate-900 dark:text-white">{rule.name}</h3>
+                          <span className="text-[10px] font-mono font-bold text-cyan-800 dark:text-cyan-300 bg-cyan-100 dark:bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-300 dark:border-cyan-800/40">
+                            ⚡ {triggerLabels[rule.trigger] || rule.trigger}
+                          </span>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                              rule.enabled
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/50'
+                                : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                            }`}
+                          >
+                            {rule.enabled ? 'ACTIVE' : 'DISABLED'}
+                          </span>
+                        </div>
+                        {rule.description && (
+                          <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">{rule.description}</p>
+                        )}
+                      </div>
+
+                      {/* Rule Actions: Toggle, Edit, Delete */}
+                      <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => onToggleRule(rule.id)}
+                          className={`px-3 py-1.5 text-xs rounded-xl font-bold transition-all cursor-pointer whitespace-nowrap ${
+                            rule.enabled
+                              ? 'neu-btn text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
+                              : 'neu-btn text-slate-500'
+                          }`}
+                          title={rule.enabled ? 'Click to disable' : 'Click to activate'}
+                        >
+                          {rule.enabled ? 'Active Rule' : 'Disabled'}
+                        </button>
+
+                        {(currentUser.role === 'superadmin' || currentUser.role === 'admin') && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditRule(rule)}
+                              className="neu-btn p-2 rounded-xl text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 cursor-pointer"
+                              title="Edit Automation Rule"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRuleToDelete(rule)}
+                              className="neu-btn p-2 rounded-xl text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
+                              title="Delete Automation Rule"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Visual Breakdown of Conditions & Actions */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-200/70 dark:border-white/5 text-xs">
+                      {/* IF Conditions */}
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-slate-500 flex items-center gap-1">
+                          <span className="text-amber-600 dark:text-amber-400 font-black">IF</span> Trigger Conditions:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {rule.conditions && rule.conditions.length > 0 ? (
+                            rule.conditions.map((c, i) => (
+                              <span
+                                key={i}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-medium border border-slate-200 dark:border-white/10"
+                              >
+                                <span className="font-semibold text-slate-900 dark:text-white capitalize">{c.field}</span>
+                                <span className="text-slate-500 font-mono text-[10px]">{c.operator.replace('_', ' ')}</span>
+                                {c.operator !== 'is_empty' && (
+                                  <span className="font-bold text-amber-600 dark:text-amber-400">"{c.value}"</span>
+                                )}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">No specific conditions (always runs)</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* THEN Actions */}
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-slate-500 flex items-center gap-1">
+                          <span className="text-cyan-600 dark:text-cyan-400 font-black">THEN</span> Automated Actions:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {rule.actions && rule.actions.length > 0 ? (
+                            rule.actions.map((a, i) => {
+                              let actionLabel = a.type.replace('_', ' ');
+                              let valDisplay = a.value;
+
+                              if (a.type === 'assign_team') {
+                                const t = AVAILABLE_TEAMS.find(team => team.id === a.value);
+                                valDisplay = t ? t.name : a.value;
+                              } else if (a.type === 'assign_technician') {
+                                const u = availableUsers.find(user => user.id === a.value);
+                                valDisplay = u ? u.name : a.value;
+                              }
+
+                              return (
+                                <span
+                                  key={i}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cyan-50 dark:bg-cyan-950/40 text-cyan-900 dark:text-cyan-200 text-[11px] font-medium border border-cyan-200 dark:border-cyan-800/40"
+                                >
+                                  <span className="capitalize">{actionLabel}:</span>
+                                  <span className="font-bold truncate max-w-[150px]">{valDisplay}</span>
+                                </span>
+                              );
+                            })
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">No actions defined</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stats Footer */}
+                    <div className="text-[11px] text-slate-500 font-mono flex items-center justify-between pt-1 border-t border-slate-100 dark:border-white/5">
+                      <span>
+                        Executed <strong className="text-slate-800 dark:text-slate-200">{rule.executionCount || 0}</strong> times
+                      </span>
+                      <span>
+                        Last run: {rule.lastExecutedAt ? new Date(rule.lastExecutedAt).toLocaleString() : 'Never'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}
@@ -1830,6 +3851,148 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           )}
 
           <form onSubmit={handleSaveBranding} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                <span>Organization / Portal Branding Logo</span>
+                <span className="text-[10px] font-mono text-cyan-600 dark:text-cyan-400 font-bold">
+                  Target Dimension: 250 × 150 px (auto adjusts)
+                </span>
+              </label>
+
+              {/* 250 x 150 px Auto-Adjusting Logo Box & Upload Panel */}
+              <div className="flex flex-col md:flex-row items-start gap-4 p-4 rounded-2xl bg-slate-100/70 dark:bg-slate-900/50 border border-slate-300 dark:border-white/10">
+                {/* 250 x 150 px Preview Frame with Auto Adjust (object-contain) */}
+                <div className="flex flex-col items-center gap-1.5 shrink-0">
+                  <div
+                    className="w-[250px] h-[150px] rounded-xl border-2 border-dashed border-cyan-500/40 bg-white dark:bg-slate-950 flex items-center justify-center overflow-hidden p-2 relative shadow-inner group"
+                    title="Logo Preview Frame (250 × 150 px auto adjusts)"
+                  >
+                    {brandLogoUrl && !brandLogoLoadError ? (
+                      <img
+                        src={brandLogoUrl}
+                        alt="Brand Logo Preview"
+                        className="w-full h-full object-contain select-none transition-transform group-hover:scale-105"
+                        onError={() => setBrandLogoLoadError(true)}
+                      />
+                    ) : brandLogoUrl && brandLogoLoadError ? (
+                      <div className="text-center p-2 text-rose-600 dark:text-rose-400 space-y-1">
+                        <AlertCircle className="w-6 h-6 mx-auto text-rose-500" />
+                        <div className="text-[11px] font-bold">Image failed to load</div>
+                        <div className="text-[10px] text-slate-500">Check image URL or choose a preset/upload file</div>
+                      </div>
+                    ) : (
+                      <div className="text-center p-3 text-slate-400 dark:text-slate-500 space-y-1">
+                        <Palette className="w-8 h-8 mx-auto text-cyan-500/60" />
+                        <div className="text-[11px] font-bold">250 × 150 px Frame</div>
+                        <div className="text-[10px]">Auto-adjusts PNG, SVG, JPG</div>
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 font-semibold">
+                    Preview (250 × 150 px auto-fit)
+                  </span>
+                </div>
+
+                {/* File Upload Controls & URL Input */}
+                <div className="flex-1 space-y-3 w-full">
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block mb-1">
+                      Upload Logo (PNG, SVG, or JPG)
+                    </span>
+                    <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-cyan-500/50 hover:border-cyan-500 bg-cyan-50/50 dark:bg-cyan-950/20 text-cyan-800 dark:text-cyan-300 text-xs font-bold cursor-pointer transition-all hover:bg-cyan-100/60 dark:hover:bg-cyan-950/40">
+                      <Upload className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                      <span>Choose File (PNG, SVG, JPG - 250×150 px)</span>
+                      <input
+                        type="file"
+                        accept=".png,.svg,.jpg,.jpeg,image/png,image/svg+xml,image/jpeg"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            const result = event.target?.result as string;
+                            setBrandLogoUrl(result);
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Or Paste Logo Image URL / SVG Data
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="url"
+                        placeholder="https://example.com/logo.png or data:image/png;base64,..."
+                        value={brandLogoUrl}
+                        onChange={(e) => setBrandLogoUrl(e.target.value)}
+                        className="flex-1 px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono"
+                      />
+                      {brandLogoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setBrandLogoUrl('')}
+                          className="px-2.5 py-1.5 text-xs text-rose-600 dark:text-rose-400 neu-btn rounded-lg font-bold hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                        >
+                          Clear Logo
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* One-Click Presets */}
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Ready-to-use Crisp SVG Presets:
+                    </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setBrandLogoUrl(
+                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 150"><rect width="250" height="150" rx="16" fill="%230f172a"/><path d="M125 25 L165 45 V85 C165 110 125 125 125 125 C125 125 85 110 85 85 V45 Z" fill="%230284c7" stroke="%2338bdf8" stroke-width="4"/><path d="M125 45 L135 70 H115 L125 95" stroke="%23ffffff" stroke-width="5" stroke-linecap="round" fill="none"/></svg>'
+                          )
+                        }
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg neu-btn text-cyan-700 dark:text-cyan-300 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 cursor-pointer"
+                      >
+                        Cyber Shield SVG
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setBrandLogoUrl(
+                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 150"><rect width="250" height="150" rx="16" fill="%230f172a"/><path d="M75 90 A25 25 0 0 1 115 65 A35 35 0 0 1 165 75 A25 25 0 0 1 165 105 H75 Z" fill="%2306b6d4" stroke="%2367e8f9" stroke-width="3"/><circle cx="125" cy="85" r="8" fill="%23ffffff"/></svg>'
+                          )
+                        }
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg neu-btn text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer"
+                      >
+                        Cloud Ops SVG
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setBrandLogoUrl(
+                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 150"><rect width="250" height="150" rx="16" fill="%231e1b4b"/><circle cx="125" cy="75" r="42" fill="none" stroke="%23818cf8" stroke-width="4"/><ellipse cx="125" cy="75" rx="42" ry="18" fill="none" stroke="%23c7d2fe" stroke-width="3"/><path d="M105 75 H145 M125 55 V95" stroke="%2338bdf8" stroke-width="4" stroke-linecap="round"/></svg>'
+                          )
+                        }
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg neu-btn text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer"
+                      >
+                        Apex Global SVG
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+                    Upload your high-resolution company or department emblem in PNG, SVG, or JPG format. The logo automatically scales and preserves its aspect ratio within the 250 × 150 px frame on headers and the user portal.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Product Title</label>
               <input
@@ -2099,6 +4262,21 @@ WantedBy=multi-user.target`}
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                  <span>Employee Code (EMP code) *</span>
+                  <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Compulsory (e.g. CBPL1010)</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. CBPL1010"
+                  value={userFormEmployeeCode}
+                  onChange={(e) => setUserFormEmployeeCode(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-mono font-bold tracking-wide"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Role</label>
@@ -2129,6 +4307,27 @@ WantedBy=multi-user.target`}
               </div>
 
               <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                  <span>Assigned Organization *</span>
+                  <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Multi-Tenant Routing</span>
+                </label>
+                <select
+                  value={userFormOrgId}
+                  onChange={(e) => setUserFormOrgId(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                >
+                  {allOrganizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name} ({org.domain || org.id})
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 block font-medium">
+                  When this user submits tickets, they will automatically be classified under this organization.
+                </span>
+              </div>
+
+              <div>
                 <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Designation / Post / Job Title
                 </label>
@@ -2139,6 +4338,27 @@ WantedBy=multi-user.target`}
                   onChange={(e) => setUserFormTitle(e.target.value)}
                   className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-medium"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Assigned Team *
+                </label>
+                <select
+                  value={userFormTeam}
+                  onChange={(e) => setUserFormTeam(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                >
+                  <option value="General Operations">General Operations</option>
+                  <option value="Finance & Accounting">Finance & Accounting</option>
+                  <option value="Global Sales & Marketing">Global Sales & Marketing</option>
+                  <option value="Software & Infrastructure">Software & Infrastructure</option>
+                  <option value="People & HR Operations">People & HR Operations</option>
+                  <option value="Tier 1 Service Desk">Tier 1 Service Desk</option>
+                  <option value="Cloud & Network Operations">Cloud & Network Operations</option>
+                  <option value="Cybersecurity & Compliance">Cybersecurity & Compliance</option>
+                  <option value="Workplace Hardware Logistics">Workplace Hardware Logistics</option>
+                </select>
               </div>
 
               <div>
@@ -2165,6 +4385,80 @@ WantedBy=multi-user.target`}
                   className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
                 >
                   {editingUserId ? 'Save Changes' : 'Register User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Superadmin Reset Password of Everyone */}
+      {resetUserTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md neu-modal p-6 rounded-2xl border border-amber-300 dark:border-amber-500/30 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Reset User Password
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Superadmin override for <strong className="text-slate-900 dark:text-white">{resetUserTarget.name}</strong> ({resetUserTarget.email})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResetUserTarget(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {resetErrMsg && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 text-xs">
+                {resetErrMsg}
+              </div>
+            )}
+            {resetSuccessMsg && (
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-400 text-xs font-bold">
+                {resetSuccessMsg}
+              </div>
+            )}
+
+            <form onSubmit={handleResetUserPassword} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  New Password *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Enter new password (min. 6 characters)"
+                  value={newPasswordVal}
+                  onChange={(e) => setNewPasswordVal(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-medium"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setResetUserTarget(null)}
+                  className="neu-btn px-4 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={resetLoading}
+                  className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50"
+                >
+                  {resetLoading ? 'Resetting...' : 'Confirm Password Reset'}
                 </button>
               </div>
             </form>
@@ -2208,6 +4502,153 @@ WantedBy=multi-user.target`}
                 Delete User
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* Modal: Superadmin Manage Admin Privileges & Access Level      */}
+      {/* ============================================================= */}
+      {privilegeUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-lg neu-modal p-6 rounded-2xl border border-indigo-300 dark:border-indigo-500/30 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Access Level &amp; Administrative Privileges
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Configure granular permissions for <span className="font-bold text-slate-900 dark:text-white">{privilegeUser.name}</span> ({privilegeUser.role.toUpperCase()})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPrivilegeUser(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePrivileges} className="space-y-3.5">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-2.5">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Granular Privilege Flags
+                </div>
+
+                {/* Flag 1: Manage Tickets */}
+                <label className="flex items-start justify-between gap-3 p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span>Manage Tickets (View, Assign, Reply, Close)</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Allows handling support tickets, adding public and internal notes, and updating statuses.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={privCanManageTickets}
+                    onChange={(e) => setPrivCanManageTickets(e.target.checked)}
+                    className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer mt-0.5"
+                  />
+                </label>
+
+                {/* Flag 2: Delete Tickets (Critical Privilege) */}
+                <label className="flex items-start justify-between gap-3 p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-rose-500/40 transition-colors">
+                  <div>
+                    <div className="text-xs font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
+                      <span>Delete Tickets (Permanent Destruction)</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Superadmin privilege to permanently expunge tickets and audit trails from the database.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={privCanDeleteTickets}
+                    onChange={(e) => setPrivCanDeleteTickets(e.target.checked)}
+                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer mt-0.5"
+                  />
+                </label>
+
+                {/* Flag 3: Manage Assets */}
+                <label className="flex items-start justify-between gap-3 p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span>Manage Hardware Assets &amp; Inventory</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Full access to register new CMDB hardware, edit serials/IPs, export Excel, and scrap defective assets.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={privCanManageAssets}
+                    onChange={(e) => setPrivCanManageAssets(e.target.checked)}
+                    className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer mt-0.5"
+                  />
+                </label>
+
+                {/* Flag 4: Manage Knowledge Base */}
+                <label className="flex items-start justify-between gap-3 p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span>Manage Knowledge Base Articles</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Author, edit, publish, and delete self-service helpdesk solutions.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={privCanManageKb}
+                    onChange={(e) => setPrivCanManageKb(e.target.checked)}
+                    className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer mt-0.5"
+                  />
+                </label>
+
+                {/* Flag 5: Manage Approvals */}
+                <label className="flex items-start justify-between gap-3 p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span>Manage Approval Requests</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Authorize equipment purchase requisitions and system change workflows.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={privCanManageApprovals}
+                    onChange={(e) => setPrivCanManageApprovals(e.target.checked)}
+                    className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer mt-0.5"
+                  />
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setPrivilegeUser(null)}
+                  className="neu-btn px-4 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={privSaving}
+                  className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-lg cursor-pointer disabled:opacity-50"
+                >
+                  {privSaving ? 'Saving...' : 'Save Privileges'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -2441,6 +4882,591 @@ WantedBy=multi-user.target`}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* Modal: Create / Edit Custom Automation Rule */}
+      {/* ============================================================= */}
+      {showRuleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in overflow-y-auto">
+          <div className="w-full max-w-2xl neu-modal p-6 rounded-2xl border border-slate-200 dark:border-white/15 my-8 max-h-[90vh] overflow-y-auto custom-scrollbar space-y-5 shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    {editingRuleId ? 'Edit Automation Rule' : 'Create Custom Automation Rule'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Define trigger conditions and automatic actions executed on tickets
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRuleModal(false)}
+                className="neu-btn p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Error Message */}
+            {ruleError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-medium flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{ruleError}</span>
+              </div>
+            )}
+
+            {/* Quick Templates Bar */}
+            {!editingRuleId && (
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-white/10 space-y-2">
+                <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  Pre-fill with Template:
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {AUTOMATION_TEMPLATES.map((tmpl, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleApplyTemplate(tmpl)}
+                      className="px-2.5 py-1 text-[11px] rounded-lg neu-btn text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 font-medium cursor-pointer"
+                    >
+                      {tmpl.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveRule} className="space-y-4">
+              {/* Rule Name & Status */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Rule Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={ruleName}
+                    onChange={(e) => setRuleName(e.target.value)}
+                    placeholder="e.g., Auto-Route Network Incidents to NetOps"
+                    className="w-full px-3 py-2 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-medium"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Status
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded-xl neu-card border border-slate-200 dark:border-white/10 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ruleEnabled}
+                      onChange={(e) => setRuleEnabled(e.target.checked)}
+                      className="rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                    />
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      {ruleEnabled ? 'Active Rule' : 'Disabled'}
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Description
+                </label>
+                <input
+                  type="text"
+                  value={ruleDescription}
+                  onChange={(e) => setRuleDescription(e.target.value)}
+                  placeholder="Optional brief explanation of what this automation executes"
+                  className="w-full px-3 py-2 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-medium"
+                />
+              </div>
+
+              {/* Trigger Event */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                  <span>Trigger Event *</span>
+                  <span className="text-[10px] text-slate-500 font-normal">When should this rule execute?</span>
+                </label>
+                <select
+                  value={ruleTrigger}
+                  onChange={(e) => setRuleTrigger(e.target.value as any)}
+                  className="w-full px-3 py-2 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                >
+                  <option value="ticket_created">When Ticket is Created (Inbound or Manual)</option>
+                  <option value="ticket_updated">When Ticket is Updated</option>
+                  <option value="status_changed">When Ticket Status Changes</option>
+                  <option value="priority_changed">When Ticket Priority Changes</option>
+                </select>
+              </div>
+
+              {/* SECTION: Trigger Conditions (IF) */}
+              <div className="pt-2 border-t border-slate-200 dark:border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 font-mono text-[10px] font-black border border-amber-500/20">
+                      IF
+                    </span>
+                    Trigger Conditions (All conditions must be satisfied - AND logic)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAddCondition}
+                    className="neu-btn px-2.5 py-1 text-[11px] font-bold rounded-lg text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-300 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Add Condition
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {ruleConditions.map((condition, index) => {
+                    const selectOptions: Record<string, string[]> = {
+                      priority: ['low', 'medium', 'high', 'critical'],
+                      impact: ['low', 'medium', 'high', 'critical'],
+                      urgency: ['low', 'medium', 'high', 'critical'],
+                      status: ['open', 'in_progress', 'pending_customer', 'resolved', 'closed'],
+                      category: ['Hardware', 'Software', 'Network', 'Access & Identity', 'Cloud & Email', 'Security', 'Procurement', 'Other'],
+                      source: ['portal', 'email', 'phone', 'chat', 'walk_in'],
+                    };
+
+                    const hasPresetValues = Boolean(selectOptions[condition.field]);
+
+                    return (
+                      <div
+                        key={index}
+                        className="p-3 rounded-xl neu-card bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200 dark:border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-xs"
+                      >
+                        {/* Field */}
+                        <div className="flex-1 min-w-[130px]">
+                          <span className="block text-[10px] font-bold text-slate-500 mb-0.5">Field</span>
+                          <select
+                            value={condition.field}
+                            onChange={(e) => handleConditionChange(index, 'field', e.target.value)}
+                            className="w-full px-2.5 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                          >
+                            <option value="category">Category</option>
+                            <option value="priority">Priority</option>
+                            <option value="impact">Impact</option>
+                            <option value="urgency">Urgency</option>
+                            <option value="status">Status</option>
+                            <option value="source">Source Channel</option>
+                            <option value="title">Title / Subject</option>
+                            <option value="description">Description Content</option>
+                            <option value="requesterEmail">Requester Email</option>
+                          </select>
+                        </div>
+
+                        {/* Operator */}
+                        <div className="w-full sm:w-[130px]">
+                          <span className="block text-[10px] font-bold text-slate-500 mb-0.5">Operator</span>
+                          <select
+                            value={condition.operator}
+                            onChange={(e) => handleConditionChange(index, 'operator', e.target.value as any)}
+                            className="w-full px-2.5 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                          >
+                            <option value="equals">Equals</option>
+                            <option value="not_equals">Does Not Equal</option>
+                            <option value="contains">Contains</option>
+                            <option value="is_empty">Is Empty</option>
+                          </select>
+                        </div>
+
+                        {/* Value */}
+                        {condition.operator !== 'is_empty' && (
+                          <div className="flex-1 min-w-[150px]">
+                            <span className="block text-[10px] font-bold text-slate-500 mb-0.5">Target Value</span>
+                            {hasPresetValues ? (
+                              <select
+                                value={condition.value}
+                                onChange={(e) => handleConditionChange(index, 'value', e.target.value)}
+                                className="w-full px-2.5 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                              >
+                                <option value="">-- Select Value --</option>
+                                {selectOptions[condition.field].map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={condition.value}
+                                onChange={(e) => handleConditionChange(index, 'value', e.target.value)}
+                                placeholder="Enter match text"
+                                className="w-full px-2.5 py-1.5 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
+                              />
+                            )}
+                          </div>
+                        )}
+
+                        {/* Remove condition */}
+                        {ruleConditions.length > 1 && (
+                          <div className="self-end sm:self-center sm:pt-4">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCondition(index)}
+                              className="neu-btn p-1.5 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                              title="Remove Condition"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* SECTION: Automated Actions (THEN) */}
+              <div className="pt-2 border-t border-slate-200 dark:border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 font-mono text-[10px] font-black border border-cyan-500/20">
+                      THEN
+                    </span>
+                    Automated Actions (Actions executed on matched tickets)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAddAction}
+                    className="neu-btn px-2.5 py-1 text-[11px] font-bold rounded-lg text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-300 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Add Action
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {ruleActions.map((action, index) => {
+                    const staff = availableUsers.filter(u => ['superadmin', 'admin', 'manager', 'technician'].includes(u.role));
+
+                    return (
+                      <div
+                        key={index}
+                        className="p-3 rounded-xl neu-card bg-cyan-50/40 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800/40 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-xs"
+                      >
+                        {/* Action Type */}
+                        <div className="w-full sm:w-[180px]">
+                          <span className="block text-[10px] font-bold text-slate-500 mb-0.5">Action Type</span>
+                          <select
+                            value={action.type}
+                            onChange={(e) => handleActionChange(index, 'type', e.target.value as any)}
+                            className="w-full px-2.5 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                          >
+                            <option value="assign_team">Assign to Support Team</option>
+                            <option value="assign_technician">Assign to Technician</option>
+                            <option value="set_priority">Set Priority Level</option>
+                            <option value="set_status">Set Ticket Status</option>
+                            <option value="add_tag">Add Tag</option>
+                            <option value="add_internal_note">Post Internal Runbook Note</option>
+                          </select>
+                        </div>
+
+                        {/* Action Value based on type */}
+                        <div className="flex-1 min-w-[180px]">
+                          <span className="block text-[10px] font-bold text-slate-500 mb-0.5">Action Parameter</span>
+
+                          {action.type === 'assign_team' && (
+                            <select
+                              value={action.value}
+                              onChange={(e) => handleActionChange(index, 'value', e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                            >
+                              {AVAILABLE_TEAMS.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          {action.type === 'assign_technician' && (
+                            <select
+                              value={action.value}
+                              onChange={(e) => handleActionChange(index, 'value', e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                            >
+                              <option value="">-- Select Staff Assignee --</option>
+                              {staff.map((u) => (
+                                <option key={u.id} value={u.id}>
+                                  {u.name} ({u.role})
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          {action.type === 'set_priority' && (
+                            <select
+                              value={action.value}
+                              onChange={(e) => handleActionChange(index, 'value', e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                            >
+                              <option value="low">Low</option>
+                              <option value="medium">Medium</option>
+                              <option value="high">High</option>
+                              <option value="critical">Critical (Sev-1)</option>
+                            </select>
+                          )}
+
+                          {action.type === 'set_status' && (
+                            <select
+                              value={action.value}
+                              onChange={(e) => handleActionChange(index, 'value', e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold cursor-pointer"
+                            >
+                              <option value="open">Open</option>
+                              <option value="in_progress">In Progress</option>
+                              <option value="pending_customer">Pending Customer</option>
+                              <option value="resolved">Resolved</option>
+                              <option value="closed">Closed</option>
+                            </select>
+                          )}
+
+                          {action.type === 'add_tag' && (
+                            <input
+                              type="text"
+                              value={action.value}
+                              onChange={(e) => handleActionChange(index, 'value', e.target.value)}
+                              placeholder="e.g. netops-auto, p1-escalated, vip"
+                              className="w-full px-2.5 py-1.5 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
+                            />
+                          )}
+
+                          {action.type === 'add_internal_note' && (
+                            <textarea
+                              rows={2}
+                              value={action.value}
+                              onChange={(e) => handleActionChange(index, 'value', e.target.value)}
+                              placeholder="Internal runbook comment posted to the ticket..."
+                              className="w-full px-2.5 py-1.5 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium custom-scrollbar"
+                            />
+                          )}
+                        </div>
+
+                        {/* Remove action */}
+                        {ruleActions.length > 1 && (
+                          <div className="self-end sm:self-center sm:pt-4">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAction(index)}
+                              className="neu-btn p-1.5 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                              title="Remove Action"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Form Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setShowRuleModal(false)}
+                  className="neu-btn px-4 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={ruleSaving}
+                  className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50 flex items-center gap-2"
+                >
+                  {ruleSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  {editingRuleId ? 'Update Automation Rule' : 'Create Automation Rule'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* Modal: Delete Automation Rule Confirmation */}
+      {/* ============================================================= */}
+      {ruleToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md neu-modal p-6 rounded-2xl border border-rose-300 dark:border-rose-900/60 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-700/50 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Delete Automation Rule</h3>
+                <p className="text-xs text-slate-500">This action cannot be undone.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Are you sure you want to permanently delete the automation rule{' '}
+              <strong className="text-slate-900 dark:text-white font-bold">"{ruleToDelete.name}"</strong>?
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+              <button
+                type="button"
+                onClick={() => setRuleToDelete(null)}
+                className="neu-btn px-4 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteRule}
+                className="px-4 py-1.5 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-sm"
+              >
+                Delete Rule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* Modal: Create or Edit Hardware Asset (Admin Management)       */}
+      {/* ============================================================= */}
+      {(showAssetModal || settingsAssetToEdit) && (
+        <AssetFormModal
+          isOpen={showAssetModal || !!settingsAssetToEdit}
+          onClose={() => {
+            setShowAssetModal(false);
+            setSettingsAssetToEdit(null);
+          }}
+          initialData={settingsAssetToEdit}
+          users={availableUsers}
+          defaultCurrency={organization.systemSettings?.defaultCurrency || '₹'}
+          title={settingsAssetToEdit ? `Edit Asset: ${settingsAssetToEdit.name}` : 'Register New Hardware Asset'}
+          onSubmit={async (assetData) => {
+            try {
+              if (settingsAssetToEdit && onUpdateAsset) {
+                await onUpdateAsset(settingsAssetToEdit.id, assetData);
+              } else if (onCreateAsset) {
+                await onCreateAsset(assetData);
+              }
+              setShowAssetModal(false);
+              setSettingsAssetToEdit(null);
+            } catch (err: any) {
+              alert(err.message || 'Failed to save asset');
+            }
+          }}
+        />
+      )}
+
+      {/* ============================================================= */}
+      {/* Modal: Delete Hardware Asset Confirmation                     */}
+      {/* ============================================================= */}
+      {settingsAssetToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="max-w-md w-full neu-modal p-6 rounded-2xl border border-rose-300 dark:border-rose-500/30 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-rose-600 dark:text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Asset Confirmation</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Permanently remove hardware from CMDB</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
+              Are you sure you want to delete <span className="font-bold text-slate-900 dark:text-white">{settingsAssetToDelete.name}</span> ({settingsAssetToDelete.serialNumber})? This will unassign it from any user and remove it from inventory.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-200 dark:border-white/10">
+              <button
+                type="button"
+                onClick={() => setSettingsAssetToDelete(null)}
+                className="neu-btn px-4 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    if (onDeleteAsset) {
+                      await onDeleteAsset(settingsAssetToDelete.id);
+                    }
+                    setSettingsAssetToDelete(null);
+                  } catch (err: any) {
+                    alert(err.message || 'Failed to delete asset');
+                  }
+                }}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white shadow-xs cursor-pointer"
+              >
+                Delete Asset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* Modal: Bulk Delete Marked Assets Confirmation                 */}
+      {/* ============================================================= */}
+      {showBulkDeleteModal && markedSettingsAssetIds.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="max-w-md w-full neu-modal p-6 rounded-2xl border border-rose-300 dark:border-rose-500/30 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-rose-600 dark:text-rose-400">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Marked Assets</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Permanently purge marked hardware from CMDB</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
+              Are you sure you want to permanently delete <strong className="text-slate-900 dark:text-white">{markedSettingsAssetIds.length} marked assets</strong>? This will remove them from the IT asset CMDB inventory and unassign them from any employees.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-200 dark:border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowBulkDeleteModal(false)}
+                className="neu-btn px-4 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    if (onBulkDeleteAssets) {
+                      await onBulkDeleteAssets(markedSettingsAssetIds);
+                    }
+                    setMarkedSettingsAssetIds([]);
+                    setShowBulkDeleteModal(false);
+                  } catch (err: any) {
+                    alert(err.message || 'Failed deleting marked assets');
+                  }
+                }}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white shadow-xs cursor-pointer"
+              >
+                Permanently Delete ({markedSettingsAssetIds.length})
+              </button>
+            </div>
           </div>
         </div>
       )}

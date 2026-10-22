@@ -82,22 +82,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     : [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-      <div className="w-full max-w-xl glass-modal rounded-2xl border border-white/20 shadow-2xl overflow-hidden space-y-0">
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 p-4 bg-black/60 backdrop-blur-md animate-in fade-in">
+      <div className="w-full max-w-xl neu-modal rounded-2xl border border-slate-200/90 dark:border-white/20 shadow-2xl overflow-hidden space-y-0">
         {/* Search Input */}
-        <div className="flex items-center px-4 py-3 border-b border-white/10 gap-3">
-          <Search className="w-5 h-5 text-cyan-400 shrink-0" />
+        <div className="flex items-center px-4 py-3 border-b border-slate-200 dark:border-white/10 gap-3">
+          <Search className="w-5 h-5 text-cyan-600 dark:text-cyan-400 shrink-0" />
           <input
             type="text"
             autoFocus
             placeholder="Type a command, ticket ID, asset tag, or keyword..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full text-sm bg-transparent border-0 text-white placeholder-slate-400 focus:outline-none"
+            className="w-full text-sm bg-transparent border-0 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 font-semibold focus:outline-none"
           />
           <button
             onClick={onClose}
-            className="p-1 rounded text-slate-400 hover:text-white"
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -108,7 +108,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           {/* Quick Actions */}
           {!q && (
             <div>
-              <div className="px-3 py-1 text-[10px] font-semibold uppercase text-slate-400">
+              <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Quick Shortcuts
               </div>
               <div className="space-y-1 mt-1">
@@ -117,36 +117,36 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                     onOpenNewTicket();
                     onClose();
                   }}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/10 text-slate-200 transition-colors cursor-pointer text-left"
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-semibold transition-colors cursor-pointer text-left"
                 >
                   <span className="flex items-center gap-2">
-                    <Plus className="w-4 h-4 text-cyan-400" /> Create New Support Ticket
+                    <Plus className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> Create New Support Ticket
                   </span>
-                  <span className="font-mono text-[10px] text-slate-400">Shortcut</span>
+                  <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">Shortcut</span>
                 </button>
                 <button
                   onClick={() => {
                     onOpenEmailSimulator();
                     onClose();
                   }}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/10 text-slate-200 transition-colors cursor-pointer text-left"
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-semibold transition-colors cursor-pointer text-left"
                 >
                   <span className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-cyan-400" /> Simulate Inbound Email
+                    <Mail className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> Simulate Inbound Email
                   </span>
-                  <span className="font-mono text-[10px] text-slate-400">Tool</span>
+                  <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">Tool</span>
                 </button>
                 <button
                   onClick={() => {
                     onNavigate('portal');
                     onClose();
                   }}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/10 text-slate-200 transition-colors cursor-pointer text-left"
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-semibold transition-colors cursor-pointer text-left"
                 >
                   <span className="flex items-center gap-2">
-                    <BookOpen className="w-4 h-4 text-cyan-400" /> Switch to End-User Self-Service Portal
+                    <BookOpen className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> Switch to End-User Self-Service Portal
                   </span>
-                  <span className="font-mono text-[10px] text-slate-400">/portal</span>
+                  <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">/portal</span>
                 </button>
               </div>
             </div>
@@ -155,7 +155,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           {/* Matching Tickets */}
           {matchingTickets.length > 0 && (
             <div>
-              <div className="px-3 py-1 text-[10px] font-semibold uppercase text-slate-400">
+              <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Tickets ({matchingTickets.length})
               </div>
               <div className="space-y-1 mt-1">
@@ -166,16 +166,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       onSelectTicket(t.id);
                       onClose();
                     }}
-                    className="w-full flex items-center justify-between p-2.5 rounded-lg hover:bg-white/10 text-slate-200 transition-colors cursor-pointer text-left"
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 transition-colors cursor-pointer text-left"
                   >
                     <div className="flex items-center gap-2.5">
-                      <TicketIcon className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <TicketIcon className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
                       <div>
-                        <span className="font-mono font-bold text-cyan-400">{t.id}</span> ·{' '}
-                        <span className="text-white font-medium">{t.subject}</span>
+                        <span className="font-mono font-bold text-cyan-700 dark:text-cyan-400">{t.id}</span> ·{' '}
+                        <span className="text-slate-900 dark:text-white font-bold">{t.subject}</span>
                       </div>
                     </div>
-                    <span className="text-[10px] uppercase font-mono text-slate-400">{t.status}</span>
+                    <span className="text-[10px] uppercase font-mono font-bold text-slate-600 dark:text-slate-400">{t.status}</span>
                   </button>
                 ))}
               </div>
@@ -185,7 +185,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           {/* Matching Assets */}
           {matchingAssets.length > 0 && (
             <div>
-              <div className="px-3 py-1 text-[10px] font-semibold uppercase text-slate-400">
+              <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Assets &amp; Devices ({matchingAssets.length})
               </div>
               <div className="space-y-1 mt-1">
@@ -196,16 +196,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       onNavigate('assets');
                       onClose();
                     }}
-                    className="w-full flex items-center justify-between p-2.5 rounded-lg hover:bg-white/10 text-slate-200 transition-colors cursor-pointer text-left"
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 transition-colors cursor-pointer text-left"
                   >
                     <div className="flex items-center gap-2.5">
-                      <Server className="w-4 h-4 text-indigo-400 shrink-0" />
+                      <Server className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                       <div>
-                        <span className="font-mono font-bold text-indigo-300">{a.id}</span> ·{' '}
-                        <span className="text-white font-medium">{a.name} ({a.model})</span>
+                        <span className="font-mono font-bold text-indigo-700 dark:text-indigo-300">{a.id}</span> ·{' '}
+                        <span className="text-slate-900 dark:text-white font-bold">{a.name} ({a.model})</span>
                       </div>
                     </div>
-                    <span className="text-[10px] font-mono text-slate-400">{a.serialNumber}</span>
+                    <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 font-medium">{a.serialNumber}</span>
                   </button>
                 ))}
               </div>
@@ -215,7 +215,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           {/* Matching Articles */}
           {matchingArticles.length > 0 && (
             <div>
-              <div className="px-3 py-1 text-[10px] font-semibold uppercase text-slate-400">
+              <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Knowledge Base Articles ({matchingArticles.length})
               </div>
               <div className="space-y-1 mt-1">
@@ -226,13 +226,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       onNavigate('kb');
                       onClose();
                     }}
-                    className="w-full flex items-center justify-between p-2.5 rounded-lg hover:bg-white/10 text-slate-200 transition-colors cursor-pointer text-left"
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 transition-colors cursor-pointer text-left"
                   >
                     <div className="flex items-center gap-2.5">
-                      <BookOpen className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span className="text-white font-medium">{art.title}</span>
+                      <BookOpen className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span className="text-slate-900 dark:text-white font-bold">{art.title}</span>
                     </div>
-                    <span className="text-[10px] text-cyan-400">{art.category}</span>
+                    <span className="text-[10px] text-cyan-700 dark:text-cyan-400 font-bold">{art.category}</span>
                   </button>
                 ))}
               </div>
@@ -240,13 +240,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           )}
 
           {q && matchingTickets.length === 0 && matchingAssets.length === 0 && matchingArticles.length === 0 && (
-            <div className="p-8 text-center text-slate-400">
+            <div className="p-8 text-center text-slate-500 dark:text-slate-400 font-medium">
               No matching tickets, assets, or knowledge articles for "{query}".
             </div>
           )}
         </div>
 
-        <div className="px-4 py-2 bg-slate-950 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400">
+        <div className="px-4 py-2.5 bg-slate-100 dark:bg-slate-950 border-t border-slate-200 dark:border-white/10 flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-400 font-medium">
           <span>Navigate with mouse or keyboard</span>
           <span>Press ESC to close</span>
         </div>

@@ -17,16 +17,35 @@ import {
   Lock,
   UserPlus,
   Check,
+  Paperclip,
+  Upload,
+  Trash2,
+  Laptop,
+  MapPin,
+  AlertTriangle,
+  Plus,
 } from 'lucide-react';
-import { Ticket, KnowledgeArticle, ServiceCatalogItem, User, CustomFieldDefinition } from '../types';
+import { Ticket, KnowledgeArticle, ServiceCatalogItem, User, CustomFieldDefinition, Organization, Asset } from '../types';
 import { api } from '../services/api';
 
 interface PortalViewProps {
-  currentUser: User;
+  currentUser: User | null;
   tickets: Ticket[];
   knowledgeArticles: KnowledgeArticle[];
   serviceCatalog: ServiceCatalogItem[];
   customFields: CustomFieldDefinition[];
+  organization?: Organization;
+  organizations?: Organization[];
+  systemSettings?: {
+    requireOtpForTicketSubmission: boolean;
+    enableTicketRating: boolean;
+    enableCategoryAutoAssign: boolean;
+  };
+  assets?: Asset[];
+  allowRequesterAssetSelfService?: boolean;
+  onCreateAsset?: (data: Partial<Asset>) => Promise<any> | void;
+  onUpdateAsset?: (id: string, data: Partial<Asset>) => Promise<any> | void;
+  onDeleteAsset?: (id: string) => Promise<any> | void;
   onOpenNewTicket: () => void;
   onSelectTicket: (ticketId: string) => void;
   onNavigateToCatalog: () => void;
@@ -34,6 +53,7 @@ interface PortalViewProps {
   onSubmitSurvey: (ticketId: string, rating: number, comment?: string) => void;
   onSubmitTicket: (data: any) => Promise<any>;
   onUserRegistered?: (user: User) => void;
+  onOpenLogin?: (type?: 'user' | 'admin') => void;
   initialTab?: string;
 }
 
@@ -43,6 +63,14 @@ export const PortalView: React.FC<PortalViewProps> = ({
   knowledgeArticles,
   serviceCatalog,
   customFields,
+  organization,
+  organizations,
+  systemSettings,
+  assets = [],
+  allowRequesterAssetSelfService = true,
+  onCreateAsset,
+  onUpdateAsset,
+  onDeleteAsset,
   onOpenNewTicket,
   onSelectTicket,
   onNavigateToCatalog,
@@ -50,9 +78,16 @@ export const PortalView: React.FC<PortalViewProps> = ({
   onSubmitSurvey,
   onSubmitTicket,
   onUserRegistered,
+  onOpenLogin,
   initialTab,
 }) => {
-  const [activeTab, setActiveTab] = useState<'home' | 'submit' | 'my-tickets' | 'kb' | 'register'>(
+  const requireOtp = systemSettings?.requireOtpForTicketSubmission === true;
+  const isRatingEnabled = systemSettings?.enableTicketRating !== false;
+
+  const allOrganizations = organizations && organizations.length > 0 ? organizations : (organization ? [organization] : []);
+  const urlOrgId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('orgId') : null;
+
+  const [activeTab, setActiveTab] = useState<'home' | 'submit' | 'my-tickets' | 'kb' | 'register' | 'my-assets'>(
     (initialTab as any) || 'home'
   );
   const [searchQuery, setSearchQuery] = useState('');
@@ -75,10 +110,16 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [regError, setRegError] = useState<string | null>(null);
   const [regSuccess, setRegSuccess] = useState<string | null>(null);
   const [regSubmitting, setRegSubmitting] = useState(false);
+  const [regOrgId, setRegOrgId] = useState<string>(urlOrgId || organization?.id || 'org-lakhan-tech');
+  const [regPsk, setRegPsk] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regEmployeeCode, setRegEmployeeCode] = useState('');
 
-  // In-Page Ticket Submission State
-  const [submitEmail, setSubmitEmail] = useState(currentUser.email);
-  const [isOtpVerified, setIsOtpVerified] = useState(false);
+  // In-Page Ticket Submission State (supports guest and logged in)
+  const [submitName, setSubmitName] = useState(currentUser?.name || '');
+  const [submitEmail, setSubmitEmail] = useState(currentUser?.email || '');
+  const [formLocationDesk, setFormLocationDesk] = useState('');
+  const [isOtpVerified, setIsOtpVerified] = useState(!requireOtp);
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otpLoading, setOtpLoading] = useState(false);
@@ -91,19 +132,156 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [formPriority, setFormPriority] = useState('normal');
   const [formDescription, setFormDescription] = useState('');
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
+  const [formAttachments, setFormAttachments] = useState<Array<{ id: string; name: string; size: number; type: string; url: string; }>>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Requester Asset Management State (Point 1-6)
+  const [showAddAssetModal, setShowAddAssetModal] = useState(false);
+  const [newAssetName, setNewAssetName] = useState('Laptop');
+  const [newAssetType, setNewAssetType] = useState<any>('laptop');
+  const [newAssetManufacturer, setNewAssetManufacturer] = useState('');
+  const [newAssetModel, setNewAssetModel] = useState('');
+  const [newAssetSerial, setNewAssetSerial] = useState('');
+  const [newAssetLocationDesk, setNewAssetLocationDesk] = useState('');
+  const [assetActionMsg, setAssetActionMsg] = useState<string | null>(null);
+  const [assetActionError, setAssetActionError] = useState<string | null>(null);
+
+  // Customizable Requester Asset Name Dropdown Options (CPU, Keyboard, Mouse, Display, Laptop, Headphone, Webcam)
+  const allowedRequesterAssetNames = React.useMemo(() => {
+    const custom = (organization?.systemSettings as any)?.requesterAssetOptions;
+    if (custom && Array.isArray(custom) && custom.length > 0) {
+      return custom;
+    }
+    return ['CPU', 'Keyboard', 'Mouse', 'Display', 'Laptop', 'Headphone', 'Webcam'];
+  }, [organization?.systemSettings]);
+
+  const mapAssetNameToType = (name: string): any => {
+    const lower = name.toLowerCase();
+    if (lower.includes('cpu') || lower.includes('workstation') || lower.includes('desktop')) return 'desktop';
+    if (lower.includes('laptop')) return 'laptop';
+    if (lower.includes('display') || lower.includes('monitor') || lower.includes('screen')) return 'monitor';
+    if (lower.includes('keyboard') || lower.includes('mouse') || lower.includes('headphone') || lower.includes('webcam') || lower.includes('peripheral') || lower.includes('accessory')) return 'peripheral';
+    return 'peripheral';
+  };
+
+  // Assets belonging/assigned to current user
+  const myAssignedAssets = React.useMemo(() => {
+    if (!currentUser || !assets) return [];
+    return assets.filter(
+      (a) =>
+        a.assignedUserId === currentUser.id ||
+        a.assignedToUserId === currentUser.id ||
+        (a.assignedUserName && a.assignedUserName.toLowerCase() === currentUser.name.toLowerCase()) ||
+        (a.assignedToUserName && a.assignedToUserName.toLowerCase() === currentUser.name.toLowerCase()) ||
+        (a.assignedToUserEmail && a.assignedToUserEmail.toLowerCase() === currentUser.email.toLowerCase())
+    );
+  }, [currentUser, assets]);
+
+  // Handle direct snip paste (Ctrl+V) into ticket description with 4 attachments & 2 MB total limit
+  const handleFormPaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.indexOf('image') !== -1) {
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        const currentTotal = formAttachments.reduce((acc, a) => acc + (a.size || 0), 0);
+        if (formAttachments.length >= 4) {
+          alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+          return;
+        }
+        if (currentTotal + file.size > 2 * 1024 * 1024) {
+          alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (Current: ${(currentTotal / (1024 * 1024)).toFixed(2)} MB)`);
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (uploadEvent) => {
+          const dataUrl = uploadEvent.target?.result as string;
+          const newAttachment = {
+            id: `att-portal-snip-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            name: `snip-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.png`,
+            size: file.size,
+            type: file.type || 'image/png',
+            url: dataUrl,
+          };
+          setFormAttachments((prev) => (prev.length < 4 ? [...prev, newAttachment] : prev));
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  };
+
+  // Handle file attachment upload with 4 attachments & 2 MB total limit
+  const handleFormFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    let currentTotal = formAttachments.reduce((acc, a) => acc + (a.size || 0), 0);
+    let count = formAttachments.length;
+    const acceptedFiles: File[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (count >= 4) {
+        alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+        break;
+      }
+      if (currentTotal + file.size > 2 * 1024 * 1024) {
+        alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (File "${file.name}" would exceed limit)`);
+        break;
+      }
+      currentTotal += file.size;
+      count++;
+      acceptedFiles.push(file);
+    }
+
+    acceptedFiles.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        const newAtt = {
+          id: `att-portal-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          name: file.name,
+          size: file.size,
+          type: file.type || 'application/octet-stream',
+          url: dataUrl,
+        };
+        setFormAttachments((prev) => (prev.length < 4 ? [...prev, newAtt] : prev));
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
 
   // Tickets belonging to current user
-  const myTickets = tickets.filter(
-    (t) => t.requesterId === currentUser.id || t.requesterEmail === currentUser.email
-  );
+  const myTickets = currentUser
+    ? tickets.filter(
+        (t) => t.requesterId === currentUser.id || t.requesterEmail?.toLowerCase() === currentUser.email?.toLowerCase()
+      )
+    : [];
+
+  useEffect(() => {
+    if (currentUser) {
+      setSubmitName(currentUser.name);
+      setSubmitEmail(currentUser.email);
+    }
+  }, [currentUser]);
 
   // Check stored OTP verification for user email and URL tab parameter
   useEffect(() => {
-    const verified = sessionStorage.getItem(`otp_verified_${currentUser.email}`);
-    if (verified === 'true') {
+    if (!requireOtp) {
       setIsOtpVerified(true);
+    } else if (currentUser?.email) {
+      const verified = sessionStorage.getItem(`otp_verified_${currentUser.email}`);
+      if (verified === 'true') {
+        setIsOtpVerified(true);
+      }
     }
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -112,7 +290,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
         setActiveTab(tabParam as any);
       }
     }
-  }, [currentUser.email]);
+  }, [currentUser?.email, requireOtp]);
 
   const handleSendRegOtp = async () => {
     if (!regEmail || !regEmail.includes('@')) {
@@ -154,9 +332,21 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   const handleCompleteRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim() || !regEmail.trim()) return;
-    if (!regOtpVerified) {
-      setRegError('Email verification required before registering.');
+    if (!regName.trim() || !regEmail.trim()) {
+      setRegError('Please provide your name and work email.');
+      return;
+    }
+    if (!regEmployeeCode.trim()) {
+      setRegError('Employee Code is compulsory (e.g. CBPL2045).');
+      return;
+    }
+    const hasPsk = Boolean(regPsk.trim());
+    if (!hasPsk && !regOtpVerified) {
+      setRegError('Please enter an Admin Pre-Shared Key (PSK) or verify your email via OTP before registering.');
+      return;
+    }
+    if (!regPassword.trim() || regPassword.trim().length < 4) {
+      setRegError('Please set a password of at least 4 characters.');
       return;
     }
     setRegSubmitting(true);
@@ -165,9 +355,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
       const res = await api.registerUser({
         name: regName.trim(),
         email: regEmail.trim(),
+        employeeCode: regEmployeeCode.trim().toUpperCase(),
         title: regTitle.trim(),
         phone: regPhone.trim(),
-        organizationId: currentUser.organizationId,
+        departmentId: regDepartment,
+        organizationId: regOrgId || currentUser?.organizationId || organization?.id || 'org-lakhan-tech',
+        preSharedKey: regPsk.trim() || undefined,
+        password: regPassword.trim(),
       });
       const registeredUser = res.user;
       setRegSuccess(`Account created successfully! Welcome to the portal, ${registeredUser.name}.`);
@@ -230,27 +424,74 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formSubject.trim() || !formDescription.trim()) return;
+    setSubmitError(null);
 
-    if (!isOtpVerified) {
-      setOtpError('Email confirmation required before ticket submission.');
+    if (!formSubject.trim()) {
+      setSubmitError('Please enter a ticket subject / summary.');
       return;
+    }
+
+    if (!formDescription.trim()) {
+      setSubmitError('Please provide a description of the issue.');
+      return;
+    }
+
+    if (!formLocationDesk.trim()) {
+      setSubmitError('Location / Desk No is mandatory for IT support requests.');
+      return;
+    }
+
+    if (requireOtp && !isOtpVerified) {
+      setSubmitError('Email confirmation required before ticket submission. Please verify your OTP.');
+      return;
+    }
+
+    if (!submitEmail.trim()) {
+      setSubmitError('Please provide a valid work email address.');
+      return;
+    }
+
+    // Validate custom fields (e.g. VNC)
+    for (const field of customFields) {
+      if (field.visibleOnPortal && field.enabled !== false && field.required) {
+        if (field.conditionalRule) {
+          let cur = '';
+          if (field.conditionalRule.dependsOnField === 'category') cur = formCategory;
+          else if (field.conditionalRule.dependsOnField === 'priority') cur = formPriority;
+          else cur = customValues[field.conditionalRule.dependsOnField] || '';
+
+          const match =
+            field.conditionalRule.operator === 'equals'
+              ? cur === field.conditionalRule.value
+              : cur !== field.conditionalRule.value;
+          if (!match) continue;
+        }
+
+        const val = customValues[field.name];
+        if (val === undefined || val === null || String(val).trim() === '') {
+          setSubmitError(`Please fill out mandatory field: "${field.label || field.name}"`);
+          return;
+        }
+      }
     }
 
     setSubmitting(true);
     try {
       await onSubmitTicket({
-        subject: formSubject,
-        description: formDescription,
+        subject: formSubject.trim(),
+        description: formDescription.trim(),
         category: formCategory,
         priority: formPriority,
         type: 'incident',
         channel: 'portal',
-        requesterId: currentUser.id,
-        requesterName: currentUser.name,
-        requesterEmail: submitEmail || currentUser.email,
+        locationDesk: formLocationDesk.trim(),
+        requesterId: currentUser?.id,
+        requesterName: submitName.trim() || currentUser?.name || submitEmail.split('@')[0],
+        requesterEmail: submitEmail.trim(),
+        requesterEmployeeCode: currentUser?.employeeCode,
         customFields: customValues,
-        otpVerified: true,
+        attachments: formAttachments,
+        otpVerified: isOtpVerified,
       });
 
       setSubmitSuccess('✓ Your ticket has been logged and assigned to the IT Service Desk!');
@@ -258,12 +499,91 @@ export const PortalView: React.FC<PortalViewProps> = ({
         setSubmitSuccess(null);
         setFormSubject('');
         setFormDescription('');
-        setActiveTab('my-tickets');
+        setFormLocationDesk('');
+        setFormAttachments([]);
+        setCustomValues({});
+        if (currentUser) {
+          setActiveTab('my-tickets');
+        } else {
+          setActiveTab('home');
+        }
       }, 2000);
     } catch (err: any) {
-      setOtpError(err.message || 'Failed to submit ticket');
+      setSubmitError(err.message || 'Failed to submit ticket');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleAddRequesterAsset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAssetName.trim()) return;
+    if (!newAssetManufacturer.trim()) {
+      setAssetActionError('Manufacturer is mandatory.');
+      return;
+    }
+    if (!newAssetLocationDesk.trim()) {
+      setAssetActionError('Location / Assigned Desk no. is mandatory.');
+      return;
+    }
+
+    try {
+      const assetPayload: Partial<Asset> = {
+        name: newAssetName.trim(),
+        type: newAssetType,
+        manufacturer: newAssetManufacturer.trim(),
+        model: newAssetModel.trim() || undefined,
+        serialNumber: newAssetSerial.trim() || `TAG-${Date.now().toString().slice(-6)}`,
+        locationDesk: newAssetLocationDesk.trim(),
+        assignedUserId: currentUser?.id,
+        assignedUserName: currentUser?.name,
+        assignedToUserId: currentUser?.id,
+        assignedToUserName: currentUser?.name,
+        assignedToUserEmail: currentUser?.email,
+        assignedDate: new Date().toISOString(),
+        lifecycleStatus: 'in_service',
+        status: 'in_service' as any,
+        costStatus: 'Pending (Admin Verification)',
+        purchaseCost: 0,
+      };
+
+      if (onCreateAsset) {
+        await onCreateAsset(assetPayload);
+      }
+      setAssetActionMsg(`✓ Equipment "${newAssetName}" registered and marked In Service.`);
+      setShowAddAssetModal(false);
+      setNewAssetName(allowedRequesterAssetNames[0] || 'CPU');
+      setNewAssetType(mapAssetNameToType(allowedRequesterAssetNames[0] || 'CPU'));
+      setNewAssetManufacturer('');
+      setNewAssetModel('');
+      setNewAssetSerial('');
+      setNewAssetLocationDesk('');
+      setAssetActionError(null);
+      setTimeout(() => setAssetActionMsg(null), 3500);
+    } catch (err: any) {
+      setAssetActionError(err.message || 'Failed to add asset');
+    }
+  };
+
+  const handleRemoveRequesterAsset = async (asset: Asset) => {
+    if (!confirm(`Are you sure you want to remove/unassign "${asset.name}" (${asset.id}) from your portal profile?`)) {
+      return;
+    }
+    try {
+      if (onUpdateAsset) {
+        await onUpdateAsset(asset.id, {
+          assignedToUserId: undefined,
+          assignedToUserName: undefined,
+          assignedToUserEmail: undefined,
+          status: 'in_stock',
+        });
+      } else if (onDeleteAsset) {
+        await onDeleteAsset(asset.id);
+      }
+      setAssetActionMsg(`✓ Equipment "${asset.name}" removed from your assigned assets.`);
+      setTimeout(() => setAssetActionMsg(null), 3000);
+    } catch (err: any) {
+      setAssetActionError(err.message || 'Failed to remove asset');
     }
   };
 
@@ -282,33 +602,42 @@ export const PortalView: React.FC<PortalViewProps> = ({
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-2">
       {/* Portal Hero Header */}
-      <div className="relative overflow-hidden rounded-2xl glass-panel p-6 sm:p-8 border border-white/10 bg-gradient-to-r from-slate-900/90 via-slate-900/80 to-cyan-950/40 text-center sm:text-left">
+      <div className="relative overflow-hidden rounded-2xl neu-flat p-6 sm:p-8 border border-slate-200/90 dark:border-white/10 bg-gradient-to-r from-sky-50/80 via-white to-indigo-50/80 dark:from-slate-900/95 dark:via-slate-900/90 dark:to-cyan-950/40 text-center sm:text-left shadow-sm">
         <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="space-y-2 max-w-xl">
-            <span className="px-2.5 py-0.5 rounded text-[11px] font-mono uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+            <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-mono uppercase bg-cyan-100 dark:bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-500/30 font-bold inline-block">
               IT Self-Service Portal
             </span>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-              How can IT support assist you today, {currentUser.name.split(' ')[0]}?
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+              How can IT support assist you today, <span className="text-cyan-600 dark:text-cyan-400 font-mono">{currentUser ? `[${currentUser.employeeCode || (currentUser.name.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010')}]${currentUser.name}` : 'there'}</span>?
             </h1>
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
               Submit support tickets, request hardware &amp; software, track open requests, or browse step-by-step guides.
             </p>
           </div>
 
-          <div className="shrink-0 flex flex-col gap-2 w-full sm:w-auto">
+          <div className="shrink-0 flex flex-col gap-2.5 w-full sm:w-auto">
             <button
               onClick={() => setActiveTab('submit')}
-              className="px-5 py-2.5 text-xs font-semibold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-cyan-900/40 transition-all cursor-pointer text-center"
+              className="neu-btn-primary px-5 py-2.5 text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer text-center whitespace-nowrap"
             >
               + Submit a Support Ticket
             </button>
             <button
               onClick={() => setActiveTab('my-tickets')}
-              className="px-5 py-2 text-xs font-medium text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-colors text-center"
+              className="neu-btn px-5 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer text-center transition-all hover:text-cyan-700 dark:hover:text-cyan-300"
             >
               View My Requests ({myTickets.length})
             </button>
+            {currentUser && (
+              <button
+                onClick={() => setActiveTab('my-assets')}
+                className="neu-btn px-5 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer text-center transition-all hover:text-cyan-700 dark:hover:text-cyan-300 flex items-center justify-center gap-1.5"
+              >
+                <Laptop className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                <span>My Assigned Equipment ({myAssignedAssets.length})</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -323,107 +652,176 @@ export const PortalView: React.FC<PortalViewProps> = ({
               : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
           }`}
         >
-          Portal Overview
+          {!currentUser ? 'Service Portal Guest' : 'Service Portal'}
         </button>
-        <button
-          onClick={() => setActiveTab('submit')}
-          className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
-            activeTab === 'submit'
-              ? 'neu-btn-primary shadow-xs'
-              : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
-          }`}
-        >
-          <PlusCircle className="w-3.5 h-3.5" /> Submit Support Ticket
-        </button>
-        <button
-          onClick={() => setActiveTab('my-tickets')}
-          className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
-            activeTab === 'my-tickets'
-              ? 'neu-btn-primary shadow-xs'
-              : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
-          }`}
-        >
-          My Tickets ({myTickets.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('kb')}
-          className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
-            activeTab === 'kb'
-              ? 'neu-btn-primary shadow-xs'
-              : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
-          }`}
-        >
-          <BookOpen className="w-3.5 h-3.5" /> Help Knowledge Base
-        </button>
-        <button
-          onClick={() => setActiveTab('register')}
-          className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
-            activeTab === 'register'
-              ? 'neu-btn-primary shadow-xs'
-              : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
-          }`}
-        >
-          <UserPlus className="w-3.5 h-3.5" /> Self-Register Account
-        </button>
+        {currentUser && (
+          <button
+            onClick={() => setActiveTab('kb')}
+            className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'kb'
+                ? 'neu-btn-primary shadow-xs'
+                : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" /> Knowledge Base
+          </button>
+        )}
+        {!currentUser ? (
+          <>
+            <button
+              onClick={() => setActiveTab('submit')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'submit'
+                  ? 'neu-btn-primary shadow-xs'
+                  : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+              }`}
+            >
+              <PlusCircle className="w-3.5 h-3.5" /> Submit Guest Ticket
+            </button>
+            <button
+              onClick={() => setActiveTab('register')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'register'
+                  ? 'neu-btn-primary shadow-xs'
+                  : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5" /> Employee Registration
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => setActiveTab('submit')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'submit'
+                  ? 'neu-btn-primary shadow-xs'
+                  : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+              }`}
+            >
+              <PlusCircle className="w-3.5 h-3.5" /> Submit Support Ticket
+            </button>
+            <button
+              onClick={() => setActiveTab('my-tickets')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'my-tickets'
+                  ? 'neu-btn-primary shadow-xs'
+                  : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+              }`}
+            >
+              My Tickets ({myTickets.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('my-assets')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'my-assets'
+                  ? 'neu-btn-primary shadow-xs'
+                  : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+              }`}
+            >
+              <Laptop className="w-3.5 h-3.5" /> My Assigned Assets ({myAssignedAssets.length})
+            </button>
+          </>
+        )}
       </div>
 
       {/* Tab 1: Overview */}
       {activeTab === 'home' && (
         <div className="space-y-6">
-          {/* 4 Feature Service Tiles */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div
-              onClick={() => setActiveTab('submit')}
-              className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 hover:border-cyan-500/50 cursor-pointer space-y-2 group"
-            >
-              <div className="w-10 h-10 rounded-xl bg-cyan-100 dark:bg-cyan-500/20 text-cyan-700 dark:text-cyan-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <PlusCircle className="w-5 h-5" />
+          {/* Feature Service Tiles: 2 tiles for guests, 4 tiles for logged-in requesters */}
+          {!currentUser ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div
+                onClick={() => setActiveTab('submit')}
+                className="neu-card p-6 rounded-2xl border border-cyan-300/80 dark:border-cyan-500/30 hover:border-cyan-500 cursor-pointer space-y-3 group bg-gradient-to-br from-cyan-50/60 to-transparent dark:from-cyan-950/20"
+              >
+                <div className="w-12 h-12 rounded-xl bg-cyan-100 dark:bg-cyan-500/20 text-cyan-700 dark:text-cyan-400 flex items-center justify-center group-hover:scale-110 transition-transform shadow-xs">
+                  <PlusCircle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">Submit Guest Ticket</h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-medium mt-1">
+                    No login required. Submit an IT incident, hardware issue, or urgent support request directly.
+                  </p>
+                </div>
+                <div className="text-xs font-bold text-cyan-700 dark:text-cyan-400 flex items-center gap-1 pt-1">
+                  Create Guest Ticket &rarr;
+                </div>
               </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Report an Issue</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                Lodge a bug, computer failure, network glitch, or urgent outage.
-              </p>
-            </div>
 
-            <div
-              onClick={onNavigateToCatalog}
-              className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 hover:border-indigo-500/50 cursor-pointer space-y-2 group"
-            >
-              <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Grid className="w-5 h-5" />
+              <div
+                onClick={() => setActiveTab('register')}
+                className="neu-card p-6 rounded-2xl border border-violet-300/80 dark:border-violet-500/30 hover:border-violet-500 cursor-pointer space-y-3 group bg-gradient-to-br from-violet-50/60 to-transparent dark:from-violet-950/20"
+              >
+                <div className="w-12 h-12 rounded-xl bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-400 flex items-center justify-center group-hover:scale-110 transition-transform shadow-xs">
+                  <UserPlus className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">Employee Self-Registration</h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-medium mt-1">
+                    Register an official user account instantly with an Admin Pre-Shared Key (PSK) or OTP verification.
+                  </p>
+                </div>
+                <div className="text-xs font-bold text-violet-700 dark:text-violet-400 flex items-center gap-1 pt-1">
+                  Register Account &rarr;
+                </div>
               </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Service Catalog</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                Order a laptop, software license, AWS role, or VPN access.
-              </p>
             </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div
+                onClick={() => setActiveTab('submit')}
+                className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 hover:border-cyan-500/50 cursor-pointer space-y-2 group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-cyan-100 dark:bg-cyan-500/20 text-cyan-700 dark:text-cyan-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <PlusCircle className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Report an Issue</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                  Lodge a bug, computer failure, network glitch, or urgent outage.
+                </p>
+              </div>
 
-            <div
-              onClick={() => setActiveTab('my-tickets')}
-              className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 hover:border-emerald-500/50 cursor-pointer space-y-2 group"
-            >
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <FileText className="w-5 h-5" />
+              <div
+                onClick={onNavigateToCatalog}
+                className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 hover:border-indigo-500/50 cursor-pointer space-y-2 group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Grid className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Service Catalog</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                  Order a laptop, software license, AWS role, or VPN access.
+                </p>
               </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Track Requests</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                Check status of your open tickets and reply directly to IT staff.
-              </p>
-            </div>
 
-            <div
-              onClick={onNavigateToKb}
-              className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 hover:border-amber-500/50 cursor-pointer space-y-2 group"
-            >
-              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <BookOpen className="w-5 h-5" />
+              <div
+                onClick={() => setActiveTab('my-tickets')}
+                className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 hover:border-emerald-500/50 cursor-pointer space-y-2 group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Track Requests</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                  Check status of your open tickets and reply directly to IT staff.
+                </p>
               </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Browse Guides</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                Search verified solutions for VPN, passwords, and Outlook issues.
-              </p>
+
+              <div
+                onClick={onNavigateToKb}
+                className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 hover:border-amber-500/50 cursor-pointer space-y-2 group"
+              >
+                <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <BookOpen className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Browse Guides</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                  Search verified solutions for VPN, passwords, and Outlook issues.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Quick FAQ / Popular Articles */}
           <div className="neu-flat p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-3">
@@ -456,14 +854,27 @@ export const PortalView: React.FC<PortalViewProps> = ({
       {/* Tab 2: Submit Support Ticket with OTP Confirmation Flow */}
       {activeTab === 'submit' && (
         <div className="neu-flat p-6 sm:p-8 rounded-2xl border border-slate-200/90 dark:border-white/10 max-w-2xl mx-auto space-y-6">
-          <div className="space-y-1 pb-3 border-b border-slate-200 dark:border-white/10">
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Shield className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-              Submit IT Service Request
-            </h2>
-            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-              Please confirm your email address via the 6-digit OTP code before submitting.
-            </p>
+          <div className="space-y-1 pb-3 border-b border-slate-200 dark:border-white/10 flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Shield className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+                Submit IT Service Request
+              </h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                {requireOtp
+                  ? 'Please confirm your work email address via the 6-digit OTP code before submitting.'
+                  : 'Fast-track ticket creation enabled. You can submit directly without login or OTP.'}
+              </p>
+            </div>
+            {!currentUser && onOpenLogin && (
+              <button
+                type="button"
+                onClick={() => onOpenLogin('user')}
+                className="neu-btn px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-400 rounded-xl hover:text-cyan-800 transition-all cursor-pointer whitespace-nowrap"
+              >
+                Sign In Instead
+              </button>
+            )}
           </div>
 
           {submitSuccess && (
@@ -472,125 +883,150 @@ export const PortalView: React.FC<PortalViewProps> = ({
             </div>
           )}
 
-          {/* STEP 1: Mandatory OTP Email Confirmation */}
-          {!isOtpVerified ? (
-            <div className="p-5 rounded-2xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-950/20 space-y-4">
-              <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
-                <KeyRound className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                Step 1: Confirm Your Email Address
+          {/* Requester Information */}
+          <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">
+                Requester Details
+              </span>
+              {!requireOtp && (
+                <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-800/60">
+                  OTP Not Required
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Your Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. David Miller"
+                  value={submitName}
+                  onChange={(e) => setSubmitName(e.target.value)}
+                  className="w-full px-3.5 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
+                />
               </div>
-              <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-                To guarantee ticket delivery and security, normal users must verify their email with a 6-digit code.
-              </p>
 
-              {otpError && (
-                <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300 text-xs font-semibold">
-                  {otpError}
-                </div>
-              )}
-
-              {otpMessage && (
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs space-y-1 font-medium">
-                  <div>{otpMessage}</div>
-                  {otpPreview && (
-                    <div className="font-mono font-bold text-amber-800 dark:text-amber-300 text-xs">
-                      [Demo / Test OTP Code: {otpPreview}]
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Work Email Address *
+                </label>
                 <input
                   type="email"
-                  placeholder="Enter your email address"
+                  required
+                  placeholder="e.g. david.miller@company.com"
                   value={submitEmail}
                   onChange={(e) => {
                     setSubmitEmail(e.target.value);
-                    setOtpSent(false);
+                    if (requireOtp) setOtpSent(false);
                   }}
-                  disabled={otpSent}
-                  className="flex-1 px-3.5 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 disabled:opacity-60 font-semibold focus:outline-none"
+                  className="w-full px-3.5 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
                 />
-                {!otpSent ? (
-                  <button
-                    type="button"
-                    disabled={otpLoading}
-                    onClick={handleSendOtp}
-                    className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
-                  >
-                    {otpLoading ? 'Sending...' : 'Send 6-Digit OTP'}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setOtpSent(false)}
-                    className="neu-btn px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 font-semibold rounded-xl cursor-pointer"
-                  >
-                    Change Email
-                  </button>
-                )}
               </div>
+            </div>
+          </div>
 
-              {otpSent && (
-                <div className="flex items-center gap-2 pt-2 animate-in fade-in">
-                  <input
-                    type="text"
-                    maxLength={6}
-                    placeholder="Enter 6-digit OTP"
-                    value={otpCode}
-                    onChange={(e) => setOtpCode(e.target.value)}
-                    className="w-36 px-3 py-2 text-xs neu-input border-amber-400 rounded-xl text-amber-800 dark:text-amber-300 font-mono tracking-widest text-center font-bold"
-                  />
+          {/* Conditional OTP Flow if requireOtp is enabled */}
+          {requireOtp && (
+            <div className="space-y-3">
+              {!isOtpVerified ? (
+                <div className="p-4 rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-950/20 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wide">
+                    <KeyRound className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    Security Check: OTP Verification Required
+                  </div>
+                  <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                    Superadmin has enabled OTP protection. A 6-digit confirmation code will be dispatched to your email.
+                  </p>
+
+                  {otpError && (
+                    <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300 text-xs font-semibold">
+                      {otpError}
+                    </div>
+                  )}
+
+                  {otpMessage && (
+                    <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs space-y-1 font-medium">
+                      <div>{otpMessage}</div>
+                      {otpPreview && (
+                        <div className="font-mono font-bold text-amber-800 dark:text-amber-300 text-xs">
+                          [Demo / Test OTP Code: {otpPreview}]
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    {!otpSent ? (
+                      <button
+                        type="button"
+                        disabled={otpLoading || !submitEmail.includes('@')}
+                        onClick={handleSendOtp}
+                        className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap disabled:opacity-50"
+                      >
+                        {otpLoading ? 'Dispatching...' : 'Send 6-Digit OTP'}
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          maxLength={6}
+                          placeholder="Enter OTP"
+                          value={otpCode}
+                          onChange={(e) => setOtpCode(e.target.value)}
+                          className="w-32 px-3 py-2 text-xs neu-input border-amber-400 rounded-xl text-amber-800 dark:text-amber-300 font-mono tracking-widest text-center font-bold"
+                        />
+                        <button
+                          type="button"
+                          disabled={otpLoading}
+                          onClick={handleVerifyOtp}
+                          className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 rounded-xl cursor-pointer shadow-sm"
+                        >
+                          {otpLoading ? 'Verifying...' : 'Verify OTP'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300 font-medium">
+                  <span className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span>Email OTP Confirmed &amp; Verified</span>
+                  </span>
                   <button
                     type="button"
-                    disabled={otpLoading}
-                    onClick={handleVerifyOtp}
-                    className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 rounded-xl cursor-pointer shadow-sm"
+                    onClick={() => {
+                      setIsOtpVerified(false);
+                      setOtpSent(false);
+                      setOtpCode('');
+                    }}
+                    className="text-[11px] text-cyan-700 dark:text-cyan-400 hover:underline cursor-pointer font-bold"
                   >
-                    {otpLoading ? 'Verifying...' : 'Verify Code'}
+                    Re-verify
                   </button>
                 </div>
               )}
             </div>
-          ) : (
-            <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 flex items-center justify-between text-xs text-emerald-800 dark:text-emerald-300 font-medium">
-              <span className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span>
-                  Email Confirmed &amp; Verified: <strong className="font-mono text-slate-900 dark:text-white">{submitEmail}</strong>
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsOtpVerified(false);
-                  setOtpSent(false);
-                  setOtpCode('');
-                  setOtpMessage(null);
-                  sessionStorage.removeItem(`otp_verified_${submitEmail}`);
-                }}
-                className="text-[11px] text-cyan-700 dark:text-cyan-400 hover:underline cursor-pointer ml-3 font-bold"
-              >
-                Change Email
-              </button>
-            </div>
           )}
 
-          {/* STEP 2: Ticket Form (Only unlocked once email is confirmed via OTP) */}
-          {/* STEP 2: Ticket Form (Only unlocked once email is confirmed via OTP) */}
-          {!isOtpVerified ? (
+          {/* Ticket Form Content */}
+          {requireOtp && !isOtpVerified ? (
             <div className="p-8 rounded-2xl neu-card text-center space-y-3 border border-slate-200/90 dark:border-white/10">
               <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-white/10 flex items-center justify-center text-slate-400">
                 <Lock className="w-6 h-6 text-amber-500 dark:text-amber-400" />
               </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Step 2: Ticket Form Locked</h3>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Ticket Details Form Locked</h3>
               <p className="text-xs text-slate-600 dark:text-slate-400 font-medium max-w-md mx-auto">
-                Normal users must first enter their email address and confirm the 6-digit OTP code in Step 1 above. Once verified, the full ticket form and dynamic fields will automatically unlock for submission.
+                Please verify your work email address with the 6-digit OTP code above. Once verified, the full ticket form and dynamic fields will automatically unlock for submission.
               </p>
             </div>
           ) : (
-            <form onSubmit={handleFormSubmit} className="space-y-4">
+            <form noValidate onSubmit={handleFormSubmit} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Category *</label>
@@ -622,6 +1058,25 @@ export const PortalView: React.FC<PortalViewProps> = ({
               </div>
             </div>
 
+            {/* Mandatory Location / Desk No */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Location / Desk No *</span>
+                </span>
+                <span className="text-[10px] text-cyan-600 font-bold">Mandatory</span>
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Building A - Floor 2 - Desk #42 / Remote Home Office"
+                value={formLocationDesk}
+                onChange={(e) => setFormLocationDesk(e.target.value)}
+                className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
+              />
+            </div>
+
             <div>
               <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Subject / Summary *</label>
               <input
@@ -635,15 +1090,79 @@ export const PortalView: React.FC<PortalViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Problem Description *</label>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                Problem Description * <span className="text-[11px] text-cyan-600 dark:text-cyan-400 font-normal ml-2">(Ctrl+V to paste snip / screenshots directly)</span>
+              </label>
               <textarea
                 rows={4}
                 required
-                placeholder="Please describe what happened, steps to reproduce, and any error message..."
+                placeholder="Please describe what happened, steps to reproduce, and any error message... (Direct screenshot paste supported: press Ctrl+V to attach)"
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
+                onPaste={handleFormPaste}
                 className="w-full p-3 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
               />
+            </div>
+
+            {/* Attachments & Direct Pasted Snips */}
+            <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-dashed border-cyan-500/40 space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Paperclip className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 dark:text-white block">
+                      Attachments &amp; Snip Screenshots ({formAttachments.length})
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Paste screenshots with <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-cyan-700 dark:text-cyan-300 font-mono font-bold text-[10px]">Ctrl+V</kbd> or upload files
+                    </span>
+                  </div>
+                </div>
+
+                <label className="neu-btn px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-lg flex items-center gap-1.5 cursor-pointer hover:bg-cyan-50 dark:hover:bg-cyan-950/40 self-start sm:self-auto shrink-0 shadow-xs">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Attach File / Snip</span>
+                  <input
+                    type="file"
+                    multiple
+                    onChange={handleFormFileUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {formAttachments.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+                  {formAttachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 text-xs shadow-xs"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {att.type.startsWith('image/') || att.url.startsWith('data:image/') ? (
+                          <div className="w-8 h-8 rounded bg-slate-900 overflow-hidden shrink-0">
+                            <img src={att.url} alt={att.name} className="w-full h-full object-cover" />
+                          </div>
+                        ) : (
+                          <FileText className="w-4 h-4 text-cyan-600 shrink-0" />
+                        )}
+                        <div className="truncate">
+                          <span className="font-semibold block truncate" title={att.name}>{att.name}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">{Math.round(att.size / 1024)} KB</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFormAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                        className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
+                        title="Remove attachment"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Dynamic Custom Fields Marked Visible to Portal */}
@@ -671,12 +1190,17 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
                       return (
                         <div key={field.id}>
-                          <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                            {field.label} {field.required ? '*' : ''}
+                          <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                            <span>
+                              {field.label} {field.required ? <span className="text-rose-500 font-bold">*</span> : ''}
+                            </span>
+                            {field.required && (
+                              <span className="text-[10px] text-rose-500 font-semibold">Required</span>
+                            )}
                           </label>
+
                           {field.type === 'select' ? (
                             <select
-                              required={field.required}
                               value={customValues[field.name] || ''}
                               onChange={(e) =>
                                 setCustomValues({ ...customValues, [field.name]: e.target.value })
@@ -692,7 +1216,6 @@ export const PortalView: React.FC<PortalViewProps> = ({
                             </select>
                           ) : field.type === 'textarea' ? (
                             <textarea
-                              required={field.required}
                               rows={2}
                               placeholder={field.placeholder || ''}
                               value={customValues[field.name] || ''}
@@ -701,11 +1224,24 @@ export const PortalView: React.FC<PortalViewProps> = ({
                               }
                               className="w-full p-2.5 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
                             />
+                          ) : field.type === 'checkbox' ? (
+                            <label className="flex items-center gap-2 p-2.5 rounded-xl neu-card border border-slate-200 dark:border-white/10 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!customValues[field.name]}
+                                onChange={(e) =>
+                                  setCustomValues({ ...customValues, [field.name]: e.target.checked })
+                                }
+                                className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                              />
+                              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                                {field.placeholder || `Enable / Confirm ${field.label}`}
+                              </span>
+                            </label>
                           ) : (
                             <input
                               type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
-                              required={field.required}
-                              placeholder={field.placeholder || field.description || ''}
+                              placeholder={field.placeholder || field.description || `Enter ${field.label}...`}
                               value={customValues[field.name] || ''}
                               onChange={(e) =>
                                 setCustomValues({ ...customValues, [field.name]: e.target.value })
@@ -720,6 +1256,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
                       );
                     })}
                 </div>
+              </div>
+            )}
+
+            {submitError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{submitError}</span>
               </div>
             )}
 
@@ -757,8 +1300,8 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   key={t.id}
                   className="p-4 hover:bg-cyan-50/70 dark:hover:bg-white/5 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                 >
-                  <div className="space-y-1 flex-1 cursor-pointer" onClick={() => onSelectTicket(t.id)}>
-                    <div className="flex items-center gap-2 text-xs">
+                  <div className="space-y-1.5 flex-1 cursor-pointer" onClick={() => onSelectTicket(t.id)}>
+                    <div className="flex items-center gap-2 text-xs flex-wrap">
                       <span className="font-mono text-cyan-700 dark:text-cyan-400 font-bold tabular-nums">{t.id}</span>
                       <span className="text-slate-400">·</span>
                       <span className="text-slate-700 dark:text-slate-300 font-semibold">{t.category}</span>
@@ -766,8 +1309,16 @@ export const PortalView: React.FC<PortalViewProps> = ({
                       <span className="text-slate-600 dark:text-slate-400 font-mono text-[11px] font-medium">
                         Updated {new Date(t.updatedAt).toLocaleDateString()}
                       </span>
+                      {t.attachments && t.attachments.length > 0 && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-300 font-mono text-[10px] font-bold border border-cyan-300 dark:border-cyan-800">
+                          <Paperclip className="w-3 h-3" /> {t.attachments.length} attachment(s)
+                        </span>
+                      )}
                     </div>
                     <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{t.subject}</div>
+                    <div className="text-[11px] text-cyan-700 dark:text-cyan-400 font-mono font-semibold">
+                      EmpID-Requester {t.requesterEmployeeCode || currentUser?.employeeCode || (t.requesterName?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1001')} {t.requesterName} &amp; {t.requesterEmail}
+                    </div>
                     <div className="text-xs text-slate-600 dark:text-slate-400 line-clamp-1">{t.description}</div>
                   </div>
 
@@ -797,6 +1348,322 @@ export const PortalView: React.FC<PortalViewProps> = ({
               ))
             )}
           </div>
+        </div>
+      )}
+
+      {/* Tab: My Assigned Assets (Point 4) */}
+      {activeTab === 'my-assets' && (
+        <div className="space-y-4 animate-in fade-in">
+          {/* Header & Action Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 neu-flat rounded-2xl border border-slate-200/90 dark:border-white/10">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Laptop className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                My Assigned Hardware Assets &amp; Equipment
+              </h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                Hardware equipment, laptops, workstations, monitors, and peripherals registered and assigned to your employee profile.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {allowRequesterAssetSelfService ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewAssetName('');
+                    setNewAssetModel('');
+                    setNewAssetSerial('');
+                    setNewAssetLocationDesk('');
+                    setAssetActionError(null);
+                    setShowAddAssetModal(true);
+                  }}
+                  className="neu-btn-primary px-3.5 py-1.5 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  title="Register new assigned hardware or peripheral"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Register Equipment</span>
+                </button>
+              ) : (
+                <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800/40">
+                  Self-Service Disabled by Admin
+                </span>
+              )}
+            </div>
+          </div>
+
+          {assetActionMsg && (
+            <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>{assetActionMsg}</span>
+            </div>
+          )}
+
+          {!allowRequesterAssetSelfService && (
+            <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 text-xs text-slate-600 dark:text-slate-400 font-medium">
+              Self-service adding or removing assets is currently turned off by the Administrator or Asset Manager. You can still view all your assigned equipment below. To request changes or returns, submit a support ticket.
+            </div>
+          )}
+
+          {myAssignedAssets.length === 0 ? (
+            <div className="neu-card p-10 text-center rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800/40 flex items-center justify-center mx-auto text-cyan-600">
+                <Laptop className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">No Hardware Assets Assigned</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+                  There are currently no company workstations, laptops, or equipment registered under your account.
+                </p>
+              </div>
+              {allowRequesterAssetSelfService && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddAssetModal(true)}
+                  className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                >
+                  + Add Your First Asset
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {myAssignedAssets.map((asset) => (
+                <div
+                  key={asset.id}
+                  className="neu-card p-4 rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-3 flex flex-col justify-between"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 font-bold uppercase border border-cyan-300 dark:border-cyan-800/40">
+                        {asset.type}
+                      </span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-300">
+                        {asset.lifecycleStatus === 'in_service' || asset.status === 'in_service' || !asset.lifecycleStatus ? 'In service' : (asset.lifecycleStatus || asset.status)}
+                      </span>
+                    </div>
+
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">{asset.name}</h3>
+
+                    <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
+                      {asset.manufacturer && (
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">Manufacturer:</span>
+                          <span className="font-semibold text-slate-900 dark:text-slate-200">{asset.manufacturer}</span>
+                        </div>
+                      )}
+                      {asset.model && (
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">Model:</span>
+                          <span className="font-semibold text-slate-900 dark:text-slate-200">{asset.model}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">Service Tag / ID:</span>
+                        <span className="font-mono text-slate-900 dark:text-slate-200">{asset.serialNumber || 'Unassigned Tag'}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-cyan-600" />
+                          <span>Location / Desk No:</span>
+                        </span>
+                        <span className="font-mono font-bold text-cyan-700 dark:text-cyan-400">
+                          {asset.locationDesk || 'Assigned Desk'}
+                        </span>
+                      </div>
+                      {asset.assignedDate && (
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100 dark:border-white/5">
+                          <span>Assigned On:</span>
+                          <span>{new Date(asset.assignedDate).toLocaleDateString()}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {allowRequesterAssetSelfService && (
+                    <div className="pt-2 border-t border-slate-200/60 dark:border-white/5 flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRequesterAsset(asset)}
+                        className="text-xs font-bold text-rose-600 hover:text-rose-500 flex items-center gap-1 cursor-pointer transition-colors px-2 py-1 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                        title="Remove / Return this equipment from your assigned profile"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remove Equipment</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add Asset Modal for Requester (Strict 6 Fields + Admin Customization) */}
+          {showAddAssetModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+              <div className="glass-modal max-w-lg w-full p-6 rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-white/10">
+                  <div className="flex items-center gap-2">
+                    <Laptop className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Add Requester Asset (Assigned Equipment)</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddAssetModal(false)}
+                    className="text-slate-400 hover:text-slate-600 cursor-pointer text-sm font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="p-3 rounded-xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-900/50 text-[11px] text-cyan-800 dark:text-cyan-300">
+                  <span className="font-bold">Automated Lifecycle:</span> This asset will be marked as <span className="font-bold text-emerald-600 dark:text-emerald-400">In service</span> and assigned to your profile. Asset cost is set to <span className="font-bold text-amber-600 dark:text-amber-400">Pending</span> for admin verification.
+                </div>
+
+                {assetActionError && (
+                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 text-rose-700 text-xs font-medium">
+                    {assetActionError}
+                  </div>
+                )}
+
+                <form onSubmit={handleAddRequesterAsset} className="space-y-3.5">
+                  {/* Field 1: Asset Name * (Dropdown select) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                      <span>1. Asset Name *</span>
+                      <span className="text-[10px] text-cyan-600 font-semibold">Dropdown Selection</span>
+                    </label>
+                    <select
+                      required
+                      value={newAssetName}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewAssetName(val);
+                        setNewAssetType(mapAssetNameToType(val));
+                      }}
+                      className="w-full px-3 py-2 text-xs neu-select rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                    >
+                      {allowedRequesterAssetNames.map((nameOpt) => (
+                        <option key={nameOpt} value={nameOpt}>
+                          {nameOpt}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Field 2: Type * (Dropdown) */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                        2. Type *
+                      </label>
+                      <select
+                        required
+                        value={newAssetType}
+                        onChange={(e) => setNewAssetType(e.target.value as any)}
+                        className="w-full px-3 py-2 text-xs neu-select rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                      >
+                        <option value="desktop">Desktop / Workstation</option>
+                        <option value="laptop">Laptop</option>
+                        <option value="monitor">Display / Monitor</option>
+                        <option value="peripheral">Peripheral / Accessory</option>
+                        <option value="mobile_tablet">Mobile / Tablet</option>
+                        <option value="networking">Network Device</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+
+                    {/* Field 3: Manufacturer * */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                        3. Manufacturer *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Dell, HP, Apple, Logitech, Lenovo"
+                        value={newAssetManufacturer}
+                        onChange={(e) => setNewAssetManufacturer(e.target.value)}
+                        className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Field 4: Model Specification (not compulsory) */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                        <span>4. Model Specification</span>
+                        <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. OptiPlex 7090, MX Master 3, ThinkPad"
+                        value={newAssetModel}
+                        onChange={(e) => setNewAssetModel(e.target.value)}
+                        className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium"
+                      />
+                    </div>
+
+                    {/* Field 5: Service tag (not compulsory) */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                        <span>5. Service Tag / Serial</span>
+                        <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. ST-78213 or auto-generated"
+                        value={newAssetSerial}
+                        onChange={(e) => setNewAssetSerial(e.target.value)}
+                        className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Field 6: Location / Assigned Desk no. * */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5 text-cyan-600" />
+                        <span>6. Location / Assigned Desk no. *</span>
+                      </span>
+                      <span className="text-[10px] text-cyan-600 font-bold">Mandatory</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Building A - Floor 3 - Desk #42 / Remote Home Office"
+                      value={newAssetLocationDesk}
+                      onChange={(e) => setNewAssetLocationDesk(e.target.value)}
+                      className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium"
+                    />
+                  </div>
+
+                  {/* Note about admin fields */}
+                  <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-[10px] text-slate-500 dark:text-slate-400">
+                    ℹ️ <span className="font-semibold text-slate-700 dark:text-slate-300">Admin Managed Fields:</span> Purchase Cost, Depreciation, Warranty, and Compliance Audits are maintained by Asset Administrators.
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddAssetModal(false)}
+                      className="neu-btn px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 font-semibold rounded-lg cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="neu-btn-primary px-4 py-1.5 text-xs font-bold rounded-lg cursor-pointer"
+                    >
+                      Save & Register Equipment
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -848,13 +1715,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
       {/* Tab 5: User Self-Registration with OTP Verification */}
       {activeTab === 'register' && (
-        <div className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-200 dark:border-white/10 max-w-xl mx-auto space-y-6">
+        <div className="neu-flat p-6 sm:p-8 rounded-2xl border border-slate-200/90 dark:border-white/10 max-w-xl mx-auto space-y-6">
           <div className="space-y-1 pb-4 border-b border-slate-200 dark:border-white/10">
             <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
               Employee Self-Registration Portal
             </h2>
-            <p className="text-xs text-slate-600 dark:text-slate-400">
+            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
               Register yourself to submit and track IT support tickets. Email verification is mandatory via a 6-digit OTP code.
             </p>
           </div>
@@ -867,20 +1734,27 @@ export const PortalView: React.FC<PortalViewProps> = ({
           )}
 
           {regError && (
-            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300 text-xs">
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300 text-xs font-semibold">
               {regError}
             </div>
           )}
 
-          {/* STEP 1: Verify Email with OTP */}
+          {/* STEP 1: Verify Email with OTP or PSK */}
           {!regOtpVerified ? (
-            <div className="p-4.5 rounded-xl border border-cyan-500/30 bg-cyan-50/50 dark:bg-cyan-950/20 space-y-3.5">
-              <div className="flex items-center gap-2 text-xs font-bold text-cyan-800 dark:text-cyan-300 uppercase tracking-wide">
-                <KeyRound className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                Step 1: Verify Your Email Address
+            <div className="p-4.5 rounded-xl border border-cyan-300 dark:border-cyan-500/30 bg-cyan-50/70 dark:bg-cyan-950/20 space-y-3.5">
+              <div className="flex items-center justify-between text-xs font-bold text-cyan-900 dark:text-cyan-300 uppercase tracking-wide flex-wrap gap-2">
+                <span className="flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  Step 1: Work Email &amp; Verification
+                </span>
+                {regPsk.trim() && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold border border-emerald-300">
+                    PSK Direct Mode Active (OTP Bypassed)
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-slate-600 dark:text-slate-300">
-                Enter your official work email. A 6-digit verification code will be dispatched to verify your mailbox.
+              <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                Enter your official work email. You can verify via email OTP below, or enter an Admin Pre-Shared Key (PSK) in Step 2 to register directly without OTP.
               </p>
 
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -893,14 +1767,14 @@ export const PortalView: React.FC<PortalViewProps> = ({
                     setRegOtpSent(false);
                   }}
                   disabled={regOtpSent}
-                  className="flex-1 px-3 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                  className="flex-1 px-3.5 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 disabled:opacity-60 font-semibold focus:outline-none"
                 />
                 {!regOtpSent ? (
                   <button
                     type="button"
                     disabled={regOtpLoading}
                     onClick={handleSendRegOtp}
-                    className="px-4 py-2 text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-500 rounded-xl shadow-xs cursor-pointer whitespace-nowrap disabled:opacity-50"
+                    className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl shadow-xs cursor-pointer whitespace-nowrap disabled:opacity-50"
                   >
                     {regOtpLoading ? 'Dispatching...' : 'Send Verification OTP'}
                   </button>
@@ -908,7 +1782,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setRegOtpSent(false)}
-                    className="px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                    className="neu-btn px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:text-cyan-700 dark:hover:text-cyan-300 font-semibold rounded-xl cursor-pointer"
                   >
                     Change Email
                   </button>
@@ -924,19 +1798,19 @@ export const PortalView: React.FC<PortalViewProps> = ({
                       placeholder="6-digit OTP"
                       value={regOtpCode}
                       onChange={(e) => setRegOtpCode(e.target.value)}
-                      className="w-36 px-3 py-2 text-xs bg-white dark:bg-slate-950 border border-cyan-500/60 rounded-xl text-cyan-700 dark:text-cyan-300 font-mono tracking-widest text-center font-bold"
+                      className="w-36 px-3 py-2 text-xs neu-input rounded-xl text-cyan-800 dark:text-cyan-300 font-mono tracking-widest text-center font-bold"
                     />
                     <button
                       type="button"
                       disabled={regOtpLoading}
                       onClick={handleVerifyRegOtp}
-                      className="px-4 py-2 text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-500 rounded-xl cursor-pointer"
+                      className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
                     >
                       {regOtpLoading ? 'Checking...' : 'Verify OTP'}
                     </button>
                   </div>
                   {regOtpPreview && (
-                    <div className="text-[11px] font-mono text-cyan-700 dark:text-cyan-300 bg-cyan-100/60 dark:bg-cyan-950/60 p-2 rounded-lg border border-cyan-300 dark:border-cyan-800/40">
+                    <div className="text-[11px] font-mono text-cyan-800 dark:text-cyan-300 bg-cyan-100/70 dark:bg-cyan-950/60 p-2 rounded-lg border border-cyan-300 dark:border-cyan-800/40">
                       OTP Code for testing: <strong>{regOtpPreview}</strong>
                     </div>
                   )}
@@ -958,7 +1832,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   setRegOtpSent(false);
                   setRegOtpCode('');
                 }}
-                className="text-[11px] underline text-emerald-700 dark:text-emerald-400 hover:opacity-80"
+                className="text-[11px] underline text-emerald-700 dark:text-emerald-400 hover:opacity-80 font-bold"
               >
                 Change
               </button>
@@ -967,12 +1841,12 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
           {/* STEP 2: Profile Details */}
           <form onSubmit={handleCompleteRegistration} className="space-y-4">
-            <div className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">
+            <div className="text-xs font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wide">
               Step 2: Profile &amp; Department Information
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                 Your Full Name *
               </label>
               <input
@@ -981,13 +1855,31 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 placeholder="e.g. Sarah Jenkins"
                 value={regName}
                 onChange={(e) => setRegName(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
               />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                <span>Employee Code *</span>
+                <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Compulsory (e.g. CBPL2045)</span>
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. CBPL2045"
+                value={regEmployeeCode}
+                onChange={(e) => setRegEmployeeCode(e.target.value.toUpperCase())}
+                className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono uppercase font-bold focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 block">
+                Official staff employee code (compulsory). Will be visible alongside your name on all tickets like EmpID-Requester CBPL2045.
+              </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Designation / Post / Job Title *
                 </label>
                 <input
@@ -996,18 +1888,18 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   placeholder="e.g. Financial Analyst, Software Engineer"
                   value={regTitle}
                   onChange={(e) => setRegTitle(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                  className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                   Department
                 </label>
                 <select
                   value={regDepartment}
                   onChange={(e) => setRegDepartment(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100"
+                  className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-bold"
                 >
                   <option value="Operations">Operations</option>
                   <option value="Engineering">Engineering &amp; Dev</option>
@@ -1021,7 +1913,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
                 Contact Phone Number
               </label>
               <input
@@ -1029,18 +1921,75 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 placeholder="+1 (555) 012-3456"
                 value={regPhone}
                 onChange={(e) => setRegPhone(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
               />
             </div>
 
-            <div className="pt-3 border-t border-slate-200 dark:border-white/10 flex items-center justify-between">
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                <span>Assigned Organization *</span>
+                {urlOrgId ? (
+                  <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">
+                    ✓ Custom Link Organization Matched
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-500 font-normal">Choose your company/branch</span>
+                )}
+              </label>
+              <select
+                value={regOrgId}
+                onChange={(e) => setRegOrgId(e.target.value)}
+                className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-bold"
+              >
+                {allOrganizations.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name} ({o.domain || o.id})
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 block">
+                Tickets you submit will automatically be associated with this organization.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                  <span>Organization Pre-Shared Key</span>
+                  <span className="text-[10px] text-slate-400 font-normal">If required</span>
+                </label>
+                <input
+                  type="password"
+                  placeholder="e.g. Sports@9433"
+                  value={regPsk}
+                  onChange={(e) => setRegPsk(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                  <span>Create Account Password</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+                </label>
+                <input
+                  type="password"
+                  placeholder="At least 6 characters"
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-200 dark:border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <span className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
                 You will be immediately logged in to submit support tickets.
               </span>
               <button
                 type="submit"
-                disabled={!regOtpVerified || regSubmitting}
-                className="px-5 py-2.5 text-xs font-semibold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                disabled={(!regOtpVerified && !regPsk.trim()) || regSubmitting}
+                className="neu-btn-primary px-5 py-2.5 text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5 whitespace-nowrap"
               >
                 {regSubmitting ? (
                   'Creating Account...'

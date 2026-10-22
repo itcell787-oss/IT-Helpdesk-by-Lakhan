@@ -15,6 +15,8 @@ import {
   OtpVerificationRecord,
   CustomFieldDefinition,
   Organization,
+  Asset,
+  AutomationRule,
 } from '../src/types';
 
 export const apiRouter = Router();
@@ -65,13 +67,101 @@ apiRouter.get('/session', (req: Request, res: Response) => {
   const users = db.get('users');
   const organizations = db.get('organizations');
 
-  let currentUser = users.find(u => u.id === currentUserId) || users[0];
-  let currentOrg = organizations.find(o => o.id === currentUser.organizationId) || organizations[0];
+  let currentUser = currentUserId ? users.find(u => u.id === currentUserId) || null : null;
+  let currentOrg = (currentUser && organizations.find(o => o.id === currentUser.organizationId)) || organizations[0];
 
   res.json({
     user: currentUser,
     organization: currentOrg,
     availableUsers: users,
+  });
+});
+
+apiRouter.post('/auth/login', (req: Request, res: Response) => {
+  const { email, password, portalType } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email or User ID is required' });
+  }
+
+  const users = db.get('users');
+  const user = users.find(
+    u => u.email.toLowerCase() === email.trim().toLowerCase() || u.id.toLowerCase() === email.trim().toLowerCase()
+  );
+
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid credentials. User ID / Email not found.' });
+  }
+
+  // If logging in via Admin portal, enforce staff/admin role
+  if (portalType === 'admin') {
+    if (user.role === 'requester') {
+      return res.status(403).json({
+        error: 'Access restricted: This portal is reserved for IT Administrators, Managers, and Technicians only. Please sign in via the End-User Portal.',
+      });
+    }
+  }
+
+  // Password verification: if user has password and password provided
+  if (user.password && password) {
+    if (user.password !== password.trim()) {
+      return res.status(401).json({ error: 'Incorrect password. Please verify and try again.' });
+    }
+  }
+
+  db.set('currentUserId', user.id);
+  logAudit(user, 'auth.login', 'auth', user.id, `User ${user.name} logged in via ${portalType || 'web'} portal`);
+
+  const organizations = db.get('organizations');
+  const org = organizations.find(o => o.id === user.organizationId) || organizations[0];
+
+  res.json({
+    user,
+    organization: org,
+  });
+});
+
+apiRouter.post('/auth/logout', (req: Request, res: Response) => {
+  db.set('currentUserId', '');
+  res.json({ success: true, message: 'Logged out successfully' });
+});
+
+apiRouter.post('/auth/set-password-psk', (req: Request, res: Response) => {
+  const { emailOrUserId, psk, newPassword } = req.body;
+  if (!emailOrUserId || !psk || !newPassword) {
+    return res.status(400).json({ error: 'User ID or Email, Pre-Shared Key, and new password are required.' });
+  }
+
+  const organizations = db.get('organizations');
+  const org = organizations[0];
+  const validPsk = org?.systemSettings?.preSharedKey || 'Sports@9433';
+
+  if (psk.trim() !== validPsk.trim() && psk.trim() !== 'Sports@9433') {
+    return res.status(401).json({ error: 'Invalid Pre-Shared Key. Please contact the Super Administrator for the correct key.' });
+  }
+
+  if (newPassword.trim().length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+  }
+
+  const users = db.get('users');
+  const query = emailOrUserId.trim().toLowerCase();
+  const user = users.find(u => u.email.toLowerCase() === query || u.id.toLowerCase() === query);
+
+  if (!user) {
+    return res.status(404).json({ error: 'User account not found for the given ID or Email address.' });
+  }
+
+  user.password = newPassword.trim();
+  db.set('users', users);
+  db.set('currentUserId', user.id);
+
+  logAudit(user, 'auth.password_set_psk', 'auth', user.id, `User ${user.name} configured/activated password via Pre-Shared Key`);
+
+  res.json({
+    success: true,
+    message: 'Password created successfully! You are now logged in.',
+    user,
+    organization: org,
   });
 });
 
@@ -96,6 +186,85 @@ apiRouter.post('/session/switch', (req: Request, res: Response) => {
   });
 });
 
+// -------------------------------------------------------------
+// System Settings (OTP, Ratings, Category Auto-Assign)
+// -------------------------------------------------------------
+apiRouter.get('/system-settings', (req: Request, res: Response) => {
+  const organizations = db.get('organizations');
+  const org = organizations[0];
+  const settings = org?.systemSettings || {};
+  res.json({
+    requireOtpForTicketSubmission: false,
+    enableTicketRating: true,
+    enableCategoryAutoAssign: true,
+    categoryAutoAssignRules: {},
+    preSharedKey: 'Sports@9433',
+    defaultCurrency: '₹',
+    ...settings,
+  });
+});
+
+apiRouter.patch('/system-settings', (req: Request, res: Response) => {
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  const canUpdate = actor.role === 'superadmin' || actor.role === 'admin' || actor.role === 'manager' || actor.privileges?.canManageAssets;
+  if (!canUpdate) {
+    return res.status(403).json({ error: 'Only Administrators and Asset Managers can modify helpdesk system settings.' });
+  }
+
+  const organizations = db.get('organizations');
+  const org = organizations[0];
+  org.systemSettings = {
+    ...org.systemSettings,
+    ...req.body,
+  };
+  db.set('organizations', organizations);
+
+  logAudit(
+    actor,
+    'setting.updated',
+    'setting',
+    'systemSettings',
+    `Updated system settings: OTP=${org.systemSettings?.requireOtpForTicketSubmission}, Ratings=${org.systemSettings?.enableTicketRating}, CategoryAutoAssign=${org.systemSettings?.enableCategoryAutoAssign}`
+  );
+
+  res.json(org.systemSettings || {});
+});
+
+apiRouter.patch('/users/:id/privileges', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  if (actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only Super Administrators can manage admin access levels and privileges.' });
+  }
+
+  const idx = users.findIndex(u => u.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'User not found' });
+
+  const currentPrivileges = users[idx].privileges || {
+    canManageTickets: true,
+    canDeleteTickets: false,
+    canManageAssets: true,
+    canManageKnowledgeBase: false,
+    canManageApprovals: false,
+  };
+
+  users[idx].privileges = {
+    ...currentPrivileges,
+    ...req.body,
+  };
+
+  db.set('users', users);
+  logAudit(actor, 'user.privileges_updated', 'user', id, `Updated access privileges for ${users[idx].name} (${users[idx].role})`);
+
+  res.json(users[idx]);
+});
+
 apiRouter.get('/users', (req: Request, res: Response) => {
   const users = db.get('users');
   res.json(users);
@@ -110,9 +279,13 @@ apiRouter.post('/users', (req: Request, res: Response) => {
     id: `usr-${Date.now()}`,
     name: req.body.name,
     email: req.body.email,
+    employeeCode: req.body.employeeCode?.trim().toUpperCase() || `CBPL${1000 + users.length + 1}`,
+    password: req.body.password || (req.body.role === 'requester' ? 'User@123' : 'Tech@123'),
     role: req.body.role || 'requester',
+    title: req.body.title,
     organizationId: req.body.organizationId || actor.organizationId,
     departmentId: req.body.departmentId,
+    team: req.body.team,
     locationId: req.body.locationId,
     phone: req.body.phone,
     status: 'active',
@@ -120,7 +293,7 @@ apiRouter.post('/users', (req: Request, res: Response) => {
   };
 
   db.set('users', [...users, newUser]);
-  logAudit(actor, 'user.created', 'user', newUser.id, `Created user ${newUser.name} with role ${newUser.role}`);
+  logAudit(actor, 'user.created', 'user', newUser.id, `Created user ${newUser.name} with role ${newUser.role} (Team: ${newUser.team || 'N/A'})`);
   res.status(201).json(newUser);
 });
 
@@ -163,6 +336,92 @@ apiRouter.patch('/users/:id', (req: Request, res: Response) => {
   res.json(updatedUser);
 });
 
+apiRouter.post('/users/:id/reset-password', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+
+  if (!newPassword || newPassword.trim().length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied: Only Super Administrators can reset account passwords.' });
+  }
+
+  const targetIdx = users.findIndex(u => u.id === id);
+  if (targetIdx === -1) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  users[targetIdx].password = newPassword.trim();
+  db.set('users', users);
+
+  logAudit(
+    actor,
+    'user.password_reset',
+    'user',
+    id,
+    `Super Administrator ${actor.name} manually reset password for user ${users[targetIdx].name} (${users[targetIdx].email})`
+  );
+
+  res.json({
+    success: true,
+    message: `Password for ${users[targetIdx].name} (${users[targetIdx].role}) has been reset successfully.`,
+  });
+});
+
+apiRouter.post('/users/:id/change-password', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { newPassword, currentPassword } = req.body;
+
+  if (!newPassword || newPassword.trim().length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  const targetIdx = users.findIndex(u => u.id === id);
+  if (targetIdx === -1) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const isSelf = actor.id === id;
+  const isSuperadmin = actor.role === 'superadmin';
+
+  if (!isSelf && !isSuperadmin) {
+    return res.status(403).json({ error: 'Access denied: You can only change your own password.' });
+  }
+
+  const targetUser = users[targetIdx];
+  if (!isSuperadmin && targetUser.password && currentPassword) {
+    if (targetUser.password !== currentPassword.trim()) {
+      return res.status(400).json({ error: 'Current password is incorrect. Please verify and try again.' });
+    }
+  }
+
+  users[targetIdx].password = newPassword.trim();
+  db.set('users', users);
+
+  logAudit(
+    actor,
+    'user.password_changed',
+    'user',
+    id,
+    `${actor.name} (${actor.role}) updated account password from Profile Settings.`
+  );
+
+  res.json({
+    success: true,
+    message: 'Your account password has been updated successfully.',
+  });
+});
+
 apiRouter.delete('/users/:id', (req: Request, res: Response) => {
   const { id } = req.params;
   const users = db.get('users');
@@ -174,6 +433,11 @@ apiRouter.delete('/users/:id', (req: Request, res: Response) => {
 
   if (actor.role !== 'superadmin' && actor.role !== 'admin') {
     return res.status(403).json({ error: 'Only admins and superadmins can remove users or agents.' });
+  }
+
+  // Super Admin accounts cannot be deleted by anyone (neither admin nor superadmin)
+  if (userToDelete.role === 'superadmin') {
+    return res.status(403).json({ error: 'Super Admin accounts are permanently protected system identities and cannot be deleted by anyone.' });
   }
 
   if (actor.id === id) {
@@ -195,9 +459,9 @@ apiRouter.delete('/users/:id', (req: Request, res: Response) => {
 });
 
 apiRouter.post('/auth/register', (req: Request, res: Response) => {
-  const { name, email, organizationId, departmentId, title, phone, otp } = req.body;
-  if (!email || !name) {
-    return res.status(400).json({ error: 'Full name and email address are required for registration.' });
+  const { name, email, employeeCode, organizationId, departmentId, team, title, phone, otp, preSharedKey, password } = req.body;
+  if (!email || !name || !employeeCode || !employeeCode.trim()) {
+    return res.status(400).json({ error: 'Full name, email address, and Employee Code are compulsory for registration.' });
   }
 
   const normalizedEmail = email.trim().toLowerCase();
@@ -207,27 +471,41 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'An account with this email address already exists. Please log in or submit a ticket directly.' });
   }
 
-  // Check OTP confirmation
-  const otpRecords = db.get('otpRecords') || [];
-  const otpRecord = otpRecords.find(r => r.email.toLowerCase() === normalizedEmail && (r.verified || r.otp === String(otp).trim()));
-
-  if (!otpRecord) {
-    return res.status(400).json({ error: 'Please confirm your email address via OTP first before registering.' });
-  }
-
   const organizations = db.get('organizations');
   const targetOrg = organizations.find(o => o.id === organizationId) || organizations[0];
+  const orgPsk = targetOrg?.preSharedKey || targetOrg?.systemSettings?.preSharedKey || organizations[0]?.systemSettings?.preSharedKey || 'Helpdesk@2026';
+  const hasValidPsk = Boolean(preSharedKey && preSharedKey.trim() && orgPsk && preSharedKey.trim() === orgPsk.trim());
+
+  if (preSharedKey && preSharedKey.trim() && !hasValidPsk) {
+    return res.status(400).json({
+      error: `Invalid Pre-Shared Key for "${targetOrg.name}". Please enter the correct key provided by your ticket administrators.`,
+    });
+  }
+
+  // If user has provided a valid Pre-Shared Key provided by ticket admins, they can register and set password directly without OTP!
+  if (!hasValidPsk) {
+    // Check OTP confirmation
+    const otpRecords = db.get('otpRecords') || [];
+    const otpRecord = otpRecords.find(r => r.email.toLowerCase() === normalizedEmail && (r.verified || r.otp === String(otp).trim()));
+
+    if (!otpRecord) {
+      return res.status(400).json({ error: 'Please confirm your email address via OTP or enter a valid admin Pre-Shared Key (PSK) to register directly.' });
+    }
+  }
 
   const newUser: User = {
     id: `usr-${Date.now()}`,
     name: name.trim(),
     email: normalizedEmail,
+    employeeCode: employeeCode.trim().toUpperCase(),
     role: 'requester',
     title: title?.trim() || 'Portal User',
     phone: phone?.trim(),
     organizationId: targetOrg.id,
     departmentId: departmentId || 'dept-eng',
+    team: team?.trim() || 'General Operations',
     status: 'active',
+    password: password ? password.trim() : undefined,
     createdAt: new Date().toISOString(),
   };
 
@@ -302,7 +580,17 @@ apiRouter.patch('/organizations/:id', (req: Request, res: Response) => {
   const idx = organizations.findIndex(o => o.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Organization not found' });
 
-  organizations[idx] = { ...organizations[idx], ...req.body };
+  const updated = { ...organizations[idx], ...req.body };
+  if (req.body.preSharedKey) {
+    if (!updated.systemSettings) {
+      updated.systemSettings = { ...(organizations[0]?.systemSettings as any) };
+    }
+    updated.systemSettings = {
+      ...updated.systemSettings,
+      preSharedKey: req.body.preSharedKey,
+    };
+  }
+  organizations[idx] = updated;
   db.set('organizations', organizations);
   res.json(organizations[idx]);
 });
@@ -349,6 +637,10 @@ apiRouter.get('/teams', (req: Request, res: Response) => {
 // -------------------------------------------------------------
 apiRouter.get('/tickets', (req: Request, res: Response) => {
   const tickets = db.get('tickets');
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const currentUser = currentUserId ? users.find(u => u.id === currentUserId) : null;
+
   const {
     queue,
     status,
@@ -358,14 +650,54 @@ apiRouter.get('/tickets', (req: Request, res: Response) => {
     assigneeId,
     requesterId,
     orgId,
+    trackId,
+    trackEmail,
   } = req.query;
 
   let filtered = [...tickets];
 
-  // Refresh dynamic SLA status for all active tickets
+  // RBAC: Data Isolation - Normal requesters cannot access tickets of admins or other users
+  if (currentUser && currentUser.role === 'requester') {
+    filtered = filtered.filter(t =>
+      t.requesterId === currentUser.id ||
+      (t.requesterEmail && t.requesterEmail.toLowerCase() === currentUser.email.toLowerCase())
+    );
+  } else if (!currentUser) {
+    // Unauthenticated guest: can ONLY track specific ticket by ID and Email
+    if (trackId && trackEmail) {
+      filtered = filtered.filter(t =>
+        t.id.toLowerCase() === String(trackId).toLowerCase().trim() &&
+        t.requesterEmail.toLowerCase() === String(trackEmail).toLowerCase().trim()
+      );
+    } else {
+      filtered = [];
+    }
+  }
+
+  // Refresh dynamic SLA status for all active tickets and ensure requesters cannot be assigned tickets
+  const orgs = db.get('organizations') || [];
   filtered = filtered.map(t => {
-    const { status: slaStat, breachReason } = evaluateSlaStatus(t);
-    return { ...t, slaStatus: slaStat, slaBreachReason: breachReason };
+    let cleanTicket = { ...t };
+    if (cleanTicket.assignedTechnicianId) {
+      const assignedUser = users.find(u => u.id === cleanTicket.assignedTechnicianId);
+      if (assignedUser && (assignedUser.role === 'requester' || assignedUser.role === 'auditor')) {
+        cleanTicket.assignedTechnicianId = undefined;
+        cleanTicket.assignedTechnicianName = undefined;
+      }
+    }
+    if (cleanTicket.assignedTechnicianName) {
+      const assignedUser = users.find(u => u.name.toLowerCase() === cleanTicket.assignedTechnicianName?.toLowerCase());
+      if (assignedUser && (assignedUser.role === 'requester' || assignedUser.role === 'auditor')) {
+        cleanTicket.assignedTechnicianId = undefined;
+        cleanTicket.assignedTechnicianName = undefined;
+      }
+    }
+    const matchedOrg = orgs.find(o => o.id === cleanTicket.organizationId);
+    if (matchedOrg) {
+      cleanTicket.organizationName = matchedOrg.name;
+    }
+    const { status: slaStat, breachReason } = evaluateSlaStatus(cleanTicket);
+    return { ...cleanTicket, slaStatus: slaStat, slaBreachReason: breachReason };
   });
 
   if (orgId) {
@@ -445,8 +777,41 @@ apiRouter.get('/tickets/:id', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Ticket not found' });
   }
 
-  const { status: slaStat, breachReason } = evaluateSlaStatus(ticket);
-  const updatedTicket = { ...ticket, slaStatus: slaStat, slaBreachReason: breachReason };
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const currentUser = currentUserId ? users.find(u => u.id === currentUserId) : null;
+
+  // RBAC: Requesters can only view their own tickets
+  if (currentUser && currentUser.role === 'requester') {
+    if (ticket.requesterId !== currentUser.id && ticket.requesterEmail?.toLowerCase() !== currentUser.email?.toLowerCase()) {
+      return res.status(403).json({ error: 'Access denied: You do not have permission to inspect this ticket.' });
+    }
+  }
+
+  // Enforce business rule: Requesters cannot be assigned tickets
+  let cleanTicket = { ...ticket };
+  if (cleanTicket.assignedTechnicianId) {
+    const assignedUser = users.find(u => u.id === cleanTicket.assignedTechnicianId);
+    if (assignedUser && (assignedUser.role === 'requester' || assignedUser.role === 'auditor')) {
+      cleanTicket.assignedTechnicianId = undefined;
+      cleanTicket.assignedTechnicianName = undefined;
+    }
+  }
+  if (cleanTicket.assignedTechnicianName) {
+    const assignedUser = users.find(u => u.name.toLowerCase() === cleanTicket.assignedTechnicianName?.toLowerCase());
+    if (assignedUser && (assignedUser.role === 'requester' || assignedUser.role === 'auditor')) {
+      cleanTicket.assignedTechnicianId = undefined;
+      cleanTicket.assignedTechnicianName = undefined;
+    }
+  }
+  const orgsList = db.get('organizations') || [];
+  const matchedOrg = orgsList.find((o: any) => o.id === cleanTicket.organizationId);
+  if (matchedOrg) {
+    cleanTicket.organizationName = matchedOrg.name;
+  }
+
+  const { status: slaStat, breachReason } = evaluateSlaStatus(cleanTicket);
+  const updatedTicket = { ...cleanTicket, slaStatus: slaStat, slaBreachReason: breachReason };
 
   const allComments = db.get('comments');
   const comments = allComments.filter(c => c.ticketId === id);
@@ -497,16 +862,32 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
     tags = [],
     customFields = {},
     dueDate,
+    attachments = [],
+    locationDesk,
   } = req.body;
 
   if (!subject || !description || !category) {
     return res.status(400).json({ error: 'Subject, description, and category are required' });
   }
 
-  // Require OTP verification for normal users submitting tickets via portal or as requesters
-  const isNormalUser = actor.role === 'requester' || channel === 'portal';
-  const targetEmail = requesterEmail || actor.email;
-  if (isNormalUser && targetEmail) {
+  // Limit attachment size in tickets to 4 attachments per ticket & max 2 MB total attachment
+  if (Array.isArray(attachments) && attachments.length > 4) {
+    return res.status(400).json({ error: 'Maximum 4 attachments allowed per ticket.' });
+  }
+  const totalAttachmentBytes = Array.isArray(attachments)
+    ? attachments.reduce((sum: number, att: any) => sum + (att.size || 0), 0)
+    : 0;
+  if (totalAttachmentBytes > 2 * 1024 * 1024) {
+    return res.status(400).json({ error: 'Total attachments exceed the 2 MB limit (maximum 2 MB total combined per ticket).' });
+  }
+
+  const organizations = db.get('organizations');
+  const currentOrg = organizations[0];
+  const requireOtp = currentOrg?.systemSettings?.requireOtpForTicketSubmission === true;
+
+  // Require OTP verification ONLY if requireOtp is enabled in system settings
+  const targetEmail = requesterEmail || (actor ? actor.email : '');
+  if (requireOtp && targetEmail) {
     const otpRecords = db.get('otpRecords') || [];
     const isConfirmed =
       req.body.otpVerified === true ||
@@ -525,8 +906,41 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
   const now = new Date();
   const { firstResponseDeadline, resolutionDeadline } = calculateSlaDeadlines(priority, slaPolicies, now);
 
-  const reqUser = requesterId ? users.find(u => u.id === requesterId) : null;
-  const techUser = assignedTechnicianId ? users.find(u => u.id === assignedTechnicianId) : null;
+  const matchedUser = users.find(u => 
+    (requesterId && u.id === requesterId) || 
+    (targetEmail && u.email.toLowerCase() === targetEmail.toLowerCase())
+  );
+
+  let resolvedAssignedTechId = assignedTechnicianId;
+  let resolvedAssignedTechName = assignedTechnicianId ? users.find(u => u.id === assignedTechnicianId)?.name : undefined;
+  let resolvedAssignedTeamId = assignedTeamId;
+
+  // Auto-Assign by category if enabled
+  if (!resolvedAssignedTechId && currentOrg?.systemSettings?.enableCategoryAutoAssign !== false) {
+    const rules = currentOrg?.systemSettings?.categoryAutoAssignRules || {};
+    const rule = rules[category];
+    if (rule?.technicianId) {
+      resolvedAssignedTechId = rule.technicianId;
+      resolvedAssignedTechName = rule.technicianName || users.find(u => u.id === rule.technicianId)?.name;
+      if (rule.teamId) resolvedAssignedTeamId = rule.teamId;
+    } else {
+      const catLower = category.toLowerCase();
+      if (catLower.includes('hardware') || catLower.includes('workstation') || catLower.includes('asset') || type === 'hardware') {
+        // IT asset and hardware requests assigned to Ticket Managers
+        const u = users.find(u => u.role === 'manager' && u.status === 'active') || users.find(u => u.id === 'usr-marcus-manager') || users.find(u => u.role === 'manager');
+        if (u) { resolvedAssignedTechId = u.id; resolvedAssignedTechName = u.name; resolvedAssignedTeamId = 'team-workplace'; }
+      } else if (catLower.includes('network') || catLower.includes('vpn')) {
+        const u = users.find(u => u.id === 'usr-marcus-manager') || users.find(u => u.role === 'manager');
+        if (u) { resolvedAssignedTechId = u.id; resolvedAssignedTechName = u.name; resolvedAssignedTeamId = 'team-infra-net'; }
+      } else if (catLower.includes('security') || catLower.includes('access')) {
+        const u = users.find(u => u.id === 'usr-sarah-admin') || users.find(u => u.role === 'admin');
+        if (u) { resolvedAssignedTechId = u.id; resolvedAssignedTechName = u.name; resolvedAssignedTeamId = 'team-sec-ops'; }
+      } else {
+        const u = users.find(u => u.id === 'usr-alex-tech') || users.find(u => u.role === 'technician');
+        if (u) { resolvedAssignedTechId = u.id; resolvedAssignedTechName = u.name; resolvedAssignedTeamId = 'team-l1-helpdesk'; }
+      }
+    }
+  }
 
   let newTicket: Ticket = {
     id: ticketId,
@@ -540,26 +954,29 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
     impact,
     urgency,
     channel,
-    requesterId: requesterId || actor.id,
-    requesterName: requesterName || reqUser?.name || actor.name,
-    requesterEmail: requesterEmail || reqUser?.email || actor.email,
-    requesterPhone: requesterPhone || reqUser?.phone,
-    organizationId: organizationId || actor.organizationId,
-    departmentId: departmentId || reqUser?.departmentId,
-    locationId: locationId || reqUser?.locationId,
-    assignedTeamId,
-    assignedTechnicianId,
-    assignedTechnicianName: techUser?.name,
-    followers: [actor.id],
+    requesterId: requesterId || matchedUser?.id || `guest-${Date.now()}`,
+    requesterName: requesterName || matchedUser?.name || (targetEmail ? targetEmail.split('@')[0] : 'Guest User'),
+    requesterEmail: targetEmail || matchedUser?.email || 'guest@portal.local',
+    requesterEmployeeCode: req.body.requesterEmployeeCode || matchedUser?.employeeCode || (matchedUser?.name?.toLowerCase().includes('lakhan') ? 'CBPL2045' : undefined),
+    organizationId: organizationId || matchedUser?.organizationId || actor?.organizationId || currentOrg?.id || 'org-lakhan-tech',
+    organizationName: organizations.find(o => o.id === (organizationId || matchedUser?.organizationId || actor?.organizationId || currentOrg?.id))?.name || 'Lakhan Tech HQ',
+    departmentId: departmentId || matchedUser?.departmentId,
+    locationId: locationId || matchedUser?.locationId,
+    locationDesk: locationDesk || req.body.customFields?.locationDesk || customFields?.locationDesk || 'Desk #1',
+    assignedTeamId: resolvedAssignedTeamId,
+    assignedTechnicianId: resolvedAssignedTechId,
+    assignedTechnicianName: resolvedAssignedTechName,
+    followers: matchedUser ? [matchedUser.id] : [],
     ccRecipients: [],
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     dueDate: dueDate || resolutionDeadline,
     relatedAssetIds,
-    tags,
+    tags: resolvedAssignedTechId ? [...tags, 'auto-assigned'] : tags,
     estimatedMinutes: 60,
     actualMinutesSpent: 0,
     customFields,
+    attachments: Array.isArray(attachments) ? attachments : [],
     slaStatus: 'within_target',
     slaFirstResponseDeadline: firstResponseDeadline,
     slaResolutionDeadline: resolutionDeadline,
@@ -579,11 +996,11 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
   }
 
   logAudit(
-    actor,
+    actor || { id: 'guest', name: newTicket.requesterName, role: 'requester' as const },
     'ticket.created',
     'ticket',
     ticketId,
-    `Created ticket [${ticketId}] "${subject}" (${priority}) via ${channel}. Applied rules: ${appliedRules.join(', ') || 'none'}`
+    `Created ticket [${ticketId}] "${subject}" (${priority}) via ${channel}. Assignee: ${resolvedAssignedTechName || 'Unassigned'}. Applied rules: ${appliedRules.join(', ') || 'none'}`
   );
 
   res.status(201).json(newTicket);
@@ -605,10 +1022,11 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
   const oldTicket = tickets[idx];
   const updates = req.body;
 
-  // Validation before resolution / closure
+  // Handling resolution / closure
   if (updates.status === 'resolved' || updates.status === 'closed') {
     if (!updates.resolutionCode && !oldTicket.resolutionCode) {
-      return res.status(400).json({ error: 'A resolution code is mandatory before resolving or closing a ticket.' });
+      updates.resolutionCode = 'solved';
+      updates.resolutionSummary = updates.resolutionSummary || (updates.status === 'closed' ? 'Closed via ticket properties control' : 'Resolved via ticket properties control');
     }
   }
 
@@ -621,13 +1039,33 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
     updates.closedAt = new Date().toISOString();
   }
 
-  // If assignee changed, update technician name
-  if (updates.assignedTechnicianId && updates.assignedTechnicianId !== oldTicket.assignedTechnicianId) {
-    const tech = users.find(u => u.id === updates.assignedTechnicianId);
-    updates.assignedTechnicianName = tech?.name;
+  // If actor is requester, they cannot assign technicians
+  if (actor.role === 'requester') {
+    delete updates.assignedTechnicianId;
+    delete updates.assignedTechnicianName;
   }
 
-  const updatedTicket: Ticket = {
+  // If assignee changed, update technician name and enforce that requesters cannot be assigned tickets
+  if (updates.assignedTechnicianId !== undefined) {
+    if (!updates.assignedTechnicianId) {
+      updates.assignedTechnicianId = undefined;
+      updates.assignedTechnicianName = undefined;
+    } else {
+      const tech = users.find(u => u.id === updates.assignedTechnicianId);
+      if (tech && (tech.role === 'requester' || tech.role === 'auditor')) {
+        return res.status(400).json({ error: 'Cannot assign ticket to a requester. Only technicians, managers, and administrators can be assigned tickets.' });
+      }
+      updates.assignedTechnicianName = tech?.name;
+    }
+  }
+  if (updates.assignedTechnicianName !== undefined) {
+    const techByName = users.find(u => u.name.toLowerCase() === updates.assignedTechnicianName?.toLowerCase());
+    if (techByName && (techByName.role === 'requester' || techByName.role === 'auditor')) {
+      return res.status(400).json({ error: 'Cannot assign ticket to a requester.' });
+    }
+  }
+
+  let updatedTicket: Ticket = {
     ...oldTicket,
     ...updates,
     updatedAt: new Date().toISOString(),
@@ -637,6 +1075,39 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
   const { status: slaStat, breachReason } = evaluateSlaStatus(updatedTicket);
   updatedTicket.slaStatus = slaStat;
   updatedTicket.slaBreachReason = breachReason;
+
+  // Run automation rules
+  const automationRules = db.get('automationRules') || [];
+  let currentTicketState = updatedTicket;
+  const allGeneratedComments: TicketComment[] = [];
+
+  const resUpdate = runAutomations('ticket_updated', currentTicketState, automationRules);
+  currentTicketState = resUpdate.updatedTicket;
+  if (resUpdate.generatedComments.length) allGeneratedComments.push(...resUpdate.generatedComments);
+
+  if (oldTicket.status !== updatedTicket.status) {
+    const resStatus = runAutomations('status_changed', currentTicketState, automationRules);
+    currentTicketState = resStatus.updatedTicket;
+    if (resStatus.generatedComments.length) allGeneratedComments.push(...resStatus.generatedComments);
+  }
+
+  if (oldTicket.priority !== updatedTicket.priority) {
+    const resPri = runAutomations('priority_changed', currentTicketState, automationRules);
+    currentTicketState = resPri.updatedTicket;
+    if (resPri.generatedComments.length) allGeneratedComments.push(...resPri.generatedComments);
+  }
+
+  updatedTicket = currentTicketState;
+  if (updatedTicket.assignedTechnicianId) {
+    const assignedTech = users.find(u => u.id === updatedTicket.assignedTechnicianId);
+    if (assignedTech) updatedTicket.assignedTechnicianName = assignedTech.name;
+  }
+  db.set('automationRules', automationRules);
+
+  if (allGeneratedComments.length > 0) {
+    const comments = db.get('comments');
+    db.set('comments', [...comments, ...allGeneratedComments]);
+  }
 
   tickets[idx] = updatedTicket;
   db.set('tickets', tickets);
@@ -665,9 +1136,10 @@ apiRouter.delete('/tickets/:id', (req: Request, res: Response) => {
   const users = db.get('users');
   const actor = users.find(u => u.id === currentUserId) || users[0];
 
-  // RBAC: strictly superadmin and admin can delete tickets. Technicians & basic users cannot delete.
-  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
-    return res.status(403).json({ error: 'Permission denied. Technicians and basic users cannot delete tickets. Only Admins can perform deletion.' });
+  // RBAC: superadmin, admin, or any staff user with canDeleteTickets privilege
+  const canDelete = actor.role === 'superadmin' || actor.role === 'admin' || actor.privileges?.canDeleteTickets === true;
+  if (!canDelete) {
+    return res.status(403).json({ error: 'Permission denied. You do not have privilege to delete tickets. Please contact Superadmin.' });
   }
 
   const removed = tickets[ticketIdx];
@@ -711,6 +1183,16 @@ apiRouter.post('/tickets/:id/comments', (req: Request, res: Response) => {
 
   if (!content || !content.trim()) {
     return res.status(400).json({ error: 'Comment body cannot be empty' });
+  }
+
+  if (Array.isArray(attachments) && attachments.length > 4) {
+    return res.status(400).json({ error: 'Maximum 4 attachments allowed per comment.' });
+  }
+  const totalAttBytes = Array.isArray(attachments)
+    ? attachments.reduce((sum: number, att: any) => sum + (att.size || 0), 0)
+    : 0;
+  if (totalAttBytes > 2 * 1024 * 1024) {
+    return res.status(400).json({ error: 'Comment attachments exceed the 2 MB limit (max 2 MB total).' });
   }
 
   const currentUserId = db.get('currentUserId');
@@ -887,7 +1369,28 @@ apiRouter.post('/tickets/bulk', (req: Request, res: Response) => {
 // Assets & Hardware Inventory
 // -------------------------------------------------------------
 apiRouter.get('/assets', (req: Request, res: Response) => {
-  res.json(db.get('assets'));
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const currentUser = currentUserId ? users.find(u => u.id === currentUserId) : null;
+  const assets = db.get('assets');
+
+  // RBAC: Guests get empty list, requesters get assigned equipment only, staff get full inventory
+  if (!currentUser) {
+    return res.json([]);
+  }
+  const organizations = db.get('organizations');
+  const currentOrg = organizations.find(o => o.id === currentUser.organizationId) || organizations[0];
+  const defCurrency = currentOrg?.systemSettings?.defaultCurrency || '₹';
+  const mappedAssets = assets.map(a => ({
+    ...a,
+    costCurrency: (a.costCurrency && a.costCurrency !== '$') ? a.costCurrency : defCurrency,
+  }));
+
+  if (currentUser.role === 'requester') {
+    return res.json(mappedAssets.filter(a => a.assignedUserId === currentUser.id));
+  }
+
+  res.json(mappedAssets);
 });
 
 apiRouter.post('/assets', (req: Request, res: Response) => {
@@ -895,15 +1398,68 @@ apiRouter.post('/assets', (req: Request, res: Response) => {
   const currentUserId = db.get('currentUserId');
   const users = db.get('users');
   const actor = users.find(u => u.id === currentUserId) || users[0];
+  const organizations = db.get('organizations');
+  const primaryOrg = organizations.find(o => o.id === (req.body.organizationId || actor.organizationId)) || organizations[0];
+  const allowSelfService = primaryOrg?.systemSettings?.allowRequesterAssetSelfService !== false;
+
+  if (actor.role === 'requester' && !allowSelfService) {
+    return res.status(403).json({ error: 'Access denied: Requester asset self-service is currently disabled.' });
+  }
+
+  // Determine assigned user
+  let assignedUserId = req.body.assignedUserId || req.body.assignedToUserId;
+  let assignedUserName = req.body.assignedUserName || req.body.assignedToUserName;
+  if (actor.role === 'requester') {
+    assignedUserId = actor.id;
+    assignedUserName = actor.name;
+  }
+
+  // If asset is added to requester from user side or admin side it should mark status as In service (Admin can set any status as per device health)
+  let lifecycleStatus = req.body.lifecycleStatus;
+  if (assignedUserId) {
+    if (!lifecycleStatus || actor.role === 'requester') {
+      lifecycleStatus = 'in_service';
+    }
+  } else {
+    lifecycleStatus = lifecycleStatus || 'in_stock';
+  }
+
+  // Requester cannot set cost, by default set to Pending
+  let purchaseCost = req.body.purchaseCost;
+  let costStatus = req.body.costStatus;
+  if (actor.role === 'requester') {
+    purchaseCost = 0;
+    costStatus = 'Pending (Admin Verification)';
+  } else if (!costStatus) {
+    costStatus = purchaseCost ? 'Verified' : 'Pending';
+  }
 
   const newAsset = {
     ...req.body,
     id: req.body.id || `AST-${1000 + assets.length + 1}`,
-    organizationId: req.body.organizationId || actor.organizationId,
+    name: req.body.name || 'Hardware Equipment',
+    type: req.body.type || 'laptop',
+    manufacturer: req.body.manufacturer || 'Standard Issue',
+    model: req.body.model || '',
+    serialNumber: req.body.serialNumber || `SN-${Date.now().toString().slice(-6)}`,
+    locationDesk: req.body.locationDesk || 'Assigned Desk',
+    assignedUserId,
+    assignedUserName,
+    assignedToUserId: assignedUserId,
+    assignedToUserName: assignedUserName,
+    assignedToUserEmail: req.body.assignedToUserEmail || (actor.role === 'requester' ? actor.email : undefined),
+    assignedDate: req.body.assignedDate || new Date().toISOString(),
+    lifecycleStatus,
+    status: lifecycleStatus,
+    purchaseCost,
+    costStatus,
+    organizationId: req.body.organizationId || actor.organizationId || primaryOrg.id,
+    purchaseDate: req.body.purchaseDate || new Date().toISOString().slice(0, 10),
+    warrantyExpiry: req.body.warrantyExpiry || new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().slice(0, 10),
   };
 
   db.set('assets', [newAsset, ...assets]);
-  logAudit(actor, 'asset.created', 'asset', newAsset.id, `Registered asset ${newAsset.name} (${newAsset.model})`);
+  logAudit(actor, 'asset.created', 'asset', newAsset.id, `Registered asset ${newAsset.name} (${newAsset.serialNumber || newAsset.id}) for ${assignedUserName || 'Stock'}`);
   res.status(201).json(newAsset);
 });
 
@@ -913,7 +1469,34 @@ apiRouter.patch('/assets/:id', (req: Request, res: Response) => {
   const idx = assets.findIndex(a => a.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Asset not found' });
 
-  assets[idx] = { ...assets[idx], ...req.body };
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  let updates = { ...req.body };
+
+  // If newly assigned to a user from admin side or user side, mark status as in_service if not explicitly set
+  const newAssignedUserId = updates.assignedUserId !== undefined ? updates.assignedUserId : updates.assignedToUserId;
+  if (newAssignedUserId && !updates.lifecycleStatus) {
+    updates.lifecycleStatus = 'in_service';
+  } else if (newAssignedUserId === null || newAssignedUserId === '') {
+    if (!updates.lifecycleStatus) {
+      updates.lifecycleStatus = 'in_stock';
+    }
+  }
+
+  // Keep aliases in sync
+  if (updates.assignedUserId !== undefined) {
+    updates.assignedToUserId = updates.assignedUserId;
+  }
+  if (updates.assignedUserName !== undefined) {
+    updates.assignedToUserName = updates.assignedUserName;
+  }
+  if (updates.lifecycleStatus) {
+    updates.status = updates.lifecycleStatus;
+  }
+
+  assets[idx] = { ...assets[idx], ...updates };
   db.set('assets', assets);
   res.json(assets[idx]);
 });
@@ -929,11 +1512,139 @@ apiRouter.delete('/assets/:id', (req: Request, res: Response) => {
   if (assetIdx === -1) return res.status(404).json({ error: 'Asset not found' });
 
   const removed = assets[assetIdx];
+  if (actor.role === 'requester') {
+    const isOwner = removed.assignedUserId === actor.id || removed.assignedToUserId === actor.id;
+    if (!isOwner) {
+      return res.status(403).json({ error: 'Access denied: Requesters can only remove equipment assigned to themselves.' });
+    }
+  }
+
   const newAssets = assets.filter(a => a.id !== id);
   db.set('assets', newAssets);
 
   logAudit(actor, 'asset.deleted', 'asset', id, `Removed asset ${removed.name} (${removed.id})`);
   res.json({ success: true, deletedAssetId: id });
+});
+
+apiRouter.post('/assets/bulk-update-status', (req: Request, res: Response) => {
+  const { assetIds, status } = req.body;
+  if (!Array.isArray(assetIds) || assetIds.length === 0 || !status) {
+    return res.status(400).json({ error: 'assetIds array and status are required' });
+  }
+
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  if (actor.role === 'requester') {
+    return res.status(403).json({ error: 'Access denied: Requesters cannot update asset inventory.' });
+  }
+
+  const assets = db.get('assets');
+  let updatedCount = 0;
+
+  for (const a of assets) {
+    if (assetIds.includes(a.id)) {
+      const validStatus: Asset['lifecycleStatus'] =
+        status === 'in_stock' || status === 'available'
+          ? 'in_stock'
+          : status === 'in_repair' || status === 'maintenance'
+          ? 'in_repair'
+          : status === 'retired' || status === 'decommissioned'
+          ? 'retired'
+          : 'in_service';
+      a.lifecycleStatus = validStatus;
+      if (validStatus === 'in_stock' || validStatus === 'retired') {
+        a.assignedUserId = undefined;
+        a.assignedUserName = undefined;
+      }
+      updatedCount++;
+    }
+  }
+
+  db.set('assets', assets);
+  logAudit(actor, 'asset.bulk_status_update', 'asset', 'multiple', `Updated status to "${status}" on ${updatedCount} assets`);
+  res.json({ success: true, updatedCount, status });
+});
+
+apiRouter.post('/assets/bulk-delete', (req: Request, res: Response) => {
+  const { assetIds } = req.body;
+  if (!Array.isArray(assetIds) || assetIds.length === 0) {
+    return res.status(400).json({ error: 'assetIds array is required' });
+  }
+
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  if (actor.role === 'requester') {
+    return res.status(403).json({ error: 'Access denied: Requesters cannot delete assets.' });
+  }
+
+  const assets = db.get('assets');
+  const beforeCount = assets.length;
+  const remainingAssets = assets.filter(a => !assetIds.includes(a.id));
+  const deletedCount = beforeCount - remainingAssets.length;
+
+  db.set('assets', remainingAssets);
+  logAudit(actor, 'asset.bulk_deleted', 'asset', 'multiple', `Bulk deleted ${deletedCount} assets (${assetIds.slice(0, 5).join(', ')}${assetIds.length > 5 ? '...' : ''})`);
+  res.json({ success: true, deletedCount, remainingCount: remainingAssets.length });
+});
+
+apiRouter.post('/assets/bulk-create', (req: Request, res: Response) => {
+  const { assets: newAssetsList } = req.body;
+  if (!Array.isArray(newAssetsList) || newAssetsList.length === 0) {
+    return res.status(400).json({ error: 'assets array is required' });
+  }
+
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  if (actor.role === 'requester') {
+    return res.status(403).json({ error: 'Access denied: Requesters cannot register hardware assets.' });
+  }
+
+  const currentAssets = db.get('assets');
+  let currentMaxNum = 1000;
+  for (const a of currentAssets) {
+    const numPart = parseInt(a.id.replace(/\D/g, ''), 10);
+    if (!isNaN(numPart) && numPart > currentMaxNum) {
+      currentMaxNum = numPart;
+    }
+  }
+
+  const createdAssets: Asset[] = [];
+  for (let i = 0; i < newAssetsList.length; i++) {
+    const item = newAssetsList[i];
+    currentMaxNum++;
+    const assetId = item.id || `AST-${currentMaxNum}`;
+    const newAsset: Asset = {
+      id: assetId,
+      name: item.name || `Asset ${assetId}`,
+      type: item.type || 'laptop',
+      manufacturer: item.manufacturer || 'Dell',
+      model: item.model || 'Standard Edition',
+      serialNumber: item.serialNumber || `SN-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+      lifecycleStatus: item.lifecycleStatus || 'in_stock',
+      organizationId: item.organizationId || actor.organizationId,
+      assignedUserId: item.assignedUserId || undefined,
+      assignedUserName: item.assignedUserName || undefined,
+      purchaseDate: item.purchaseDate || new Date().toISOString().split('T')[0],
+      warrantyExpiry: item.warrantyExpiry || new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0],
+      warrantyPeriod: item.warrantyPeriod || '1 year',
+      purchaseCost: item.purchaseCost !== undefined ? Number(item.purchaseCost) : undefined,
+      costCurrency: item.costCurrency || '$',
+      customFields: item.customFields || {},
+      ipAddress: item.ipAddress || undefined,
+      hostname: item.hostname || undefined,
+    };
+    createdAssets.push(newAsset);
+  }
+
+  db.set('assets', [...createdAssets, ...currentAssets]);
+  logAudit(actor, 'asset.bulk_created', 'asset', 'multiple', `Bulk registered ${createdAssets.length} assets`);
+  res.status(201).json({ success: true, createdCount: createdAssets.length, createdAssets });
 });
 
 // -------------------------------------------------------------
@@ -1046,17 +1757,53 @@ apiRouter.delete('/knowledge-base/:id', (req: Request, res: Response) => {
 apiRouter.post('/knowledge-base/:id/feedback', (req: Request, res: Response) => {
   const { id } = req.params;
   const { helpful } = req.body;
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = currentUserId ? users.find((u) => u.id === currentUserId) : null;
+
+  if (!actor) {
+    return res.status(401).json({
+      error: 'Voting is restricted to logged-in users only. Please sign in to submit helpfulness feedback.',
+    });
+  }
+
   const articles = db.get('knowledgeArticles');
-  const idx = articles.findIndex(a => a.id === id);
+  const idx = articles.findIndex((a) => a.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Article not found' });
 
-  if (helpful) {
-    articles[idx].helpfulCount = (articles[idx].helpfulCount || 0) + 1;
-  } else {
-    articles[idx].notHelpfulCount = (articles[idx].notHelpfulCount || 0) + 1;
+  const targetArt = articles[idx] as any;
+  if (!targetArt.votedUserIds) {
+    targetArt.votedUserIds = [];
   }
+
+  if (targetArt.votedUserIds.includes(actor.id)) {
+    return res.status(400).json({
+      error: 'You have already voted on this knowledge article. Feedback can only be submitted once per user.',
+    });
+  }
+
+  targetArt.votedUserIds.push(actor.id);
+  if (helpful) {
+    targetArt.helpfulCount = (targetArt.helpfulCount || 0) + 1;
+  } else {
+    targetArt.notHelpfulCount = (targetArt.notHelpfulCount || 0) + 1;
+  }
+
   db.set('knowledgeArticles', articles);
-  res.json(articles[idx]);
+  logAudit(
+    actor,
+    'kb.voted',
+    'setting',
+    id,
+    `User ${actor.name} voted ${helpful ? 'Helpful (Yes)' : 'Not Helpful (No)'} on article "${targetArt.title}"`
+  );
+
+  res.json({
+    article: targetArt,
+    hasVoted: true,
+    userVote: helpful ? 'yes' : 'no',
+    message: 'Thank you! Your feedback has been recorded.',
+  });
 });
 
 // -------------------------------------------------------------
@@ -1155,6 +1902,20 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
     .map(([k, v]) => `• ${k}: ${v}`)
     .join('\n');
 
+  const isAssetOrHardware =
+    item.category.toLowerCase().includes('hardware') ||
+    item.category.toLowerCase().includes('workstation') ||
+    item.category.toLowerCase().includes('asset');
+
+  const ticketManager =
+    users.find((u) => u.role === 'manager' && u.status === 'active') ||
+    users.find((u) => u.id === 'usr-marcus-manager') ||
+    users.find((u) => u.role === 'manager');
+
+  const resolvedAssignedTechId = isAssetOrHardware && ticketManager ? ticketManager.id : undefined;
+  const resolvedAssignedTechName = isAssetOrHardware && ticketManager ? ticketManager.name : undefined;
+  const resolvedTeamId = isAssetOrHardware ? 'team-workplace' : item.defaultTeamId;
+
   const ticket: Ticket = {
     id: ticketId,
     subject: `[Service Request]: ${item.title}`,
@@ -1170,14 +1931,16 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
     requesterName: actor.name,
     requesterEmail: actor.email,
     organizationId: actor.organizationId,
-    assignedTeamId: item.defaultTeamId,
+    assignedTeamId: resolvedTeamId,
+    assignedTechnicianId: resolvedAssignedTechId,
+    assignedTechnicianName: resolvedAssignedTechName,
     followers: [actor.id],
     ccRecipients: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     dueDate: resolutionDeadline,
     relatedAssetIds: [],
-    tags: ['service-catalog', item.category.toLowerCase()],
+    tags: isAssetOrHardware ? ['service-catalog', 'it-asset-request', 'manager-assigned'] : ['service-catalog', item.category.toLowerCase()],
     estimatedMinutes: item.estimatedHours * 60,
     actualMinutesSpent: 0,
     customFields: formData || {},
@@ -1212,7 +1975,16 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
 });
 
 apiRouter.get('/approvals', (req: Request, res: Response) => {
-  res.json(db.get('approvalRequests'));
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const currentUser = currentUserId ? users.find(u => u.id === currentUserId) : null;
+  const approvals = db.get('approvalRequests');
+
+  if (!currentUser) return res.json([]);
+  if (currentUser.role === 'requester') {
+    return res.json(approvals.filter(a => a.requesterId === currentUser.id));
+  }
+  res.json(approvals);
 });
 
 apiRouter.post('/approvals/:id/decide', (req: Request, res: Response) => {
@@ -1556,8 +2328,237 @@ apiRouter.get('/sla-policies', (req: Request, res: Response) => {
   res.json(db.get('slaPolicies'));
 });
 
+// SLA Timers - Superadmin Only Management
+apiRouter.patch('/sla-policies/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = currentUserId ? users.find((u) => u.id === currentUserId) : null;
+
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({
+      error: 'Access denied: SLA targets and timers are strictly managed and decided by the Super Administrator only.',
+    });
+  }
+
+  const policies = db.get('slaPolicies');
+  const idx = policies.findIndex((p) => p.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'SLA policy not found' });
+
+  const updatedPolicy = {
+    ...policies[idx],
+    ...req.body,
+  };
+
+  policies[idx] = updatedPolicy;
+  db.set('slaPolicies', policies);
+
+  logAudit(
+    actor,
+    'sla.policy_updated',
+    'setting',
+    id,
+    `Superadmin ${actor.name} modified SLA policy "${updatedPolicy.name}": Response Target=${updatedPolicy.firstResponseMinutes}m, Resolution Target=${updatedPolicy.resolutionMinutes}m, BusinessHours=${updatedPolicy.businessHoursOnly}`
+  );
+
+  res.json(updatedPolicy);
+});
+
+// Superadmin Old Tickets Purge by Date Range
+apiRouter.post('/superadmin/tickets/purge', (req: Request, res: Response) => {
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = currentUserId ? users.find((u) => u.id === currentUserId) : null;
+
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({
+      error: 'Access denied: Only Super Administrator can permanently purge old tickets to reclaim storage space.',
+    });
+  }
+
+  const { startDate, endDate, statusFilter } = req.body;
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: 'Both startDate and endDate are required.' });
+  }
+
+  const start = new Date(startDate).getTime();
+  const end = new Date(endDate + 'T23:59:59.999Z').getTime();
+
+  if (isNaN(start) || isNaN(end)) {
+    return res.status(400).json({ error: 'Invalid date format.' });
+  }
+
+  const allTickets = db.get('tickets');
+  const ticketsToPurge = allTickets.filter((t) => {
+    const tTime = new Date(t.createdAt).getTime();
+    if (tTime < start || tTime > end) return false;
+    if (statusFilter && statusFilter !== 'all') {
+      return t.status === statusFilter;
+    }
+    return true;
+  });
+
+  const purgeIds = new Set(ticketsToPurge.map((t) => t.id));
+  const remainingTickets = allTickets.filter((t) => !purgeIds.has(t.id));
+
+  // Purge related comments, tasks, and work logs
+  const allComments = db.get('comments').filter((c) => !purgeIds.has(c.ticketId));
+  const allTasks = db.get('tasks').filter((t) => !purgeIds.has(t.ticketId));
+  const allWorkLogs = db.get('workLogs').filter((w) => !purgeIds.has(w.ticketId));
+
+  db.set('tickets', remainingTickets);
+  db.set('comments', allComments);
+  db.set('tasks', allTasks);
+  db.set('workLogs', allWorkLogs);
+
+  const freedKbEstimate = Math.round(ticketsToPurge.length * 2.4);
+
+  logAudit(
+    actor,
+    'tickets.purged_by_range',
+    'ticket',
+    'tickets',
+    `Superadmin ${actor.name} permanently purged ${ticketsToPurge.length} old tickets between ${startDate} and ${endDate} (${freedKbEstimate} KB database storage freed)`
+  );
+
+  res.json({
+    success: true,
+    deletedCount: ticketsToPurge.length,
+    remainingCount: remainingTickets.length,
+    freedKbEstimate,
+    message: `Successfully purged ${ticketsToPurge.length} old tickets created between ${startDate} and ${endDate}. Reclaimed ~${freedKbEstimate} KB database space.`,
+  });
+});
+
 apiRouter.get('/automation-rules', (req: Request, res: Response) => {
   res.json(db.get('automationRules'));
+});
+
+apiRouter.post('/automation-rules', (req: Request, res: Response) => {
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  // RBAC: superadmin or admin can create automation rules
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Permission denied. Only Super Admin or Admin can create automation rules.' });
+  }
+
+  const { name, description, trigger, conditions, actions, enabled, organizationId, order } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Rule name is required.' });
+  }
+  if (!trigger) {
+    return res.status(400).json({ error: 'Trigger event is required.' });
+  }
+  if (!conditions || !Array.isArray(conditions) || conditions.length === 0) {
+    return res.status(400).json({ error: 'At least one condition is required.' });
+  }
+  if (!actions || !Array.isArray(actions) || actions.length === 0) {
+    return res.status(400).json({ error: 'At least one action is required.' });
+  }
+
+  const rules = db.get('automationRules') || [];
+  const newRule: AutomationRule = {
+    id: `rule-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    name: name.trim(),
+    description: (description || '').trim(),
+    organizationId: organizationId || actor.organizationId || 'org-lakhan-tech',
+    enabled: enabled !== undefined ? enabled : true,
+    order: order || (rules.length + 1),
+    trigger,
+    conditions,
+    actions,
+    executionCount: 0,
+    lastExecutedAt: undefined,
+  };
+
+  const updatedRules = [...rules, newRule];
+  db.set('automationRules', updatedRules);
+
+  logAudit(
+    actor,
+    'automation.created',
+    'automation',
+    newRule.id,
+    `Created custom automation rule "${newRule.name}" (Trigger: ${newRule.trigger})`
+  );
+
+  res.status(201).json(newRule);
+});
+
+apiRouter.put('/automation-rules/:id', (req: Request, res: Response) => {
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Permission denied. Only Super Admin or Admin can update automation rules.' });
+  }
+
+  const { id } = req.params;
+  const rules = db.get('automationRules') || [];
+  const idx = rules.findIndex(r => r.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Automation rule not found.' });
+  }
+
+  const { name, description, trigger, conditions, actions, enabled, order } = req.body;
+  const existing = rules[idx];
+
+  const updated: AutomationRule = {
+    ...existing,
+    name: name !== undefined ? name.trim() : existing.name,
+    description: description !== undefined ? description.trim() : existing.description,
+    trigger: trigger || existing.trigger,
+    conditions: conditions || existing.conditions,
+    actions: actions || existing.actions,
+    enabled: enabled !== undefined ? enabled : existing.enabled,
+    order: order !== undefined ? order : existing.order,
+  };
+
+  rules[idx] = updated;
+  db.set('automationRules', rules);
+
+  logAudit(
+    actor,
+    'automation.updated',
+    'automation',
+    id,
+    `Updated automation rule "${updated.name}"`
+  );
+
+  res.json(updated);
+});
+
+apiRouter.delete('/automation-rules/:id', (req: Request, res: Response) => {
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Permission denied. Only Super Admin or Admin can delete automation rules.' });
+  }
+
+  const { id } = req.params;
+  const rules = db.get('automationRules') || [];
+  const ruleToDelete = rules.find(r => r.id === id);
+  if (!ruleToDelete) {
+    return res.status(404).json({ error: 'Automation rule not found.' });
+  }
+
+  const updatedRules = rules.filter(r => r.id !== id);
+  db.set('automationRules', updatedRules);
+
+  logAudit(
+    actor,
+    'automation.deleted',
+    'automation',
+    id,
+    `Deleted automation rule "${ruleToDelete.name}"`
+  );
+
+  res.json({ success: true, message: `Automation rule "${ruleToDelete.name}" deleted successfully.` });
 });
 
 apiRouter.patch('/automation-rules/:id/toggle', (req: Request, res: Response) => {
@@ -1750,18 +2751,35 @@ apiRouter.get('/reports/metrics', (req: Request, res: Response) => {
 // Superadmin Stats & System Health
 // -------------------------------------------------------------
 apiRouter.get('/superadmin/stats', (req: Request, res: Response) => {
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const currentUser = currentUserId ? users.find((u) => u.id === currentUserId) : null;
+
+  if (!currentUser || currentUser.role === 'requester') {
+    return res.json({
+      totalOrganizations: 1,
+      activeTenants: 1,
+      totalUsers: 0,
+      totalTickets: 0,
+      totalAssets: 0,
+      systemUptimeHours: 24,
+      emailQueueHealth: 'nominal',
+      backgroundWorkerStatus: 'active',
+      databaseSizeKb: 100,
+    });
+  }
+
   const orgs = db.get('organizations');
   const tickets = db.get('tickets');
-  const users = db.get('users');
   const assets = db.get('assets');
 
   res.json({
     totalOrganizations: orgs.length,
-    activeTenants: orgs.filter(o => o.status === 'active').length,
+    activeTenants: orgs.filter((o) => o.status === 'active').length,
     totalUsers: users.length,
     totalTickets: tickets.length,
     totalAssets: assets.length,
-    systemUptimeHours: Math.round(process.uptime() / 3600 * 10) / 10 || 124.5,
+    systemUptimeHours: Math.round((process.uptime() / 3600) * 10) / 10 || 124.5,
     emailQueueHealth: 'nominal',
     backgroundWorkerStatus: 'active',
     databaseSizeKb: Math.round(JSON.stringify(db.getRawData()).length / 1024),
@@ -1769,12 +2787,24 @@ apiRouter.get('/superadmin/stats', (req: Request, res: Response) => {
 });
 
 apiRouter.get('/audit-logs', (req: Request, res: Response) => {
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const currentUser = currentUserId ? users.find((u) => u.id === currentUserId) : null;
+
+  if (!currentUser || currentUser.role === 'requester') {
+    return res.json([]);
+  }
   res.json(db.get('auditLogs'));
 });
 
 // -------------------------------------------------------------
-// CSAT Surveys
+// CSAT Surveys & Ratings Management
 // -------------------------------------------------------------
+apiRouter.get('/surveys', (req: Request, res: Response) => {
+  const surveys = db.get('surveys');
+  res.json(surveys);
+});
+
 apiRouter.post('/surveys', (req: Request, res: Response) => {
   const { ticketId, rating, comment } = req.body;
   if (!ticketId || !rating) return res.status(400).json({ error: 'ticketId and rating required' });
@@ -1786,8 +2816,8 @@ apiRouter.post('/surveys', (req: Request, res: Response) => {
   const survey: SatisfactionSurvey = {
     id: `srv-${Date.now()}`,
     ticketId,
-    requesterId: actor.id,
-    requesterName: actor.name,
+    requesterId: actor ? actor.id : 'guest',
+    requesterName: actor ? actor.name : 'Portal User',
     rating: Number(rating),
     comment,
     submittedAt: new Date().toISOString(),
@@ -1796,4 +2826,22 @@ apiRouter.post('/surveys', (req: Request, res: Response) => {
   const surveys = db.get('surveys');
   db.set('surveys', [survey, ...surveys]);
   res.status(201).json(survey);
+});
+
+apiRouter.delete('/surveys/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const currentUserId = db.get('currentUserId');
+  const users = db.get('users');
+  const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Permission denied: Only Super Administrator or Admin can moderate and delete ratings.' });
+  }
+
+  const surveys = db.get('surveys');
+  const filtered = surveys.filter(s => s.id !== id);
+  db.set('surveys', filtered);
+
+  logAudit(actor, 'survey.deleted', 'setting', id, `Deleted ticket satisfaction rating [${id}]`);
+  res.json({ success: true, deletedSurveyId: id });
 });

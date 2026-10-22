@@ -21,7 +21,7 @@ import { ServiceCatalogItem, User } from '../types';
 
 interface ServiceCatalogViewProps {
   catalogItems: ServiceCatalogItem[];
-  currentUser?: User;
+  currentUser?: User | null;
   onRequestItem: (catalogItemId: string, formData: Record<string, any>) => void;
   onCreateCatalogItem?: (data: Partial<ServiceCatalogItem>) => void;
   onUpdateCatalogItem?: (id: string, data: Partial<ServiceCatalogItem>) => void;
