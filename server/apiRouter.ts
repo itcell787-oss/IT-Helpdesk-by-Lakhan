@@ -696,6 +696,15 @@ apiRouter.get('/tickets', (req: Request, res: Response) => {
     if (matchedOrg) {
       cleanTicket.organizationName = matchedOrg.name;
     }
+    const allSurveys = db.get('surveys') || [];
+    const matchedSurvey = allSurveys.find(s => s.ticketId === cleanTicket.id);
+    if (matchedSurvey && !cleanTicket.satisfactionRating) {
+      cleanTicket.satisfactionRating = {
+        rating: matchedSurvey.rating,
+        comment: matchedSurvey.comment,
+        submittedAt: matchedSurvey.submittedAt,
+      };
+    }
     const { status: slaStat, breachReason } = evaluateSlaStatus(cleanTicket);
     return { ...cleanTicket, slaStatus: slaStat, slaBreachReason: breachReason };
   });
@@ -812,6 +821,15 @@ apiRouter.get('/tickets/:id', (req: Request, res: Response) => {
 
   const { status: slaStat, breachReason } = evaluateSlaStatus(cleanTicket);
   const updatedTicket = { ...cleanTicket, slaStatus: slaStat, slaBreachReason: breachReason };
+  const allSurveys = db.get('surveys') || [];
+  const matchedSurvey = allSurveys.find(s => s.ticketId === id);
+  if (matchedSurvey && !updatedTicket.satisfactionRating) {
+    updatedTicket.satisfactionRating = {
+      rating: matchedSurvey.rating,
+      comment: matchedSurvey.comment,
+      submittedAt: matchedSurvey.submittedAt,
+    };
+  }
 
   const allComments = db.get('comments');
   const comments = allComments.filter(c => c.ticketId === id);
@@ -2809,6 +2827,12 @@ apiRouter.post('/surveys', (req: Request, res: Response) => {
   const { ticketId, rating, comment } = req.body;
   if (!ticketId || !rating) return res.status(400).json({ error: 'ticketId and rating required' });
 
+  const surveys = db.get('surveys');
+  const existingSurvey = surveys.find(s => s.ticketId === ticketId);
+  if (existingSurvey) {
+    return res.status(400).json({ error: 'This ticket has already been rated. Rating can only be submitted once per ticket.' });
+  }
+
   const currentUserId = db.get('currentUserId');
   const users = db.get('users');
   const actor = users.find(u => u.id === currentUserId) || users[0];
@@ -2819,12 +2843,27 @@ apiRouter.post('/surveys', (req: Request, res: Response) => {
     requesterId: actor ? actor.id : 'guest',
     requesterName: actor ? actor.name : 'Portal User',
     rating: Number(rating),
-    comment,
+    comment: comment ? String(comment).trim() : undefined,
     submittedAt: new Date().toISOString(),
   };
 
-  const surveys = db.get('surveys');
   db.set('surveys', [survey, ...surveys]);
+
+  // Synchronize satisfactionRating directly onto the ticket record
+  const tickets = db.get('tickets');
+  const ticketIndex = tickets.findIndex(t => t.id === ticketId);
+  if (ticketIndex !== -1) {
+    tickets[ticketIndex] = {
+      ...tickets[ticketIndex],
+      satisfactionRating: {
+        rating: Number(rating),
+        comment: comment ? String(comment).trim() : undefined,
+        submittedAt: survey.submittedAt,
+      },
+    };
+    db.set('tickets', tickets);
+  }
+
   res.status(201).json(survey);
 });
 

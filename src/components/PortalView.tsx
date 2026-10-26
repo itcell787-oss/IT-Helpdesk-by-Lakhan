@@ -1316,8 +1316,12 @@ export const PortalView: React.FC<PortalViewProps> = ({
                       )}
                     </div>
                     <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{t.subject}</div>
-                    <div className="text-[11px] text-cyan-700 dark:text-cyan-400 font-mono font-semibold">
-                      EmpID-Requester {t.requesterEmployeeCode || currentUser?.employeeCode || (t.requesterName?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1001')} {t.requesterName} &amp; {t.requesterEmail}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 text-[11px] font-mono">
+                      <span className="font-extrabold text-cyan-800 dark:text-cyan-300">
+                        [{t.requesterEmployeeCode || currentUser?.employeeCode || (t.requesterName?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1001')}] {t.requesterName}
+                      </span>
+                      <span className="hidden sm:inline text-slate-400">•</span>
+                      <span className="text-slate-500 dark:text-slate-400 font-medium">{t.requesterEmail}</span>
                     </div>
                     <div className="text-xs text-slate-600 dark:text-slate-400 line-clamp-1">{t.description}</div>
                   </div>
@@ -1327,14 +1331,30 @@ export const PortalView: React.FC<PortalViewProps> = ({
                       {t.status.replace(/_/g, ' ')}
                     </span>
 
-                    {/* CSAT Survey trigger if resolved */}
+                    {/* CSAT Survey trigger if resolved: Single rating only */}
                     {t.status === 'resolved' && (
-                      <button
-                        onClick={() => setRatingTicketId(t.id)}
-                        className="px-3 py-1 text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 border border-amber-300 dark:border-amber-500/40 rounded-lg flex items-center gap-1 transition-colors font-bold cursor-pointer"
-                      >
-                        <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> Rate Support
-                      </button>
+                      t.satisfactionRating ? (
+                        <div
+                          className="px-2.5 py-1 text-xs bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/40 rounded-lg flex items-center gap-1.5 font-bold cursor-default select-none shadow-xs"
+                          title={`Rating submitted: ${t.satisfactionRating.rating}/5 stars. ${t.satisfactionRating.comment ? `"${t.satisfactionRating.comment}"` : 'No comment provided'}. (Single rating locked)`}
+                        >
+                          <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                          <div className="flex text-amber-500 text-xs">
+                            {'★'.repeat(t.satisfactionRating.rating)}
+                          </div>
+                          <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold">
+                            Rated 1x
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setRatingTicketId(t.id)}
+                          className="px-3 py-1 text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 border border-amber-300 dark:border-amber-500/40 rounded-lg flex items-center gap-1 transition-colors font-bold cursor-pointer"
+                          title="Rate your IT support experience (one-time submission)"
+                        >
+                          <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> Rate Support
+                        </button>
+                      )
                     )}
 
                     <button
@@ -2005,75 +2025,108 @@ export const PortalView: React.FC<PortalViewProps> = ({
       )}
 
       {/* Survey Modal */}
-      {ratingTicketId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-md neu-modal p-6 rounded-2xl border border-slate-200/90 dark:border-white/15 space-y-4 shadow-2xl">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
-              How was your IT support experience?
-            </h3>
-            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-              Ticket <strong className="font-mono text-cyan-700 dark:text-cyan-400">{ratingTicketId}</strong> has been solved. Please share your rating to help us maintain high service quality.
-            </p>
+      {ratingTicketId && (() => {
+        const targetTicket = tickets.find((t) => t.id === ratingTicketId);
+        const alreadyRated = Boolean(targetTicket?.satisfactionRating);
 
-            {surveySubmitted ? (
-              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs text-center font-bold">
-                Thank you! Your feedback has been recorded.
-              </div>
-            ) : (
-              <form onSubmit={handleSurveySubmit} className="space-y-4">
-                <div className="flex items-center justify-center gap-3 py-2">
-                  {[1, 2, 3, 4, 5].map((star) => (
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+            <div className="w-full max-w-md neu-modal p-6 rounded-2xl border border-slate-200/90 dark:border-white/15 space-y-4 shadow-2xl">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+                How was your IT support experience?
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                Ticket <strong className="font-mono text-cyan-700 dark:text-cyan-400">{ratingTicketId}</strong> has been solved. Please share your rating to help us maintain high service quality.
+              </p>
+
+              {alreadyRated && targetTicket?.satisfactionRating ? (
+                <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-500/40 text-xs space-y-2.5">
+                  <div className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-2 text-xs">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span>Rating Already Recorded (One-Time Rating Enforced)</span>
+                  </div>
+                  <p className="text-slate-600 dark:text-slate-300">
+                    You have already submitted a rating of <strong>{targetTicket.satisfactionRating.rating} / 5 stars</strong> for this ticket. Per organization policy, tickets can only be rated one time.
+                  </p>
+                  <div className="flex text-amber-500 text-sm">
+                    {'★'.repeat(targetTicket.satisfactionRating.rating)}
+                    {'☆'.repeat(5 - targetTicket.satisfactionRating.rating)}
+                  </div>
+                  {targetTicket.satisfactionRating.comment && (
+                    <div className="italic text-slate-700 dark:text-slate-300 bg-white/70 dark:bg-slate-900/70 p-2.5 rounded-lg border border-slate-200 dark:border-white/10">
+                      "{targetTicket.satisfactionRating.comment}"
+                    </div>
+                  )}
+                  <div className="pt-2 flex justify-end">
                     <button
                       type="button"
-                      key={star}
-                      onClick={() => setSelectedRating(star)}
-                      className="p-1 text-2xl transition-transform hover:scale-125 focus:outline-none cursor-pointer"
+                      onClick={() => setRatingTicketId(null)}
+                      className="neu-btn px-4 py-1.5 text-xs font-bold rounded-lg cursor-pointer"
                     >
-                      <Star
-                        className={`w-7 h-7 ${
-                          star <= selectedRating
-                            ? 'text-amber-500 fill-amber-500'
-                            : 'text-slate-300 dark:text-slate-700'
-                        }`}
-                      />
+                      Close
                     </button>
-                  ))}
+                  </div>
                 </div>
+              ) : surveySubmitted ? (
+                <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs text-center font-bold">
+                  Thank you! Your feedback has been recorded.
+                </div>
+              ) : (
+                <form onSubmit={handleSurveySubmit} className="space-y-4">
+                  <div className="flex items-center justify-center gap-3 py-2">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        type="button"
+                        key={star}
+                        onClick={() => setSelectedRating(star)}
+                        className="p-1 text-2xl transition-transform hover:scale-125 focus:outline-none cursor-pointer"
+                      >
+                        <Star
+                          className={`w-7 h-7 ${
+                            star <= selectedRating
+                              ? 'text-amber-500 fill-amber-500'
+                              : 'text-slate-300 dark:text-slate-700'
+                          }`}
+                        />
+                      </button>
+                    ))}
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    Optional Comments or Compliments
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="Tell us about the technician's response time or resolution clarity..."
-                    value={surveyComment}
-                    onChange={(e) => setSurveyComment(e.target.value)}
-                    className="w-full p-3 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      Optional Comments or Compliments
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="Tell us about the technician's response time or resolution clarity..."
+                      value={surveyComment}
+                      onChange={(e) => setSurveyComment(e.target.value)}
+                      className="w-full p-3 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
+                    />
+                  </div>
 
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setRatingTicketId(null)}
-                    className="neu-btn px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-300 font-semibold rounded-lg cursor-pointer"
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="submit"
-                    className="neu-btn-primary px-4 py-1.5 text-xs font-bold rounded-lg cursor-pointer"
-                  >
-                    Submit Feedback
-                  </button>
-                </div>
-              </form>
-            )}
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setRatingTicketId(null)}
+                      className="neu-btn px-3.5 py-1.5 text-xs text-slate-700 dark:text-slate-300 font-semibold rounded-lg cursor-pointer"
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="submit"
+                      className="neu-btn-primary px-4 py-1.5 text-xs font-bold rounded-lg cursor-pointer"
+                    >
+                      Submit Feedback (One-Time)
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

@@ -857,7 +857,12 @@
       },
       "slaStatus": "within_target",
       "slaFirstResponseDeadline": "2026-10-02T07:30:00Z",
-      "slaResolutionDeadline": "2026-10-02T11:15:00Z"
+      "slaResolutionDeadline": "2026-10-02T11:15:00Z",
+      "satisfactionRating": {
+        "rating": 5,
+        "comment": "Great service!",
+        "submittedAt": "2026-10-26T05:09:05.854Z"
+      }
     },
     {
       "id": "ITL-000102",
@@ -3879,6 +3884,15 @@
     }
   ],
   "surveys": [
+    {
+      "id": "srv-1792991345854",
+      "ticketId": "ITL-000101",
+      "requesterId": "usr-lakhan-super",
+      "requesterName": "LAKHAN PRAJAPATI",
+      "rating": 5,
+      "comment": "Great service!",
+      "submittedAt": "2026-10-26T05:09:05.854Z"
+    },
     {
       "id": "srv-1792406260931",
       "ticketId": "ITL-000116",

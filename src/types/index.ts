@@ -162,7 +162,11 @@ export interface Ticket {
   slaBreachReason?: string;
   
   linkedTicketIds?: string[];
-  parentTicketId?: string;
+  satisfactionRating?: {
+    rating: number;
+    comment?: string;
+    submittedAt: string;
+  };
   attachments?: Array<{
     id: string;
     name: string;

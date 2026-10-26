@@ -26,6 +26,7 @@ import {
   Printer,
   CheckCheck,
   MapPin,
+  Star,
 } from 'lucide-react';
 import { Ticket, TicketComment, TaskItem, WorkLog, AuditLog, User as UserType, formatUserBadge } from '../types';
 import { SlaCountdownBadge } from './SlaCountdownBadge';
@@ -1079,6 +1080,35 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                   Resolution Code: {ticket.resolutionCode}
                 </span>
                 <p className="text-slate-800 dark:text-slate-300 font-medium">{ticket.resolutionSummary}</p>
+              </div>
+            )}
+
+            {/* Customer Satisfaction Feedback (Locked 1x Rating) */}
+            {ticket.satisfactionRating && (
+              <div className="p-3 rounded-lg bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-500/40 text-xs space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-amber-900 dark:text-amber-300 uppercase font-mono text-[10px] flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                    Customer Satisfaction Feedback
+                  </span>
+                  <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-100/70 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-800/40">
+                    Rated 1x (Locked)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex text-amber-500 text-sm">
+                    {'★'.repeat(ticket.satisfactionRating.rating)}
+                    {'☆'.repeat(5 - ticket.satisfactionRating.rating)}
+                  </div>
+                  <span className="font-bold text-slate-900 dark:text-slate-100">
+                    {ticket.satisfactionRating.rating} / 5 Stars
+                  </span>
+                </div>
+                {ticket.satisfactionRating.comment && (
+                  <p className="text-slate-700 dark:text-slate-300 italic text-[11px] bg-white/70 dark:bg-slate-900/60 p-2 rounded-md border border-slate-200 dark:border-white/10">
+                    "{ticket.satisfactionRating.comment}"
+                  </p>
+                )}
               </div>
             )}
           </div>

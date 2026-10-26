@@ -243,7 +243,40 @@ export default function App() {
     }
   };
 
+  const [previousTicketView, setPreviousTicketView] = useState<string>('tickets');
+  const [ticketListPage, setTicketListPage] = useState<number>(() => {
+    try {
+      const saved = sessionStorage.getItem('ticket_list_page');
+      return saved ? parseInt(saved, 10) || 1 : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const [ticketListPageSize, setTicketListPageSize] = useState<number>(() => {
+    try {
+      const saved = sessionStorage.getItem('ticket_list_page_size');
+      return saved ? parseInt(saved, 10) || 25 : 25;
+    } catch {
+      return 25;
+    }
+  });
+  const [ticketListIsCustomMode, setTicketListIsCustomMode] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('ticket_list_custom_mode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [ticketListCustomInput, setTicketListCustomInput] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('ticket_list_custom_input') || '25';
+    } catch {
+      return '25';
+    }
+  });
+
   const handleSelectTicket = (id: string) => {
+    setPreviousTicketView(activeView);
     setSelectedTicketId(id);
     setActiveView('ticket-detail');
   };
@@ -897,6 +930,26 @@ export default function App() {
                 onDeleteTicket={handleDeleteTicket}
                 currentUserRole={currentUser.role}
                 initialQueue="all"
+                currentPage={ticketListPage}
+                onPageChange={(p) => {
+                  setTicketListPage(p);
+                  try { sessionStorage.setItem('ticket_list_page', String(p)); } catch {}
+                }}
+                pageSize={ticketListPageSize}
+                onPageSizeChange={(s) => {
+                  setTicketListPageSize(s);
+                  try { sessionStorage.setItem('ticket_list_page_size', String(s)); } catch {}
+                }}
+                isCustomMode={ticketListIsCustomMode}
+                onCustomModeChange={(m) => {
+                  setTicketListIsCustomMode(m);
+                  try { sessionStorage.setItem('ticket_list_custom_mode', String(m)); } catch {}
+                }}
+                customPageInput={ticketListCustomInput}
+                onCustomPageInputChange={(val) => {
+                  setTicketListCustomInput(val);
+                  try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
+                }}
               />
             )}
 
@@ -911,6 +964,26 @@ export default function App() {
                 onDeleteTicket={handleDeleteTicket}
                 currentUserRole={currentUser.role}
                 initialQueue="open"
+                currentPage={ticketListPage}
+                onPageChange={(p) => {
+                  setTicketListPage(p);
+                  try { sessionStorage.setItem('ticket_list_page', String(p)); } catch {}
+                }}
+                pageSize={ticketListPageSize}
+                onPageSizeChange={(s) => {
+                  setTicketListPageSize(s);
+                  try { sessionStorage.setItem('ticket_list_page_size', String(s)); } catch {}
+                }}
+                isCustomMode={ticketListIsCustomMode}
+                onCustomModeChange={(m) => {
+                  setTicketListIsCustomMode(m);
+                  try { sessionStorage.setItem('ticket_list_custom_mode', String(m)); } catch {}
+                }}
+                customPageInput={ticketListCustomInput}
+                onCustomPageInputChange={(val) => {
+                  setTicketListCustomInput(val);
+                  try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
+                }}
               />
             )}
 
@@ -925,6 +998,26 @@ export default function App() {
                 onDeleteTicket={handleDeleteTicket}
                 currentUserRole={currentUser.role}
                 initialQueue="unassigned"
+                currentPage={ticketListPage}
+                onPageChange={(p) => {
+                  setTicketListPage(p);
+                  try { sessionStorage.setItem('ticket_list_page', String(p)); } catch {}
+                }}
+                pageSize={ticketListPageSize}
+                onPageSizeChange={(s) => {
+                  setTicketListPageSize(s);
+                  try { sessionStorage.setItem('ticket_list_page_size', String(s)); } catch {}
+                }}
+                isCustomMode={ticketListIsCustomMode}
+                onCustomModeChange={(m) => {
+                  setTicketListIsCustomMode(m);
+                  try { sessionStorage.setItem('ticket_list_custom_mode', String(m)); } catch {}
+                }}
+                customPageInput={ticketListCustomInput}
+                onCustomPageInputChange={(val) => {
+                  setTicketListCustomInput(val);
+                  try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
+                }}
               />
             )}
 
@@ -939,6 +1032,26 @@ export default function App() {
                 onDeleteTicket={handleDeleteTicket}
                 currentUserRole={currentUser.role}
                 initialQueue="critical"
+                currentPage={ticketListPage}
+                onPageChange={(p) => {
+                  setTicketListPage(p);
+                  try { sessionStorage.setItem('ticket_list_page', String(p)); } catch {}
+                }}
+                pageSize={ticketListPageSize}
+                onPageSizeChange={(s) => {
+                  setTicketListPageSize(s);
+                  try { sessionStorage.setItem('ticket_list_page_size', String(s)); } catch {}
+                }}
+                isCustomMode={ticketListIsCustomMode}
+                onCustomModeChange={(m) => {
+                  setTicketListIsCustomMode(m);
+                  try { sessionStorage.setItem('ticket_list_custom_mode', String(m)); } catch {}
+                }}
+                customPageInput={ticketListCustomInput}
+                onCustomPageInputChange={(val) => {
+                  setTicketListCustomInput(val);
+                  try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
+                }}
               />
             )}
 
@@ -953,7 +1066,7 @@ export default function App() {
                 currentUser={currentUser}
                 onBack={() => {
                   setSelectedTicketId(null);
-                  setActiveView('tickets');
+                  setActiveView(previousTicketView || 'tickets');
                 }}
                 onUpdateTicket={handleUpdateTicket}
                 onDeleteTicket={handleDeleteTicket}

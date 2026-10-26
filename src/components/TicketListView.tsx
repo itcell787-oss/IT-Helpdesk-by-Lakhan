@@ -75,6 +75,14 @@ interface TicketListViewProps {
   onDeleteTicket?: (ticketId: string) => void;
   currentUserRole?: UserRole;
   initialQueue?: string;
+  currentPage?: number;
+  onPageChange?: (page: number) => void;
+  pageSize?: number;
+  onPageSizeChange?: (size: number) => void;
+  isCustomMode?: boolean;
+  onCustomModeChange?: (mode: boolean) => void;
+  customPageInput?: string;
+  onCustomPageInputChange?: (input: string) => void;
 }
 
 export const TicketListView: React.FC<TicketListViewProps> = ({
@@ -87,6 +95,14 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
   onDeleteTicket,
   currentUserRole = 'technician',
   initialQueue = 'all',
+  currentPage: propCurrentPage,
+  onPageChange,
+  pageSize: propPageSize,
+  onPageSizeChange,
+  isCustomMode: propIsCustomMode,
+  onCustomModeChange,
+  customPageInput: propCustomPageInput,
+  onCustomPageInputChange,
 }) => {
   const [activeQueue, setActiveQueue] = useState(initialQueue);
   const [searchQuery, setSearchQuery] = useState('');
@@ -102,13 +118,92 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
   const [showColumnChooser, setShowColumnChooser] = useState(false);
 
   // Configurable Ticket Limits & Pagination: 25 (default), 50, 200, or Custom up to 500
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(25);
-  const [customPageInput, setCustomPageInput] = useState<string>('25');
-  const [isCustomMode, setIsCustomMode] = useState<boolean>(false);
+  // Restores from props or sessionStorage so viewing a ticket and going back preserves the exact page and custom size
+  const [internalCurrentPage, setInternalCurrentPage] = useState<number>(() => {
+    if (propCurrentPage !== undefined) return propCurrentPage;
+    try {
+      const saved = sessionStorage.getItem('ticket_list_page');
+      if (saved) {
+        const p = parseInt(saved, 10);
+        if (p > 0) return p;
+      }
+    } catch {}
+    return 1;
+  });
 
-  // Auto-reset page to 1 when filters change
+  const [internalPageSize, setInternalPageSize] = useState<number>(() => {
+    if (propPageSize !== undefined) return propPageSize;
+    try {
+      const saved = sessionStorage.getItem('ticket_list_page_size');
+      if (saved) {
+        const s = parseInt(saved, 10);
+        if (s > 0 && s <= 500) return s;
+      }
+    } catch {}
+    return 25;
+  });
+
+  const [internalCustomInput, setInternalCustomInput] = useState<string>(() => {
+    if (propCustomPageInput !== undefined) return propCustomPageInput;
+    try {
+      const saved = sessionStorage.getItem('ticket_list_custom_input');
+      if (saved) return saved;
+      const s = sessionStorage.getItem('ticket_list_page_size');
+      if (s) return s;
+    } catch {}
+    return '25';
+  });
+
+  const [internalCustomMode, setInternalCustomMode] = useState<boolean>(() => {
+    if (propIsCustomMode !== undefined) return propIsCustomMode;
+    try {
+      const saved = sessionStorage.getItem('ticket_list_custom_mode');
+      if (saved !== null) return saved === 'true';
+      const s = sessionStorage.getItem('ticket_list_page_size');
+      if (s) {
+        const num = parseInt(s, 10);
+        return num !== 25 && num !== 50 && num !== 200;
+      }
+    } catch {}
+    return false;
+  });
+
+  const currentPage = propCurrentPage !== undefined ? propCurrentPage : internalCurrentPage;
+  const setCurrentPage = (val: number | ((prev: number) => number)) => {
+    const nextVal = typeof val === 'function' ? val(currentPage) : val;
+    setInternalCurrentPage(nextVal);
+    if (onPageChange) onPageChange(nextVal);
+    try { sessionStorage.setItem('ticket_list_page', String(nextVal)); } catch {}
+  };
+
+  const pageSize = propPageSize !== undefined ? propPageSize : internalPageSize;
+  const setPageSize = (s: number) => {
+    setInternalPageSize(s);
+    if (onPageSizeChange) onPageSizeChange(s);
+    try { sessionStorage.setItem('ticket_list_page_size', String(s)); } catch {}
+  };
+
+  const customPageInput = propCustomPageInput !== undefined ? propCustomPageInput : internalCustomInput;
+  const setCustomPageInput = (val: string) => {
+    setInternalCustomInput(val);
+    if (onCustomPageInputChange) onCustomPageInputChange(val);
+    try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
+  };
+
+  const isCustomMode = propIsCustomMode !== undefined ? propIsCustomMode : internalCustomMode;
+  const setIsCustomMode = (m: boolean) => {
+    setInternalCustomMode(m);
+    if (onCustomModeChange) onCustomModeChange(m);
+    try { sessionStorage.setItem('ticket_list_custom_mode', String(m)); } catch {}
+  };
+
+  // Auto-reset page to 1 when filters change (skip initial mount to avoid wiping restored page)
+  const isFirstFilterRender = React.useRef(true);
   React.useEffect(() => {
+    if (isFirstFilterRender.current) {
+      isFirstFilterRender.current = false;
+      return;
+    }
     setCurrentPage(1);
   }, [activeQueue, searchQuery, selectedCategory, selectedPriority, selectedType, dateSort, dateRange]);
 
@@ -252,6 +347,8 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
     const clamped = Math.min(Math.max(Number(newSize) || 25, 1), 500);
     setPageSize(clamped);
     setCustomPageInput(String(clamped));
+    const isStandard = clamped === 25 || clamped === 50 || clamped === 200;
+    setIsCustomMode(!isStandard);
     setCurrentPage(1);
   };
 
