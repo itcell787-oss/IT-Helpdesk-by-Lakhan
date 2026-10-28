@@ -24,8 +24,12 @@ import {
   MapPin,
   AlertTriangle,
   Plus,
+  Mail,
+  AtSign,
+  Share2,
+  Forward,
 } from 'lucide-react';
-import { Ticket, KnowledgeArticle, ServiceCatalogItem, User, CustomFieldDefinition, Organization, Asset } from '../types';
+import { Ticket, KnowledgeArticle, ServiceCatalogItem, User, CustomFieldDefinition, Organization, Asset, DefaultEmailGatewayConfig } from '../types';
 import { api } from '../services/api';
 
 interface PortalViewProps {
@@ -55,6 +59,8 @@ interface PortalViewProps {
   onUserRegistered?: (user: User) => void;
   onOpenLogin?: (type?: 'user' | 'admin') => void;
   initialTab?: string;
+  defaultGateway?: DefaultEmailGatewayConfig;
+  onSimulateInboundEmail?: (from: string, subject: string, body: string, cc?: string, managerEmail?: string) => Promise<any>;
 }
 
 export const PortalView: React.FC<PortalViewProps> = ({
@@ -80,6 +86,8 @@ export const PortalView: React.FC<PortalViewProps> = ({
   onUserRegistered,
   onOpenLogin,
   initialTab,
+  defaultGateway,
+  onSimulateInboundEmail,
 }) => {
   const requireOtp = systemSettings?.requireOtpForTicketSubmission === true;
   const isRatingEnabled = systemSettings?.enableTicketRating !== false;
@@ -90,6 +98,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [activeTab, setActiveTab] = useState<'home' | 'submit' | 'my-tickets' | 'kb' | 'register' | 'my-assets'>(
     (initialTab as any) || 'home'
   );
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab as any);
+    }
+  }, [initialTab]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [ratingTicketId, setRatingTicketId] = useState<string | null>(null);
   const [selectedRating, setSelectedRating] = useState<number>(5);
@@ -115,6 +130,11 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [regPassword, setRegPassword] = useState('');
   const [regEmployeeCode, setRegEmployeeCode] = useState('');
 
+  // Guest Ticket Tracking State
+  const [guestTrackId, setGuestTrackId] = useState('');
+  const [guestTrackEmail, setGuestTrackEmail] = useState('');
+  const [guestTrackSearched, setGuestTrackSearched] = useState(false);
+
   // In-Page Ticket Submission State (supports guest and logged in)
   const [submitName, setSubmitName] = useState(currentUser?.name || '');
   const [submitEmail, setSubmitEmail] = useState(currentUser?.email || '');
@@ -136,6 +156,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Manager CC & Forward Option in Ticket
+  const [managerEmail, setManagerEmail] = useState('');
+  const [ccRecipients, setCcRecipients] = useState('');
+  const [forwardToManager, setForwardToManager] = useState(false);
+
+
 
   // Requester Asset Management State (Point 1-6)
   const [showAddAssetModal, setShowAddAssetModal] = useState(false);
@@ -270,6 +297,19 @@ export const PortalView: React.FC<PortalViewProps> = ({
     if (currentUser) {
       setSubmitName(currentUser.name);
       setSubmitEmail(currentUser.email);
+      api.getTeams().then((teams: any[]) => {
+        const myTeam = teams.find(
+          (tm) =>
+            tm.id === (currentUser as any).groupId ||
+            tm.id === (currentUser as any).teamId ||
+            (currentUser.team && tm.name.toLowerCase() === currentUser.team.toLowerCase()) ||
+            ((currentUser as any).managerId && tm.managerId === (currentUser as any).managerId)
+        );
+        if (myTeam?.managerEmail) {
+          setManagerEmail(myTeam.managerEmail);
+          setForwardToManager(true);
+        }
+      }).catch(() => {});
     }
   }, [currentUser]);
 
@@ -477,7 +517,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
     setSubmitting(true);
     try {
-      await onSubmitTicket({
+      const created = await onSubmitTicket({
         subject: formSubject.trim(),
         description: formDescription.trim(),
         category: formCategory,
@@ -492,9 +532,17 @@ export const PortalView: React.FC<PortalViewProps> = ({
         customFields: customValues,
         attachments: formAttachments,
         otpVerified: isOtpVerified,
+        managerEmail: managerEmail.trim() || undefined,
+        ccRecipients: ccRecipients ? ccRecipients.split(/[,;]/).map((s) => s.trim()).filter(Boolean) : undefined,
+        forwardToManager: forwardToManager || Boolean(managerEmail.trim()),
       });
 
-      setSubmitSuccess('✓ Your ticket has been logged and assigned to the IT Service Desk!');
+      const ticketRefId = created?.id || 'TIC-NEW';
+      if (!currentUser) {
+        setGuestTrackId(ticketRefId);
+        setGuestTrackEmail(submitEmail.trim());
+      }
+      setSubmitSuccess(`✓ Your ticket [${ticketRefId}] has been successfully logged!${managerEmail ? ` (Forwarded to Manager: ${managerEmail})` : ''}`);
       setTimeout(() => {
         setSubmitSuccess(null);
         setFormSubject('');
@@ -502,6 +550,9 @@ export const PortalView: React.FC<PortalViewProps> = ({
         setFormLocationDesk('');
         setFormAttachments([]);
         setCustomValues({});
+        setManagerEmail('');
+        setCcRecipients('');
+        setForwardToManager(false);
         if (currentUser) {
           setActiveTab('my-tickets');
         } else {
@@ -621,14 +672,24 @@ export const PortalView: React.FC<PortalViewProps> = ({
               onClick={() => setActiveTab('submit')}
               className="neu-btn-primary px-5 py-2.5 text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer text-center whitespace-nowrap"
             >
-              + Submit a Support Ticket
+              {currentUser ? '+ Submit a Support Ticket' : '+ Submit Guest Ticket'}
             </button>
-            <button
-              onClick={() => setActiveTab('my-tickets')}
-              className="neu-btn px-5 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer text-center transition-all hover:text-cyan-700 dark:hover:text-cyan-300"
-            >
-              View My Requests ({myTickets.length})
-            </button>
+            {currentUser && (
+              <button
+                onClick={() => setActiveTab('my-tickets')}
+                className="neu-btn px-5 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer text-center transition-all hover:text-cyan-700 dark:hover:text-cyan-300"
+              >
+                View My Requests ({myTickets.length})
+              </button>
+            )}
+            {!currentUser && onOpenLogin && (
+              <button
+                onClick={() => onOpenLogin('user')}
+                className="neu-btn px-5 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer text-center transition-all hover:text-cyan-700 dark:hover:text-cyan-300"
+              >
+                Employee Sign In &rarr;
+              </button>
+            )}
             {currentUser && (
               <button
                 onClick={() => setActiveTab('my-assets')}
@@ -654,18 +715,16 @@ export const PortalView: React.FC<PortalViewProps> = ({
         >
           {!currentUser ? 'Service Portal Guest' : 'Service Portal'}
         </button>
-        {currentUser && (
-          <button
-            onClick={() => setActiveTab('kb')}
-            className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'kb'
-                ? 'neu-btn-primary shadow-xs'
-                : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
-            }`}
-          >
-            <BookOpen className="w-3.5 h-3.5" /> Knowledge Base
-          </button>
-        )}
+        <button
+          onClick={() => setActiveTab('kb')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'kb'
+              ? 'neu-btn-primary shadow-xs'
+              : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+          }`}
+        >
+          <BookOpen className="w-3.5 h-3.5" /> Knowledge Base
+        </button>
         {!currentUser ? (
           <>
             <button
@@ -848,6 +907,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
               ))}
             </div>
           </div>
+
         </div>
       )}
 
@@ -1259,6 +1319,63 @@ export const PortalView: React.FC<PortalViewProps> = ({
               </div>
             )}
 
+            {/* Forward to Manager & CC Option (User Request) */}
+            <div className="p-4 rounded-xl neu-card bg-slate-50/90 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Forward className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  <span className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                    Forward to Manager &amp; CC Option
+                  </span>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={forwardToManager}
+                    onChange={(e) => setForwardToManager(e.target.checked)}
+                    className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                  />
+                  <span>Forward to Manager</span>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                    <span>Manager Email {forwardToManager ? <span className="text-cyan-600 font-bold">*</span> : ''}</span>
+                    <span className="text-[10px] text-slate-500 font-medium">Auto-forward</span>
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="manager.email@company.com"
+                    value={managerEmail}
+                    onChange={(e) => setManagerEmail(e.target.value)}
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Your manager will receive a real-time copy and updates on this ticket.
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                    <span>Additional CC Email(s)</span>
+                    <span className="text-[10px] text-slate-500 font-medium">Comma-separated</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="teammate@company.com, lead@company.com"
+                    value={ccRecipients}
+                    onChange={(e) => setCcRecipients(e.target.value)}
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    CC recipients will receive notification copies and can reply by email.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {submitError && (
               <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
                 <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
@@ -1280,21 +1397,52 @@ export const PortalView: React.FC<PortalViewProps> = ({
         </div>
       )}
 
-      {/* Tab 3: My Tickets List */}
+      {/* Tab 3: My Tickets List & Guest Ticket Lookup */}
       {activeTab === 'my-tickets' && (
         <div className="space-y-4">
-          <div className="neu-card rounded-2xl border border-slate-200/90 dark:border-white/10 divide-y divide-slate-200/90 dark:divide-white/5 overflow-hidden">
-            {myTickets.length === 0 ? (
-              <div className="p-12 text-center text-slate-600 dark:text-slate-400 font-medium space-y-3">
-                <p>You have not submitted any tickets yet.</p>
+          {!currentUser ? (
+            <div className="neu-card p-12 rounded-2xl border border-slate-200/90 dark:border-white/10 text-center space-y-4 max-w-lg mx-auto">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-100 dark:bg-cyan-950/60 text-cyan-600 dark:text-cyan-400 flex items-center justify-center mx-auto shadow-xs">
+                <Lock className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                  Employee Authentication Required
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
+                  To view your submitted support tickets and track request status, please sign in with your employee account credentials.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-3 pt-2">
+                {onOpenLogin && (
+                  <button
+                    onClick={() => onOpenLogin('user')}
+                    className="neu-btn-primary px-5 py-2.5 text-xs font-bold rounded-xl shadow-xs cursor-pointer"
+                  >
+                    Employee Sign In
+                  </button>
+                )}
                 <button
                   onClick={() => setActiveTab('submit')}
-                  className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                  className="neu-btn px-5 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
                 >
-                  Create Your First Ticket
+                  Submit Guest Ticket
                 </button>
               </div>
-            ) : (
+            </div>
+          ) : (
+            <div className="neu-card rounded-2xl border border-slate-200/90 dark:border-white/10 divide-y divide-slate-200/90 dark:divide-white/5 overflow-hidden">
+              {myTickets.length === 0 ? (
+                <div className="p-12 text-center text-slate-600 dark:text-slate-400 font-medium space-y-3">
+                  <p>You have not submitted any tickets yet.</p>
+                  <button
+                    onClick={() => setActiveTab('submit')}
+                    className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                  >
+                    Create Your First Ticket
+                  </button>
+                </div>
+              ) : (
               myTickets.map((t) => (
                 <div
                   key={t.id}
@@ -1368,6 +1516,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
               ))
             )}
           </div>
+          )}
         </div>
       )}
 
@@ -1425,7 +1574,28 @@ export const PortalView: React.FC<PortalViewProps> = ({
             </div>
           )}
 
-          {myAssignedAssets.length === 0 ? (
+          {!currentUser ? (
+            <div className="neu-card p-10 text-center rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800/40 flex items-center justify-center mx-auto text-cyan-600">
+                <Laptop className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Sign In to View Assigned Assets</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+                  Please sign in with your employee account to view and manage company equipment and hardware assigned to you.
+                </p>
+              </div>
+              {onOpenLogin && (
+                <button
+                  type="button"
+                  onClick={() => onOpenLogin('user')}
+                  className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                >
+                  Sign In to Employee Portal
+                </button>
+              )}
+            </div>
+          ) : myAssignedAssets.length === 0 ? (
             <div className="neu-card p-10 text-center rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-3">
               <div className="w-12 h-12 rounded-2xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800/40 flex items-center justify-center mx-auto text-cyan-600">
                 <Laptop className="w-6 h-6" />
@@ -2127,6 +2297,8 @@ export const PortalView: React.FC<PortalViewProps> = ({
           </div>
         );
       })()}
+
+
     </div>
   );
 };

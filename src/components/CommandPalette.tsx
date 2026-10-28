@@ -9,7 +9,7 @@ import {
   X,
   ArrowRight,
 } from 'lucide-react';
-import { Ticket, Asset, KnowledgeArticle } from '../types';
+import { Ticket, Asset, KnowledgeArticle, User } from '../types';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -17,6 +17,7 @@ interface CommandPaletteProps {
   tickets: Ticket[];
   assets: Asset[];
   articles: KnowledgeArticle[];
+  currentUser?: User | null;
   onSelectTicket: (id: string) => void;
   onNavigate: (view: string) => void;
   onOpenNewTicket: () => void;
@@ -29,12 +30,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   tickets,
   assets,
   articles,
+  currentUser,
   onSelectTicket,
   onNavigate,
   onOpenNewTicket,
   onOpenEmailSimulator,
 }) => {
   const [query, setQuery] = useState('');
+  const isRequester = currentUser?.role === 'requester';
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -124,18 +127,49 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                   </span>
                   <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">Shortcut</span>
                 </button>
-                <button
-                  onClick={() => {
-                    onOpenEmailSimulator();
-                    onClose();
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-semibold transition-colors cursor-pointer text-left"
-                >
-                  <span className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> Simulate Inbound Email
-                  </span>
-                  <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">Tool</span>
-                </button>
+
+                {isRequester ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        onNavigate('portal-my-tickets');
+                        onClose();
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-semibold transition-colors cursor-pointer text-left"
+                    >
+                      <span className="flex items-center gap-2">
+                        <TicketIcon className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> View My Support Tickets
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">My Tickets</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        onNavigate('portal-my-assets');
+                        onClose();
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-semibold transition-colors cursor-pointer text-left"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Server className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> View My Assigned Hardware &amp; Equipment
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">My Assets</span>
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => {
+                      onOpenEmailSimulator();
+                      onClose();
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-semibold transition-colors cursor-pointer text-left"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Mail className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> Simulate Inbound Email
+                    </span>
+                    <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">Tool</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => {
                     onNavigate('portal');
@@ -144,7 +178,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                   className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 font-semibold transition-colors cursor-pointer text-left"
                 >
                   <span className="flex items-center gap-2">
-                    <BookOpen className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> Switch to End-User Self-Service Portal
+                    <BookOpen className="w-4 h-4 text-cyan-600 dark:text-cyan-400" /> {isRequester ? 'End-User Self-Service Portal Home' : 'Switch to End-User Self-Service Portal'}
                   </span>
                   <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400 font-bold">/portal</span>
                 </button>
@@ -156,7 +190,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           {matchingTickets.length > 0 && (
             <div>
               <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                Tickets ({matchingTickets.length})
+                {isRequester ? 'My Tickets' : 'Tickets'} ({matchingTickets.length})
               </div>
               <div className="space-y-1 mt-1">
                 {matchingTickets.map((t) => (
@@ -186,14 +220,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           {matchingAssets.length > 0 && (
             <div>
               <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                Assets &amp; Devices ({matchingAssets.length})
+                {isRequester ? 'My Assigned Equipment & Devices' : 'Assets & Devices'} ({matchingAssets.length})
               </div>
               <div className="space-y-1 mt-1">
                 {matchingAssets.map((a) => (
                   <button
                     key={a.id}
                     onClick={() => {
-                      onNavigate('assets');
+                      onNavigate(isRequester ? 'portal-my-assets' : 'assets');
                       onClose();
                     }}
                     className="w-full flex items-center justify-between p-2.5 rounded-xl hover:bg-cyan-50/70 dark:hover:bg-white/10 text-slate-800 dark:text-slate-200 transition-colors cursor-pointer text-left"

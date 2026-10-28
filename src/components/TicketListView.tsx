@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { Ticket, User as UserType, UserRole, Organization } from '../types';
 import { SlaCountdownBadge } from './SlaCountdownBadge';
+import { generateTicketPdf } from '../utils/ticketPdfGenerator';
 
 export type TicketColumnKey =
   | 'ticketId'
@@ -502,9 +503,24 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
       doc.setTextColor(148, 163, 184);
       doc.text('Lakhan Tech Helpdesk ITSM • Confidential Support Record', 14, 200);
       doc.save(`helpdesk_tickets_${new Date().toISOString().slice(0, 10)}.pdf`);
+
+      try {
+        window.print();
+      } catch (e) {
+        console.warn('Browser print blocked or unsupported:', e);
+      }
     } catch (err) {
       console.error('Failed to download tickets PDF:', err);
     }
+  };
+
+  const handlePrintSingleTicket = (ticket: Ticket) => {
+    generateTicketPdf({
+      ticket,
+      users,
+      organizationName: organizations?.find((o) => o.id === ticket.organizationId)?.name || 'Lakhan Tech IT Helpdesk',
+      triggerBrowserPrint: true,
+    });
   };
 
   return (
@@ -1124,13 +1140,13 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                 {selectedColumns.includes('assignee') && <th className="py-3 px-3">Assignee</th>}
                 {selectedColumns.includes('slaStatus') && <th className="py-3 px-3">SLA Status</th>}
                 {selectedColumns.includes('createdTime') && <th className="py-3 px-3 text-right">Created Time &amp; Date</th>}
-                {canDelete && <th className="py-3 px-2 text-center w-12">Action</th>}
+                <th className="py-3 px-2 text-center w-20">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200/90 dark:divide-white/5">
               {filteredTickets.length === 0 ? (
                 <tr>
-                  <td colSpan={1 + selectedColumns.length + (canDelete ? 1 : 0)} className="py-12 text-center text-slate-700 dark:text-slate-300 font-semibold text-sm">
+                  <td colSpan={1 + selectedColumns.length + 1} className="py-12 text-center text-slate-700 dark:text-slate-300 font-semibold text-sm">
                     No tickets found matching the specified filter criteria.
                   </td>
                 </tr>
@@ -1321,18 +1337,28 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                         </td>
                       )}
 
-                      {canDelete && (
-                        <td className="py-3 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="py-3 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
                           <button
                             type="button"
-                            onClick={() => confirmDeleteTicket(t)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
-                            title={`Delete ticket ${t.id}`}
+                            onClick={() => handlePrintSingleTicket(t)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-cyan-600 hover:bg-cyan-100 dark:hover:bg-cyan-950/40 transition-colors cursor-pointer"
+                            title={`Print / Download PDF for ticket ${t.id}`}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Printer className="w-3.5 h-3.5" />
                           </button>
-                        </td>
-                      )}
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => confirmDeleteTicket(t)}
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                              title={`Delete ticket ${t.id}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })

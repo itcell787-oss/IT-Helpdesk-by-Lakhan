@@ -16,6 +16,7 @@ import {
   Eye,
   Upload,
   MapPin,
+  Forward,
 } from 'lucide-react';
 import { CustomFieldDefinition, KnowledgeArticle, User, Asset } from '../types';
 import { api } from '../services/api';
@@ -60,6 +61,9 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
   const [suggestedArticle, setSuggestedArticle] = useState<KnowledgeArticle | null>(null);
   const [attachments, setAttachments] = useState<Array<{ id: string; name: string; size: number; type: string; url: string; }>>([]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [managerEmail, setManagerEmail] = useState('');
+  const [ccRecipients, setCcRecipients] = useState('');
+  const [forwardToManager, setForwardToManager] = useState(false);
 
   const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
@@ -262,6 +266,9 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
       customFields: customValues,
       attachments,
       otpVerified: true,
+      managerEmail: managerEmail.trim() || undefined,
+      ccRecipients: ccRecipients ? ccRecipients.split(/[,;]/).map((s) => s.trim()).filter(Boolean) : undefined,
+      forwardToManager: forwardToManager || Boolean(managerEmail.trim()),
     });
 
     onClose();
@@ -737,6 +744,54 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* Forward to Manager & CC Option (User Request) */}
+          <div className="p-3.5 rounded-xl neu-card bg-slate-50/80 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Forward className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                  Forward to Manager &amp; CC Option
+                </span>
+              </div>
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={forwardToManager}
+                  onChange={(e) => setForwardToManager(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                />
+                <span>Forward to Manager</span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Manager Email {forwardToManager ? <span className="text-cyan-600 font-bold">*</span> : ''}
+                </label>
+                <input
+                  type="email"
+                  placeholder="manager@company.com"
+                  value={managerEmail}
+                  onChange={(e) => setManagerEmail(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Additional CC Recipients
+                </label>
+                <input
+                  type="text"
+                  placeholder="colleague@company.com"
+                  value={ccRecipients}
+                  onChange={(e) => setCcRecipients(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                />
+              </div>
+            </div>
+          </div>
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-white/10">
             <button

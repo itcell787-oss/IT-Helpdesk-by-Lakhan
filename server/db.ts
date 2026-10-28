@@ -74,8 +74,8 @@ export interface DatabaseSchema {
   nextTicketSequence: number;
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'database.json');
+export const DATA_DIR = path.resolve(process.cwd(), 'data');
+export const DB_FILE = path.join(DATA_DIR, 'database.json');
 
 class DatabaseEngine {
   private data: DatabaseSchema;
@@ -91,40 +91,22 @@ class DatabaseEngine {
 
     const initialAdminMailboxes: MailboxConnectionConfig[] = [
       {
-        userId: 'usr-lakhan-super',
-        userEmail: 'lakhan.superadmin@ithelpdesk.com',
+        userId: 'usr-superadmin',
+        userEmail: 'admin@lakhanglobal.com',
         incomingProtocol: 'imap',
-        incomingHost: 'imap.ithelpdesk.internal',
+        incomingHost: 'imap.lakhanglobal.com',
         incomingPort: 993,
         incomingSecurity: 'ssl',
-        incomingUsername: 'lakhan.superadmin@ithelpdesk.com',
-        outgoingProtocol: 'smtp',
-        outgoingHost: 'smtp.ithelpdesk.internal',
-        outgoingPort: 587,
-        outgoingSecurity: 'starttls',
-        outgoingUsername: 'lakhan.superadmin@ithelpdesk.com',
-        fromName: 'Lakhan Verma (Superadmin)',
-        fromEmail: 'lakhan.superadmin@ithelpdesk.com',
-        status: 'connected',
-        lastTestedAt: '2026-10-03T18:00:00Z',
-      },
-      {
-        userId: 'usr-sarah-admin',
-        userEmail: 'sarah.admin@lakhanglobal.com',
-        incomingProtocol: 'pop3',
-        incomingHost: 'pop.lakhanglobal.com',
-        incomingPort: 995,
-        incomingSecurity: 'ssl',
-        incomingUsername: 'sarah.admin@lakhanglobal.com',
+        incomingUsername: 'admin@lakhanglobal.com',
         outgoingProtocol: 'smtp',
         outgoingHost: 'smtp.lakhanglobal.com',
         outgoingPort: 587,
         outgoingSecurity: 'starttls',
-        outgoingUsername: 'sarah.admin@lakhanglobal.com',
-        fromName: 'Sarah Jenkins (IT Admin)',
-        fromEmail: 'sarah.admin@lakhanglobal.com',
+        outgoingUsername: 'admin@lakhanglobal.com',
+        fromName: 'Lakhan Prajapati (Superadmin)',
+        fromEmail: 'admin@lakhanglobal.com',
         status: 'connected',
-        lastTestedAt: '2026-10-03T18:30:00Z',
+        lastTestedAt: '2026-10-03T18:00:00Z',
       },
     ];
 
@@ -165,11 +147,11 @@ class DatabaseEngine {
                 enableCategoryAutoAssign: true,
                 preSharedKey: 'Sports@9433',
                 categoryAutoAssignRules: {
-                  'Hardware & Workstations': { technicianId: 'usr-elena-tech', technicianName: 'Elena Rostova', teamId: 'team-workplace' },
-                  'Software & Cloud Apps': { technicianId: 'usr-alex-tech', technicianName: 'Alex Rivera', teamId: 'team-l1-helpdesk' },
-                  'Network & VPN': { technicianId: 'usr-marcus-manager', technicianName: 'Marcus Vance', teamId: 'team-infra-net' },
-                  'Cybersecurity & Access': { technicianId: 'usr-sarah-admin', technicianName: 'Sarah Jenkins', teamId: 'team-sec-ops' },
-                  'Email & Collaboration': { technicianId: 'usr-alex-tech', technicianName: 'Alex Rivera', teamId: 'team-l1-helpdesk' },
+                  'Hardware & Workstations': { technicianId: 'usr-technician', technicianName: 'Support Technician', teamId: 'team-l1-helpdesk' },
+                  'Software & Cloud Apps': { technicianId: 'usr-technician', technicianName: 'Support Technician', teamId: 'team-l1-helpdesk' },
+                  'Network & VPN': { technicianId: 'usr-technician', technicianName: 'Support Technician', teamId: 'team-l1-helpdesk' },
+                  'Cybersecurity & Access': { technicianId: 'usr-technician', technicianName: 'Support Technician', teamId: 'team-l1-helpdesk' },
+                  'Email & Collaboration': { technicianId: 'usr-technician', technicianName: 'Support Technician', teamId: 'team-l1-helpdesk' },
                 },
               };
             } else if (!org.systemSettings.preSharedKey) {
@@ -185,12 +167,18 @@ class DatabaseEngine {
           });
         }
 
-        // Ensure users have passwords and default privileges
+        // Default guest session so visitors see guest portal by default
+        parsed.currentUserId = '';
+
+        // Ensure users have passwords, username, and default privileges
         if (parsed.users) {
           parsed.users = parsed.users.map((u: any) => {
             if (u.role === 'superadmin') {
-              if (!u.password || u.password === 'Admin@123') {
-                u.password = 'Sports@9433';
+              u.name = 'Lakhan Prajapati';
+              u.username = 'admin';
+              if (!u.password || u.password === 'Sports@9433' || u.password === 'Admin@123' || u.password === 'Lakhan@Production2026!') {
+                u.password = 'L@khan@123';
+                u.mustChangePassword = true;
               }
             } else if (!u.password) {
               u.password = (u.role === 'admin') ? 'Admin@123' : (u.role === 'requester' ? 'User@123' : 'Tech@123');
@@ -331,7 +319,22 @@ class DatabaseEngine {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
+      const tmpFile = `${DB_FILE}.tmp.${Date.now()}`;
+      const bakFile = `${DB_FILE}.bak`;
+      const jsonContent = JSON.stringify(this.data, null, 2);
+
+      // 1. Write to temporary file first
+      fs.writeFileSync(tmpFile, jsonContent, 'utf-8');
+
+      // 2. Keep a backup copy of previous valid database if it exists
+      if (fs.existsSync(DB_FILE)) {
+        try {
+          fs.copyFileSync(DB_FILE, bakFile);
+        } catch {}
+      }
+
+      // 3. Atomically rename temp file over destination (atomic on POSIX)
+      fs.renameSync(tmpFile, DB_FILE);
     } catch (err) {
       console.error('Error persisting database:', err);
     }

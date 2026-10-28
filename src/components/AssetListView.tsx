@@ -119,7 +119,8 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
     setCurrentPage(1);
   }, [activeStatusTab, selectedType, assignedFilter, selectedAssignedUserId, dateRange, searchQuery, searchField, dateSort]);
 
-  const canManage = currentUserRole === 'superadmin' || currentUserRole === 'admin' || currentUserRole === 'manager';
+  const canManage = currentUserRole === 'superadmin' || currentUserRole === 'admin' || currentUserRole === 'inventory_manager';
+  const isCostVisible = currentUserRole !== 'manager';
 
   // Format currency helper
   const formatCost = (amt: number) => `${defaultCurrency}${amt.toLocaleString('en-IN')}`;
@@ -1003,10 +1004,12 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
             <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
           </div>
           <div className="text-2xl font-bold font-mono text-emerald-700 dark:text-emerald-400 mt-2">{activeCount}</div>
-          <div className="mt-1 flex items-baseline justify-between text-xs font-mono">
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">Total Asset Cost:</span>
-            <span className="font-extrabold text-emerald-800 dark:text-emerald-300">{formatCost(activeCost)}</span>
-          </div>
+          {isCostVisible && (
+            <div className="mt-1 flex items-baseline justify-between text-xs font-mono">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">Total Asset Cost:</span>
+              <span className="font-extrabold text-emerald-800 dark:text-emerald-300">{formatCost(activeCost)}</span>
+            </div>
+          )}
           <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Deployed with active staff</div>
         </button>
 
@@ -1024,10 +1027,12 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
             <Boxes className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
           </div>
           <div className="text-2xl font-bold font-mono text-cyan-700 dark:text-cyan-400 mt-2">{stockCount}</div>
-          <div className="mt-1 flex items-baseline justify-between text-xs font-mono">
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">Total Asset Cost:</span>
-            <span className="font-extrabold text-cyan-800 dark:text-cyan-300">{formatCost(stockCost)}</span>
-          </div>
+          {isCostVisible && (
+            <div className="mt-1 flex items-baseline justify-between text-xs font-mono">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">Total Asset Cost:</span>
+              <span className="font-extrabold text-cyan-800 dark:text-cyan-300">{formatCost(stockCost)}</span>
+            </div>
+          )}
           <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Unassigned pool inventory</div>
         </button>
 
@@ -1045,10 +1050,12 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
             <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
           </div>
           <div className="text-2xl font-bold font-mono text-amber-700 dark:text-amber-400 mt-2">{notWorkingCount}</div>
-          <div className="mt-1 flex items-baseline justify-between text-xs font-mono">
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">Total Asset Cost:</span>
-            <span className="font-extrabold text-amber-800 dark:text-amber-300">{formatCost(repairCost)}</span>
-          </div>
+          {isCostVisible && (
+            <div className="mt-1 flex items-baseline justify-between text-xs font-mono">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">Total Asset Cost:</span>
+              <span className="font-extrabold text-amber-800 dark:text-amber-300">{formatCost(repairCost)}</span>
+            </div>
+          )}
           <div className="text-[10px] text-amber-600 dark:text-amber-400/90 mt-0.5 font-medium">Under maintenance (excluded)</div>
         </button>
 
@@ -1066,58 +1073,62 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
             <Archive className="w-4 h-4 text-slate-500 dark:text-slate-400" />
           </div>
           <div className="text-2xl font-bold font-mono text-slate-800 dark:text-slate-200 mt-2">{scrapCount}</div>
-          <div className="mt-1 flex items-baseline justify-between text-xs font-mono">
-            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">Total Asset Cost:</span>
-            <span className="font-extrabold text-slate-700 dark:text-slate-300">{formatCost(scrapCost)}</span>
-          </div>
+          {isCostVisible && (
+            <div className="mt-1 flex items-baseline justify-between text-xs font-mono">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-sans">Total Asset Cost:</span>
+              <span className="font-extrabold text-slate-700 dark:text-slate-300">{formatCost(scrapCost)}</span>
+            </div>
+          )}
           <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Decommissioned (excluded)</div>
         </button>
       </div>
 
       {/* TOTAL ASSET PRICE EXECUTIVE VALUATION SUMMARY BANNER */}
-      <div className="neu-flat p-4 sm:p-5 rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-cyan-500/5 via-blue-500/5 to-indigo-500/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-              Total Usable Asset Price (In Service + In Stock Pool)
-            </span>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300 font-extrabold border border-cyan-300 dark:border-cyan-800">
-              {totalActiveAssetUnits} of {assets.length} Assets Active
-            </span>
-          </div>
-          <div className="text-2xl sm:text-3xl font-extrabold font-mono text-cyan-700 dark:text-cyan-300">
-            {formatCost(totalUsableAssetPrice)}
-          </div>
-          <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Excludes Repair ({formatCost(repairCost)}) and Retired/Scrap ({formatCost(scrapCost)}) from total asset price as per IT asset management accounting standards.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-            <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40">
-              <span className="text-slate-500 dark:text-slate-400 block text-[9px] uppercase font-sans">Active In-Service</span>
-              <span className="font-bold text-emerald-700 dark:text-emerald-300">{formatCost(activeCost)}</span>
+      {isCostVisible && (
+        <div className="neu-flat p-4 sm:p-5 rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-cyan-500/5 via-blue-500/5 to-indigo-500/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Total Usable Asset Price (In Service + In Stock Pool)
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300 font-extrabold border border-cyan-300 dark:border-cyan-800">
+                {totalActiveAssetUnits} of {assets.length} Assets Active
+              </span>
             </div>
-            <div className="p-2 rounded-xl bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/40">
-              <span className="text-slate-500 dark:text-slate-400 block text-[9px] uppercase font-sans">Stock Pool</span>
-              <span className="font-bold text-cyan-700 dark:text-cyan-300">{formatCost(stockCost)}</span>
+            <div className="text-2xl sm:text-3xl font-extrabold font-mono text-cyan-700 dark:text-cyan-300">
+              {formatCost(totalUsableAssetPrice)}
             </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Excludes Repair ({formatCost(repairCost)}) and Retired/Scrap ({formatCost(scrapCost)}) from total asset price as per IT asset management accounting standards.
+            </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowStatsModal(true)}
-            className="neu-btn px-3.5 py-2 text-xs font-bold text-indigo-700 dark:text-indigo-300 rounded-xl flex items-center gap-1.5 hover:scale-[1.02] transition-transform cursor-pointer shadow-xs"
-          >
-            <BarChart3 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            <span>Open CMDB Statistics</span>
-          </button>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+              <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40">
+                <span className="text-slate-500 dark:text-slate-400 block text-[9px] uppercase font-sans">Active In-Service</span>
+                <span className="font-bold text-emerald-700 dark:text-emerald-300">{formatCost(activeCost)}</span>
+              </div>
+              <div className="p-2 rounded-xl bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/40">
+                <span className="text-slate-500 dark:text-slate-400 block text-[9px] uppercase font-sans">Stock Pool</span>
+                <span className="font-bold text-cyan-700 dark:text-cyan-300">{formatCost(stockCost)}</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowStatsModal(true)}
+              className="neu-btn px-3.5 py-2 text-xs font-bold text-indigo-700 dark:text-indigo-300 rounded-xl flex items-center gap-1.5 hover:scale-[1.02] transition-transform cursor-pointer shadow-xs"
+            >
+              <BarChart3 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <span>Open CMDB Statistics</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* POINT 5: MARKED ASSETS BATCH ACTION FLOATING BAR */}
-      {markedAssetIds.length > 0 && (
+      {canManage && markedAssetIds.length > 0 && (
         <div className="neu-flat p-3 rounded-2xl border border-cyan-500/40 bg-cyan-50/70 dark:bg-cyan-950/30 flex items-center justify-between gap-3 flex-wrap animate-in fade-in slide-in-from-top-2">
           <div className="flex items-center gap-2">
             <span className="flex h-2.5 w-2.5 rounded-full bg-cyan-500 animate-ping" />
@@ -1365,7 +1376,7 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
                 <th className="py-3 px-3">Manufacturer &amp; Model</th>
                 <th className="py-3 px-3">Serial / MAC</th>
                 <th className="py-3 px-3">Assigned Employee</th>
-                <th className="py-3 px-3">Cost</th>
+                {isCostVisible && <th className="py-3 px-3">Cost</th>}
                 <th className="py-3 px-3">Lifecycle Status</th>
                 <th className="py-3 px-3">Warranty &amp; Period</th>
                 {canManage && <th className="py-3 px-3 text-center w-20">Actions</th>}
@@ -1375,7 +1386,7 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
               {filteredAssets.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={canManage ? 12 : 11}
+                    colSpan={(canManage ? 11 : 10) + (isCostVisible ? 1 : 0)}
                     className="py-12 text-center text-slate-700 dark:text-slate-300 font-semibold text-sm"
                   >
                     No hardware or software assets match your specified filter criteria.
@@ -1494,16 +1505,18 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
 
 
                       {/* Cost */}
-                      <td className="py-3 px-3 font-mono font-bold text-slate-900 dark:text-slate-100">
-                        {a.purchaseCost !== undefined ? (
-                          <span>
-                            {(a.costCurrency && a.costCurrency !== '$' ? a.costCurrency : (defaultCurrency || '₹'))}
-                            {Number(a.purchaseCost).toLocaleString()}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
+                      {isCostVisible && (
+                        <td className="py-3 px-3 font-mono font-bold text-slate-900 dark:text-slate-100">
+                          {a.purchaseCost !== undefined ? (
+                            <span>
+                              {(a.costCurrency && a.costCurrency !== '$' ? a.costCurrency : (defaultCurrency || '₹'))}
+                              {Number(a.purchaseCost).toLocaleString()}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                      )}
 
                       {/* Lifecycle Status with Inline Dropdown */}
                       <td className="py-3 px-3" onClick={(e) => e.stopPropagation()}>

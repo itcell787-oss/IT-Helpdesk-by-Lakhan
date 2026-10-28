@@ -1,5 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { db } from './db';
+import os from 'os';
+import fs from 'fs';
+import path from 'path';
+import { db, DB_FILE } from './db';
 import { calculateSlaDeadlines, evaluateSlaStatus } from './slaEngine';
 import { runAutomations } from './automationEngine';
 import {
@@ -17,9 +20,52 @@ import {
   Organization,
   Asset,
   AutomationRule,
+  Team,
 } from '../src/types';
 
 export const apiRouter = Router();
+
+// In-memory isolated session store: SessionToken -> Session metadata
+// This guarantees independent sessions across different PCs and browser tabs.
+export interface ActiveSession {
+  token: string;
+  userId: string;
+  ip?: string;
+  userAgent?: string;
+  createdAt: string;
+  lastActive: string;
+}
+
+export const activeSessions = new Map<string, ActiveSession>();
+
+// Helper to retrieve the current session user for this specific request / client device
+export function getOptionalActor(req: Request): User | null {
+  const token = (req.headers['x-session-token'] as string) || (req.query.sessionToken as string);
+  const users = db.get('users');
+
+  if (token && activeSessions.has(token)) {
+    const session = activeSessions.get(token)!;
+    session.lastActive = new Date().toISOString();
+    const user = users.find(u => u.id === session.userId);
+    if (user) return user;
+  }
+
+  // Also support direct user ID header if sent by authorized client
+  const headerUserId = req.headers['x-user-id'] as string;
+  if (headerUserId) {
+    const user = users.find(u => u.id === headerUserId);
+    if (user) return user;
+  }
+
+  return null;
+}
+
+export function getActor(req: Request): User {
+  const user = getOptionalActor(req);
+  if (user) return user;
+  const users = db.get('users');
+  return users.find(u => u.role === 'superadmin') || users[0];
+}
 
 // Helper to log audit events
 function logAudit(
@@ -45,7 +91,7 @@ function logAudit(
 }
 
 // -------------------------------------------------------------
-// Health Check
+// Health Check & System Status Diagnostics
 // -------------------------------------------------------------
 apiRouter.get('/health', (req: Request, res: Response) => {
   res.json({
@@ -59,21 +105,108 @@ apiRouter.get('/health', (req: Request, res: Response) => {
   });
 });
 
+apiRouter.get('/system/status', (req: Request, res: Response) => {
+  const memUsage = process.memoryUsage();
+  const uptimeSeconds = Math.round(process.uptime());
+  const sysUptimeSeconds = Math.round(os.uptime());
+
+  const days = Math.floor(uptimeSeconds / (3600 * 24));
+  const hours = Math.floor((uptimeSeconds % (3600 * 24)) / 3600);
+  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+  const seconds = uptimeSeconds % 60;
+  const uptimeFormatted = `${days > 0 ? `${days}d ` : ''}${hours}h ${minutes}m ${seconds}s`;
+
+  const sysDays = Math.floor(sysUptimeSeconds / (3600 * 24));
+  const sysHours = Math.floor((sysUptimeSeconds % (3600 * 24)) / 3600);
+  const sysMinutes = Math.floor((sysUptimeSeconds % 3600) / 60);
+  const sysUptimeFormatted = `${sysDays > 0 ? `${sysDays}d ` : ''}${sysHours}h ${sysMinutes}m`;
+
+  let dbSizeBytes = 0;
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      dbSizeBytes = fs.statSync(DB_FILE).size;
+    }
+  } catch {}
+
+  const dbSizeKb = (dbSizeBytes / 1024).toFixed(1);
+
+  const osPlatform = process.platform === 'linux' ? 'Linux Server' : process.platform === 'darwin' ? 'macOS Server' : 'Windows Server';
+  const osArch = process.arch === 'x64' ? 'x86_64' : process.arch;
+
+  const nodeVersion = process.version;
+  const nodeMajor = nodeVersion.split('.')[0];
+  const nodeEngineDisplay = `${nodeMajor}.x LTS (${nodeVersion})`;
+
+  const port = process.env.PORT || 3000;
+  const proxyDisplay = `Port ${port} (Express + Nginx)`;
+
+  const organizations = db.get('organizations') || [];
+  const tickets = db.get('tickets') || [];
+  const users = db.get('users') || [];
+  const assets = db.get('assets') || [];
+
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    platform: `${osPlatform} (${osArch})`,
+    osType: os.type(),
+    osRelease: os.release(),
+    osArch: osArch,
+    hostname: os.hostname(),
+    nodeEngine: nodeEngineDisplay,
+    nodeVersion: process.version,
+    v8Version: process.versions.v8,
+    processId: process.pid,
+    engineUptimeSeconds: uptimeSeconds,
+    engineUptimeFormatted: uptimeFormatted,
+    systemUptimeSeconds: sysUptimeSeconds,
+    systemUptimeFormatted: sysUptimeFormatted,
+    processTitle: process.title || 'node',
+    memoryRss: `${(memUsage.rss / (1024 * 1024)).toFixed(1)} MB`,
+    memoryRssBytes: memUsage.rss,
+    heapUsed: `${(memUsage.heapUsed / (1024 * 1024)).toFixed(1)} MB`,
+    heapTotal: `${(memUsage.heapTotal / (1024 * 1024)).toFixed(1)} MB`,
+    systemTotalRam: `${(os.totalmem() / (1024 * 1024 * 1024)).toFixed(1)} GB`,
+    systemFreeRam: `${(os.freemem() / (1024 * 1024 * 1024)).toFixed(1)} GB`,
+    ramUsagePercent: Math.round(((os.totalmem() - os.freemem()) / os.totalmem()) * 100),
+    cpuCount: os.cpus().length,
+    cpuModel: os.cpus()[0]?.model || 'Host Multi-Core Processor',
+    loadAverage: os.loadavg(),
+    portAndProxy: proxyDisplay,
+    port: Number(port),
+    runtimeEnvironment: process.env.NODE_ENV === 'production' ? 'Production (Optimized)' : 'Development (Vite SSR/HMR)',
+    hostingProvider: 'Local Host / On-Premise Container',
+    primaryDatabase: 'data/database.json',
+    writeMode: 'Atomic fs.writeFileSync',
+    databaseSize: `${dbSizeKb} KB`,
+    databaseSizeBytes: dbSizeBytes,
+    tenantMultiTenancy: 'Enforced',
+    activeTenants: organizations.length,
+    totalTickets: tickets.length,
+    totalUsers: users.length,
+    totalAssets: assets.length,
+    activeSessionsCount: activeSessions.size,
+  });
+});
+
 // -------------------------------------------------------------
-// Session & Auth
+// Session & Auth (Isolated Per Client PC / Browser)
 // -------------------------------------------------------------
 apiRouter.get('/session', (req: Request, res: Response) => {
-  const currentUserId = db.get('currentUserId');
+  let currentUser = getOptionalActor(req);
   const users = db.get('users');
   const organizations = db.get('organizations');
+  let token = (req.headers['x-session-token'] as string) || (req.query.sessionToken as string) || null;
 
-  let currentUser = currentUserId ? users.find(u => u.id === currentUserId) || null : null;
+  // By default, if no active session exists (unauthenticated guest or signed out), return user: null
+  // Guest Portal is the default homepage
   let currentOrg = (currentUser && organizations.find(o => o.id === currentUser.organizationId)) || organizations[0];
 
   res.json({
     user: currentUser,
     organization: currentOrg,
     availableUsers: users,
+    sessionToken: currentUser ? token : null,
   });
 });
 
@@ -84,8 +217,13 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
   }
 
   const users = db.get('users');
+  const query = email.trim().toLowerCase();
   const user = users.find(
-    u => u.email.toLowerCase() === email.trim().toLowerCase() || u.id.toLowerCase() === email.trim().toLowerCase()
+    u => u.email.toLowerCase() === query ||
+         u.id.toLowerCase() === query ||
+         (u.username && u.username.toLowerCase() === query) ||
+         (query === 'admin' && u.role === 'superadmin') ||
+         (u.employeeCode && u.employeeCode.toLowerCase() === query)
   );
 
   if (!user) {
@@ -101,15 +239,30 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
     }
   }
 
-  // Password verification: if user has password and password provided
-  if (user.password && password) {
-    if (user.password !== password.trim()) {
+  // Password verification: if user has a password set, verify credentials
+  if (user.password) {
+    if (!password || user.password !== password.trim()) {
       return res.status(401).json({ error: 'Incorrect password. Please verify and try again.' });
     }
   }
 
-  db.set('currentUserId', user.id);
-  logAudit(user, 'auth.login', 'auth', user.id, `User ${user.name} logged in via ${portalType || 'web'} portal`);
+  // Flag first-time host superadmin if still using initial default password
+  if (user.role === 'superadmin' && (user.password === 'L@khan@123' || user.mustChangePassword)) {
+    user.mustChangePassword = true;
+  }
+
+  // Generate isolated session token for this PC / browser instance
+  const sessionToken = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+  activeSessions.set(sessionToken, {
+    token: sessionToken,
+    userId: user.id,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'] as string,
+    createdAt: new Date().toISOString(),
+    lastActive: new Date().toISOString(),
+  });
+
+  logAudit(user, 'auth.login', 'auth', user.id, `User ${user.name} logged in via ${portalType || 'web'} portal (Session: ${sessionToken.slice(0, 10)}...)`);
 
   const organizations = db.get('organizations');
   const org = organizations.find(o => o.id === user.organizationId) || organizations[0];
@@ -117,11 +270,15 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
   res.json({
     user,
     organization: org,
+    sessionToken,
   });
 });
 
 apiRouter.post('/auth/logout', (req: Request, res: Response) => {
-  db.set('currentUserId', '');
+  const token = (req.headers['x-session-token'] as string) || (req.query.sessionToken as string);
+  if (token && activeSessions.has(token)) {
+    activeSessions.delete(token);
+  }
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
@@ -153,7 +310,16 @@ apiRouter.post('/auth/set-password-psk', (req: Request, res: Response) => {
 
   user.password = newPassword.trim();
   db.set('users', users);
-  db.set('currentUserId', user.id);
+
+  const sessionToken = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+  activeSessions.set(sessionToken, {
+    token: sessionToken,
+    userId: user.id,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'] as string,
+    createdAt: new Date().toISOString(),
+    lastActive: new Date().toISOString(),
+  });
 
   logAudit(user, 'auth.password_set_psk', 'auth', user.id, `User ${user.name} configured/activated password via Pre-Shared Key`);
 
@@ -162,6 +328,7 @@ apiRouter.post('/auth/set-password-psk', (req: Request, res: Response) => {
     message: 'Password created successfully! You are now logged in.',
     user,
     organization: org,
+    sessionToken,
   });
 });
 
@@ -174,7 +341,16 @@ apiRouter.post('/session/switch', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'User not found' });
   }
 
-  db.set('currentUserId', user.id);
+  const token = (req.headers['x-session-token'] as string) || `sess_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+  activeSessions.set(token, {
+    token,
+    userId: user.id,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'] as string,
+    createdAt: new Date().toISOString(),
+    lastActive: new Date().toISOString(),
+  });
+
   logAudit(user, 'auth.switch_user', 'auth', user.id, `Session switched to ${user.name} (${user.role})`);
 
   const organizations = db.get('organizations');
@@ -183,6 +359,7 @@ apiRouter.post('/session/switch', (req: Request, res: Response) => {
   res.json({
     user,
     organization: org,
+    sessionToken: token,
   });
 });
 
@@ -286,6 +463,9 @@ apiRouter.post('/users', (req: Request, res: Response) => {
     organizationId: req.body.organizationId || actor.organizationId,
     departmentId: req.body.departmentId,
     team: req.body.team,
+    groupId: req.body.groupId,
+    groupName: req.body.groupName,
+    managerId: req.body.managerId,
     locationId: req.body.locationId,
     phone: req.body.phone,
     status: 'active',
@@ -399,13 +579,18 @@ apiRouter.post('/users/:id/change-password', (req: Request, res: Response) => {
   }
 
   const targetUser = users[targetIdx];
-  if (!isSuperadmin && targetUser.password && currentPassword) {
-    if (targetUser.password !== currentPassword.trim()) {
+  if (!isSuperadmin && targetUser.password) {
+    if (!currentPassword || targetUser.password !== currentPassword.trim()) {
       return res.status(400).json({ error: 'Current password is incorrect. Please verify and try again.' });
     }
   }
 
+  if (targetUser.role === 'superadmin' && newPassword.trim() === 'L@khan@123') {
+    return res.status(400).json({ error: 'New password must be different from the default host password (L@khan@123).' });
+  }
+
   users[targetIdx].password = newPassword.trim();
+  users[targetIdx].mustChangePassword = false;
   db.set('users', users);
 
   logAudit(
@@ -632,14 +817,81 @@ apiRouter.get('/teams', (req: Request, res: Response) => {
   res.json(db.get('teams'));
 });
 
+apiRouter.post('/teams', (req: Request, res: Response) => {
+  const actor = getActor(req);
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Only administrators can create teams/groups.' });
+  }
+  const teams = db.get('teams') || [];
+  const users = db.get('users') || [];
+  const managerId = req.body.managerId;
+  const manager = managerId ? users.find(u => u.id === managerId) : undefined;
+
+  const newTeam: Team = {
+    id: req.body.id || `grp-${Date.now()}`,
+    name: req.body.name,
+    organizationId: req.body.organizationId || actor.organizationId,
+    managerId: managerId || undefined,
+    managerName: manager?.name || req.body.managerName || undefined,
+    managerEmail: manager?.email || req.body.managerEmail || undefined,
+    members: Array.isArray(req.body.members) ? req.body.members : [],
+    color: req.body.color || '#3b82f6',
+  };
+
+  db.set('teams', [...teams, newTeam]);
+  logAudit(actor, 'team.created', 'setting', newTeam.id, `Created team/requester group "${newTeam.name}" managed by ${newTeam.managerName || 'Unassigned'}`);
+  res.status(201).json(newTeam);
+});
+
+apiRouter.patch('/teams/:id', (req: Request, res: Response) => {
+  const actor = getActor(req);
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Only administrators can modify teams/groups.' });
+  }
+  const { id } = req.params;
+  const teams = db.get('teams') || [];
+  const idx = teams.findIndex(t => t.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Team/Group not found' });
+
+  const users = db.get('users') || [];
+  const managerId = req.body.managerId !== undefined ? req.body.managerId : teams[idx].managerId;
+  const manager = managerId ? users.find(u => u.id === managerId) : undefined;
+
+  teams[idx] = {
+    ...teams[idx],
+    ...req.body,
+    managerId: managerId || undefined,
+    managerName: manager?.name || req.body.managerName || (managerId ? undefined : undefined),
+    managerEmail: manager?.email || req.body.managerEmail || (managerId ? undefined : undefined),
+  };
+
+  db.set('teams', teams);
+  logAudit(actor, 'team.updated', 'setting', id, `Updated team/requester group "${teams[idx].name}"`);
+  res.json(teams[idx]);
+});
+
+apiRouter.delete('/teams/:id', (req: Request, res: Response) => {
+  const actor = getActor(req);
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Only administrators can delete teams/groups.' });
+  }
+  const { id } = req.params;
+  const teams = db.get('teams') || [];
+  const removed = teams.find(t => t.id === id);
+  if (!removed) return res.status(404).json({ error: 'Team/Group not found' });
+
+  db.set('teams', teams.filter(t => t.id !== id));
+  logAudit(actor, 'team.deleted', 'setting', id, `Deleted team/requester group "${removed.name}"`);
+  res.json({ success: true, deletedTeamId: id });
+});
+
 // -------------------------------------------------------------
 // Tickets
 // -------------------------------------------------------------
 apiRouter.get('/tickets', (req: Request, res: Response) => {
   const tickets = db.get('tickets');
-  const currentUserId = db.get('currentUserId');
   const users = db.get('users');
-  const currentUser = currentUserId ? users.find(u => u.id === currentUserId) : null;
+  const currentUser = getOptionalActor(req);
 
   const {
     queue,
@@ -650,28 +902,44 @@ apiRouter.get('/tickets', (req: Request, res: Response) => {
     assigneeId,
     requesterId,
     orgId,
-    trackId,
-    trackEmail,
   } = req.query;
 
   let filtered = [...tickets];
 
-  // RBAC: Data Isolation - Normal requesters cannot access tickets of admins or other users
+  // RBAC: Data Isolation
   if (currentUser && currentUser.role === 'requester') {
     filtered = filtered.filter(t =>
       t.requesterId === currentUser.id ||
       (t.requesterEmail && t.requesterEmail.toLowerCase() === currentUser.email.toLowerCase())
     );
+  } else if (currentUser && currentUser.role === 'manager') {
+    // Team Manager can ONLY see their team's/group's tickets
+    const teams = db.get('teams') || [];
+    const myManagedTeams = teams.filter(tm => tm.managerId === currentUser.id || tm.managerEmail?.toLowerCase() === currentUser.email.toLowerCase());
+    const myManagedTeamIds = new Set(myManagedTeams.map(tm => tm.id));
+
+    const teamUserIds = new Set(
+      users.filter(u => 
+        u.managerId === currentUser.id || 
+        (u.groupId && myManagedTeamIds.has(u.groupId)) ||
+        (u.team && myManagedTeams.some(tm => tm.name.toLowerCase() === u.team?.toLowerCase())) ||
+        u.id === currentUser.id
+      ).map(u => u.id)
+    );
+    const teamUserEmails = new Set(
+      users.filter(u => teamUserIds.has(u.id)).map(u => u.email.toLowerCase())
+    );
+
+    filtered = filtered.filter(t =>
+      teamUserIds.has(t.requesterId) ||
+      (t.requesterEmail && teamUserEmails.has(t.requesterEmail.toLowerCase())) ||
+      (t.assignedTeamId && myManagedTeamIds.has(t.assignedTeamId)) ||
+      (t.ccRecipients && t.ccRecipients.some((cc: string) => cc.toLowerCase() === currentUser.email.toLowerCase())) ||
+      (t.managerEmail && t.managerEmail.toLowerCase() === currentUser.email.toLowerCase())
+    );
   } else if (!currentUser) {
-    // Unauthenticated guest: can ONLY track specific ticket by ID and Email
-    if (trackId && trackEmail) {
-      filtered = filtered.filter(t =>
-        t.id.toLowerCase() === String(trackId).toLowerCase().trim() &&
-        t.requesterEmail.toLowerCase() === String(trackEmail).toLowerCase().trim()
-      );
-    } else {
-      filtered = [];
-    }
+    // Unauthenticated guest: no track ticket by id
+    filtered = [];
   }
 
   // Refresh dynamic SLA status for all active tickets and ensure requesters cannot be assigned tickets
@@ -985,7 +1253,21 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
     assignedTechnicianId: resolvedAssignedTechId,
     assignedTechnicianName: resolvedAssignedTechName,
     followers: matchedUser ? [matchedUser.id] : [],
-    ccRecipients: [],
+    ccRecipients: (() => {
+      const list: string[] = [];
+      if (req.body.ccRecipients) {
+        if (Array.isArray(req.body.ccRecipients)) list.push(...req.body.ccRecipients);
+        else if (typeof req.body.ccRecipients === 'string') {
+          list.push(...req.body.ccRecipients.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean));
+        }
+      }
+      if (req.body.managerEmail && !list.includes(req.body.managerEmail.trim())) {
+        list.push(req.body.managerEmail.trim());
+      }
+      return list;
+    })(),
+    managerEmail: req.body.managerEmail?.trim() || undefined,
+    forwardedToManager: Boolean(req.body.managerEmail || (req.body.ccRecipients && req.body.ccRecipients.length > 0)),
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     dueDate: dueDate || resolutionDeadline,
@@ -1018,7 +1300,7 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
     'ticket.created',
     'ticket',
     ticketId,
-    `Created ticket [${ticketId}] "${subject}" (${priority}) via ${channel}. Assignee: ${resolvedAssignedTechName || 'Unassigned'}. Applied rules: ${appliedRules.join(', ') || 'none'}`
+    `Created ticket [${ticketId}] "${subject}" (${priority}) via ${channel}. Assignee: ${resolvedAssignedTechName || 'Unassigned'}. ${newTicket.ccRecipients.length > 0 ? `CC/Manager: ${newTicket.ccRecipients.join(', ')}.` : ''} Applied rules: ${appliedRules.join(', ') || 'none'}`
   );
 
   res.status(201).json(newTicket);
@@ -1033,9 +1315,8 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Ticket not found' });
   }
 
-  const currentUserId = db.get('currentUserId');
+  const actor = getActor(req);
   const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
 
   const oldTicket = tickets[idx];
   const updates = req.body;
@@ -1048,13 +1329,46 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
     }
   }
 
-  // If status is transitioning to resolved, record resolvedAt
-  if (updates.status === 'resolved' && oldTicket.status !== 'resolved') {
+  // If status is transitioning to resolved, record resolvedAt timestamp
+  if (updates.status === 'resolved' && oldTicket.status !== 'resolved' && !updates.resolvedAt) {
     updates.resolvedAt = new Date().toISOString();
   }
 
-  if (updates.status === 'closed' && oldTicket.status !== 'closed') {
-    updates.closedAt = new Date().toISOString();
+  // Team Manager restrictions: Can only view and close tickets belonging to their team/group
+  if (actor.role === 'manager') {
+    const teams = db.get('teams') || [];
+    const myManagedTeams = teams.filter(tm => tm.managerId === actor.id || tm.managerEmail?.toLowerCase() === actor.email.toLowerCase());
+    const myManagedTeamIds = new Set(myManagedTeams.map(tm => tm.id));
+    const teamUserIds = new Set(
+      users.filter(u => 
+        u.managerId === actor.id || 
+        (u.groupId && myManagedTeamIds.has(u.groupId)) ||
+        (u.team && myManagedTeams.some(tm => tm.name.toLowerCase() === u.team?.toLowerCase())) ||
+        u.id === actor.id
+      ).map(u => u.id)
+    );
+    const teamUserEmails = new Set(
+      users.filter(u => teamUserIds.has(u.id)).map(u => u.email.toLowerCase())
+    );
+
+    const isTeamTicket = 
+      teamUserIds.has(oldTicket.requesterId) ||
+      (oldTicket.requesterEmail && teamUserEmails.has(oldTicket.requesterEmail.toLowerCase())) ||
+      (oldTicket.assignedTeamId && myManagedTeamIds.has(oldTicket.assignedTeamId)) ||
+      (oldTicket.ccRecipients && oldTicket.ccRecipients.some((cc: string) => cc.toLowerCase() === actor.email.toLowerCase())) ||
+      (oldTicket.managerEmail && oldTicket.managerEmail.toLowerCase() === actor.email.toLowerCase());
+
+    if (!isTeamTicket) {
+      return res.status(403).json({ error: 'Access denied: You can only view and close tickets belonging to your team/group.' });
+    }
+
+    // Manager can ONLY close the ticket (status: 'closed' or 'resolved')
+    const allowedKeys = new Set(['status', 'resolutionCode', 'resolutionSummary', 'closedAt', 'resolvedAt']);
+    const attemptedKeys = Object.keys(updates);
+    const hasDisallowedKey = attemptedKeys.some(k => !allowedKeys.has(k));
+    if (hasDisallowedKey || (updates.status && updates.status !== 'closed' && updates.status !== 'resolved')) {
+      return res.status(403).json({ error: 'Access denied: Team managers only have permission to view and close tickets for their team.' });
+    }
   }
 
   // If actor is requester, they cannot assign technicians
@@ -1083,16 +1397,62 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
     }
   }
 
+  // Superadmin SLA Management & Override
+  const isSuperadmin = actor.role === 'superadmin';
+  let slaWasModifiedBySuperadmin = false;
+
+  if (
+    updates.slaStatusOverride !== undefined ||
+    updates.slaStatus !== undefined ||
+    updates.slaResolutionDeadline !== undefined ||
+    updates.slaOverrideReason !== undefined
+  ) {
+    if (isSuperadmin) {
+      slaWasModifiedBySuperadmin = true;
+      const targetSlaStatus = updates.slaStatusOverride || updates.slaStatus || oldTicket.slaStatus;
+      updates.slaStatusOverride = targetSlaStatus;
+      updates.slaStatus = targetSlaStatus;
+      updates.slaBreachOverridden = true;
+      updates.slaOverriddenBy = actor.name;
+      updates.slaOverriddenAt = new Date().toISOString();
+      if (updates.slaOverrideReason) {
+        updates.slaBreachReason = updates.slaOverrideReason;
+      }
+    } else if (updates.slaStatusOverride !== undefined || (updates.slaStatus !== undefined && updates.slaStatus !== oldTicket.slaStatus)) {
+      // Non-superadmins cannot modify SLA status overrides
+      delete updates.slaStatusOverride;
+      delete updates.slaStatus;
+    }
+  }
+
   let updatedTicket: Ticket = {
     ...oldTicket,
     ...updates,
     updatedAt: new Date().toISOString(),
   };
 
-  // Re-evaluate SLA
-  const { status: slaStat, breachReason } = evaluateSlaStatus(updatedTicket);
-  updatedTicket.slaStatus = slaStat;
-  updatedTicket.slaBreachReason = breachReason;
+  // Re-evaluate SLA:
+  // If Superadmin has overridden or locked the SLA status, preserve Superadmin's choice!
+  if (updatedTicket.slaStatusOverride) {
+    updatedTicket.slaStatus = updatedTicket.slaStatusOverride;
+    if (updates.slaOverrideReason) {
+      updatedTicket.slaBreachReason = updates.slaOverrideReason;
+    }
+  } else {
+    const { status: slaStat, breachReason } = evaluateSlaStatus(updatedTicket);
+    updatedTicket.slaStatus = slaStat;
+    updatedTicket.slaBreachReason = breachReason;
+  }
+
+  if (slaWasModifiedBySuperadmin) {
+    logAudit(
+      actor,
+      'ticket.sla_modified',
+      'ticket',
+      id,
+      `Superadmin ${actor.name} modified SLA for ticket [${id}] to status "${updatedTicket.slaStatus}". Deadline: ${updatedTicket.slaResolutionDeadline}. Reason: ${updatedTicket.slaOverrideReason || updatedTicket.slaBreachReason || 'Administrative override'}`
+    );
+  }
 
   // Run automation rules
   const automationRules = db.get('automationRules') || [];
@@ -1387,36 +1747,64 @@ apiRouter.post('/tickets/bulk', (req: Request, res: Response) => {
 // Assets & Hardware Inventory
 // -------------------------------------------------------------
 apiRouter.get('/assets', (req: Request, res: Response) => {
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const currentUser = currentUserId ? users.find(u => u.id === currentUserId) : null;
-  const assets = db.get('assets');
+  const actor = getOptionalActor(req);
+  const assets = db.get('assets') || [];
 
-  // RBAC: Guests get empty list, requesters get assigned equipment only, staff get full inventory
-  if (!currentUser) {
-    return res.json([]);
-  }
-  const organizations = db.get('organizations');
-  const currentOrg = organizations.find(o => o.id === currentUser.organizationId) || organizations[0];
+  const organizations = db.get('organizations') || [];
+  const currentOrg = (actor && organizations.find(o => o.id === actor.organizationId)) || organizations[0];
   const defCurrency = currentOrg?.systemSettings?.defaultCurrency || '₹';
   const mappedAssets = assets.map(a => ({
     ...a,
     costCurrency: (a.costCurrency && a.costCurrency !== '$') ? a.costCurrency : defCurrency,
   }));
 
-  if (currentUser.role === 'requester') {
-    return res.json(mappedAssets.filter(a => a.assignedUserId === currentUser.id));
+  // Requesters can only see equipment assigned to their personal account
+  if (actor && actor.role === 'requester') {
+    return res.json(mappedAssets.filter(a => a.assignedUserId === actor.id || a.assignedToUserId === actor.id));
   }
 
+  // Team Manager: can only see their team's inventory, with NO cost visible to him
+  if (actor && actor.role === 'manager') {
+    const teams = db.get('teams') || [];
+    const users = db.get('users') || [];
+    const myManagedTeams = teams.filter(tm => tm.managerId === actor.id || tm.managerEmail?.toLowerCase() === actor.email.toLowerCase());
+    const myManagedTeamIds = new Set(myManagedTeams.map(tm => tm.id));
+    const teamUserIds = new Set(
+      users.filter(u => 
+        u.managerId === actor.id || 
+        (u.groupId && myManagedTeamIds.has(u.groupId)) ||
+        (u.team && myManagedTeams.some(tm => tm.name.toLowerCase() === u.team?.toLowerCase())) ||
+        u.id === actor.id
+      ).map(u => u.id)
+    );
+
+    const teamAssets = mappedAssets.filter(a => 
+      (a.assignedUserId && teamUserIds.has(a.assignedUserId)) ||
+      (a.assignedToUserId && teamUserIds.has(a.assignedToUserId))
+    );
+
+    // Redact cost visible to manager
+    return res.json(teamAssets.map(a => ({
+      ...a,
+      purchaseCost: undefined,
+      costStatus: undefined,
+      costCurrency: undefined,
+    })));
+  }
+
+  // All IT staff, superadmin, admin, inventory manager, and console visitors see full CMDB assets
   res.json(mappedAssets);
 });
 
 apiRouter.post('/assets', (req: Request, res: Response) => {
-  const assets = db.get('assets');
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
-  const organizations = db.get('organizations');
+  const assets = db.get('assets') || [];
+  const actor = getActor(req);
+
+  // Team managers have no asset management rights
+  if (actor.role === 'manager') {
+    return res.status(403).json({ error: 'Access denied: Team managers have read-only view of team inventory without management rights.' });
+  }
+  const organizations = db.get('organizations') || [];
   const primaryOrg = organizations.find(o => o.id === (req.body.organizationId || actor.organizationId)) || organizations[0];
   const allowSelfService = primaryOrg?.systemSettings?.allowRequesterAssetSelfService !== false;
 
@@ -1432,7 +1820,7 @@ apiRouter.post('/assets', (req: Request, res: Response) => {
     assignedUserName = actor.name;
   }
 
-  // If asset is added to requester from user side or admin side it should mark status as In service (Admin can set any status as per device health)
+  // If asset is added to requester from user side or admin side it should mark status as In service
   let lifecycleStatus = req.body.lifecycleStatus;
   if (assignedUserId) {
     if (!lifecycleStatus || actor.role === 'requester') {
@@ -1452,9 +1840,17 @@ apiRouter.post('/assets', (req: Request, res: Response) => {
     costStatus = purchaseCost ? 'Verified' : 'Pending';
   }
 
+  // Generate unique sequential ID AST-XXXX
+  let maxIdNum = 1000;
+  for (const a of assets) {
+    const num = parseInt((a.id || '').replace(/\D/g, ''), 10);
+    if (!isNaN(num) && num > maxIdNum) maxIdNum = num;
+  }
+  const assetId = req.body.id || `AST-${maxIdNum + 1}`;
+
   const newAsset = {
     ...req.body,
-    id: req.body.id || `AST-${1000 + assets.length + 1}`,
+    id: assetId,
     name: req.body.name || 'Hardware Equipment',
     type: req.body.type || 'laptop',
     manufacturer: req.body.manufacturer || 'Standard Issue',
@@ -1471,6 +1867,7 @@ apiRouter.post('/assets', (req: Request, res: Response) => {
     status: lifecycleStatus,
     purchaseCost,
     costStatus,
+    costCurrency: req.body.costCurrency || primaryOrg?.systemSettings?.defaultCurrency || '₹',
     organizationId: req.body.organizationId || actor.organizationId || primaryOrg.id,
     purchaseDate: req.body.purchaseDate || new Date().toISOString().slice(0, 10),
     warrantyExpiry: req.body.warrantyExpiry || new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().slice(0, 10),
@@ -1483,13 +1880,16 @@ apiRouter.post('/assets', (req: Request, res: Response) => {
 
 apiRouter.patch('/assets/:id', (req: Request, res: Response) => {
   const { id } = req.params;
-  const assets = db.get('assets');
+  const assets = db.get('assets') || [];
   const idx = assets.findIndex(a => a.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Asset not found' });
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getActor(req);
+
+  // Team managers have no asset management rights
+  if (actor.role === 'manager') {
+    return res.status(403).json({ error: 'Access denied: Team managers have read-only view of team inventory without management rights.' });
+  }
 
   let updates = { ...req.body };
 
@@ -1516,15 +1916,19 @@ apiRouter.patch('/assets/:id', (req: Request, res: Response) => {
 
   assets[idx] = { ...assets[idx], ...updates };
   db.set('assets', assets);
+  logAudit(actor, 'asset.updated', 'asset', id, `Updated asset ${assets[idx].name} (${id})`);
   res.json(assets[idx]);
 });
 
 apiRouter.delete('/assets/:id', (req: Request, res: Response) => {
   const { id } = req.params;
-  const assets = db.get('assets');
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const assets = db.get('assets') || [];
+  const actor = getActor(req);
+
+  // Team managers have no asset management rights
+  if (actor.role === 'manager') {
+    return res.status(403).json({ error: 'Access denied: Team managers have read-only view of team inventory without management rights.' });
+  }
 
   const assetIdx = assets.findIndex(a => a.id === id);
   if (assetIdx === -1) return res.status(404).json({ error: 'Asset not found' });
@@ -1545,20 +1949,20 @@ apiRouter.delete('/assets/:id', (req: Request, res: Response) => {
 });
 
 apiRouter.post('/assets/bulk-update-status', (req: Request, res: Response) => {
+  const actor = getActor(req);
+  if (actor.role === 'manager') {
+    return res.status(403).json({ error: 'Access denied: Team managers do not have asset management rights.' });
+  }
   const { assetIds, status } = req.body;
   if (!Array.isArray(assetIds) || assetIds.length === 0 || !status) {
     return res.status(400).json({ error: 'assetIds array and status are required' });
   }
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
-
   if (actor.role === 'requester') {
     return res.status(403).json({ error: 'Access denied: Requesters cannot update asset inventory.' });
   }
 
-  const assets = db.get('assets');
+  const assets = db.get('assets') || [];
   let updatedCount = 0;
 
   for (const a of assets) {
@@ -1591,15 +1995,13 @@ apiRouter.post('/assets/bulk-delete', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'assetIds array is required' });
   }
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getActor(req);
 
   if (actor.role === 'requester') {
     return res.status(403).json({ error: 'Access denied: Requesters cannot delete assets.' });
   }
 
-  const assets = db.get('assets');
+  const assets = db.get('assets') || [];
   const beforeCount = assets.length;
   const remainingAssets = assets.filter(a => !assetIds.includes(a.id));
   const deletedCount = beforeCount - remainingAssets.length;
@@ -1615,9 +2017,7 @@ apiRouter.post('/assets/bulk-create', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'assets array is required' });
   }
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getActor(req);
 
   if (actor.role === 'requester') {
     return res.status(403).json({ error: 'Access denied: Requesters cannot register hardware assets.' });
@@ -2220,10 +2620,19 @@ apiRouter.post('/admin/mailboxes/test', (req: Request, res: Response) => {
 // Default Organization Reply & Polling Gateway (POP3 / SMTP / IMAP)
 // -------------------------------------------------------------
 apiRouter.get('/email/default-gateway', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Forbidden: Default email gateway configuration is only visible to the Super Administrator.' });
+  }
   res.json(db.get('defaultGatewayConfig'));
 });
 
 apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can configure the default email gateway.' });
+  }
+
   const updated: DefaultEmailGatewayConfig = {
     ...db.get('defaultGatewayConfig'),
     ...req.body,
@@ -2232,23 +2641,22 @@ apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
   };
   db.set('defaultGatewayConfig', updated);
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find((u) => u.id === currentUserId) || users[0];
-  logAudit(actor, 'email.gateway_updated', 'setting', 'default_gateway', `Updated default reply & poller gateway (${updated.incomingProtocol.toUpperCase()} / ${updated.outgoingProtocol.toUpperCase()})`);
+  logAudit(actor, 'email.gateway_updated', 'setting', 'default_gateway', `Superadmin updated default reply & poller gateway (${updated.incomingProtocol.toUpperCase()} / ${updated.outgoingProtocol.toUpperCase()})`);
 
   res.json(updated);
 });
 
 apiRouter.post('/email/default-gateway/test', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can test the default email gateway.' });
+  }
+
   const { testRecipientEmail } = req.body;
   const gateway = db.get('defaultGatewayConfig');
   const recipient = testRecipientEmail || 'test.user@company.com';
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find((u) => u.id === currentUserId) || users[0];
-  logAudit(actor, 'email.test_dispatch', 'setting', recipient, `Dispatched test email via default SMTP gateway (${gateway.outgoingHost}:${gateway.outgoingPort}) to ${recipient}`);
+  logAudit(actor, 'email.test_dispatch', 'setting', recipient, `Superadmin dispatched test email via default SMTP gateway (${gateway.outgoingHost}:${gateway.outgoingPort}) to ${recipient}`);
 
   res.json({
     success: true,
@@ -2598,7 +3006,7 @@ apiRouter.get('/email-channels', (req: Request, res: Response) => {
 });
 
 apiRouter.post('/email/simulate-inbound', (req: Request, res: Response) => {
-  const { from, subject, body } = req.body;
+  const { from, subject, body, cc, managerEmail } = req.body;
   if (!from || !subject || !body) {
     return res.status(400).json({ error: 'from, subject, and body are required' });
   }
@@ -2606,6 +3014,18 @@ apiRouter.post('/email/simulate-inbound', (req: Request, res: Response) => {
   const currentUserId = db.get('currentUserId');
   const users = db.get('users');
   const actor = users.find(u => u.id === currentUserId) || users[0];
+
+  // Parse any CC or manager forward recipients from email
+  const ccList: string[] = [];
+  if (cc) {
+    if (Array.isArray(cc)) ccList.push(...cc);
+    else if (typeof cc === 'string') {
+      ccList.push(...cc.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean));
+    }
+  }
+  if (managerEmail && !ccList.includes(managerEmail.trim())) {
+    ccList.push(managerEmail.trim());
+  }
 
   // Check email threading: Look for "[ITL-XXXXXX]"
   const match = subject.match(/\[(ITL-\d+)\]/i);
@@ -2615,6 +3035,13 @@ apiRouter.post('/email/simulate-inbound', (req: Request, res: Response) => {
     const existingTicketId = match[1].toUpperCase();
     const existing = tickets.find(t => t.id === existingTicketId);
     if (existing) {
+      // Add any new CC recipients from this reply
+      for (const recipient of ccList) {
+        if (!existing.ccRecipients.includes(recipient)) {
+          existing.ccRecipients.push(recipient);
+        }
+      }
+
       // Append public reply from sender
       const comment: TicketComment = {
         id: `cmt-${Date.now()}`,
@@ -2624,7 +3051,7 @@ apiRouter.post('/email/simulate-inbound', (req: Request, res: Response) => {
         authorEmail: from,
         authorRole: 'requester',
         isInternal: false,
-        content: `[Received via Email Intake]:\n${body}`,
+        content: `[Received via Email Intake / Gateway Poller]:\n${body}${ccList.length > 0 ? `\n\n(CC / Forwarded: ${ccList.join(', ')})` : ''}`,
         createdAt: new Date().toISOString(),
       };
       const comments = db.get('comments');
@@ -2636,7 +3063,7 @@ apiRouter.post('/email/simulate-inbound', (req: Request, res: Response) => {
       }
       db.set('tickets', tickets);
 
-      logAudit(actor, 'email.threaded_reply', 'ticket', existing.id, `Threaded inbound email reply onto ${existing.id} from ${from}`);
+      logAudit(actor, 'email.threaded_reply', 'ticket', existing.id, `Threaded inbound email reply onto ${existing.id} from ${from}${ccList.length > 0 ? ` (CC: ${ccList.join(', ')})` : ''}`);
       return res.json({ mode: 'threaded', ticket: existing, comment });
     }
   }
@@ -2662,7 +3089,9 @@ apiRouter.post('/email/simulate-inbound', (req: Request, res: Response) => {
     requesterEmail: from,
     organizationId: actor.organizationId,
     followers: [],
-    ccRecipients: [],
+    ccRecipients: ccList,
+    managerEmail: managerEmail?.trim() || undefined,
+    forwardedToManager: Boolean(managerEmail || ccList.length > 0),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     dueDate: resolutionDeadline,
@@ -2769,27 +3198,23 @@ apiRouter.get('/reports/metrics', (req: Request, res: Response) => {
 // Superadmin Stats & System Health
 // -------------------------------------------------------------
 apiRouter.get('/superadmin/stats', (req: Request, res: Response) => {
-  const currentUserId = db.get('currentUserId');
+  const currentUser = getOptionalActor(req);
   const users = db.get('users');
-  const currentUser = currentUserId ? users.find((u) => u.id === currentUserId) : null;
-
-  if (!currentUser || currentUser.role === 'requester') {
-    return res.json({
-      totalOrganizations: 1,
-      activeTenants: 1,
-      totalUsers: 0,
-      totalTickets: 0,
-      totalAssets: 0,
-      systemUptimeHours: 24,
-      emailQueueHealth: 'nominal',
-      backgroundWorkerStatus: 'active',
-      databaseSizeKb: 100,
-    });
-  }
-
   const orgs = db.get('organizations');
   const tickets = db.get('tickets');
   const assets = db.get('assets');
+
+  let dbSizeBytes = 0;
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      dbSizeBytes = fs.statSync(DB_FILE).size;
+    }
+  } catch {}
+  const dbSizeKb = Math.round(dbSizeBytes / 1024) || Math.round(JSON.stringify(db.getRawData()).length / 1024) || 124;
+
+  const memUsage = process.memoryUsage();
+  const uptimeSeconds = Math.round(process.uptime());
+  const uptimeHours = Math.round((uptimeSeconds / 3600) * 10) / 10;
 
   res.json({
     totalOrganizations: orgs.length,
@@ -2797,10 +3222,15 @@ apiRouter.get('/superadmin/stats', (req: Request, res: Response) => {
     totalUsers: users.length,
     totalTickets: tickets.length,
     totalAssets: assets.length,
-    systemUptimeHours: Math.round((process.uptime() / 3600) * 10) / 10 || 124.5,
+    systemUptimeHours: uptimeHours,
+    uptimeSeconds,
     emailQueueHealth: 'nominal',
     backgroundWorkerStatus: 'active',
-    databaseSizeKb: Math.round(JSON.stringify(db.getRawData()).length / 1024),
+    databaseSizeKb: dbSizeKb,
+    memoryRssMb: Math.round((memUsage.rss / (1024 * 1024)) * 10) / 10,
+    nodeVersion: process.version,
+    platform: `${process.platform === 'linux' ? 'Linux Server' : process.platform === 'darwin' ? 'macOS Server' : 'Windows Server'} (${process.arch === 'x64' ? 'x86_64' : process.arch})`,
+    activeSessionsCount: activeSessions.size,
   });
 });
 

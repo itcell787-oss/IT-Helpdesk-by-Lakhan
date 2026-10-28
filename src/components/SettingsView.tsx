@@ -56,6 +56,7 @@ import {
   MailboxConnectionConfig,
   DefaultEmailGatewayConfig,
   Asset,
+  Team,
 } from '../types';
 import { AssetFormModal } from './AssetFormModal';
 import { SearchableEmployeeSelect } from './SearchableEmployeeSelect';
@@ -184,8 +185,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [userFormTitle, setUserFormTitle] = useState('');
   const [userFormPhone, setUserFormPhone] = useState('');
   const [userFormTeam, setUserFormTeam] = useState('General Operations');
+  const [userFormGroupId, setUserFormGroupId] = useState('');
+  const [userFormGroupName, setUserFormGroupName] = useState('');
+  const [userFormManagerId, setUserFormManagerId] = useState('');
   const [userFormStatus, setUserFormStatus] = useState<'active' | 'suspended'>('active');
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+
+  // Requester Groups & Teams loaded from backend
+  const [dbTeams, setDbTeams] = useState<Team[]>([]);
+
+  useEffect(() => {
+    api.getTeams().then((data) => {
+      if (Array.isArray(data) && data.length > 0) {
+        setDbTeams(data);
+      }
+    }).catch(() => {});
+  }, []);
 
   // Super Admin Reset Password of Everyone State
   const [resetUserTarget, setResetUserTarget] = useState<User | null>(null);
@@ -654,16 +669,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Organization Branding State
   // -------------------------------------------------------------
   const [brandLogoUrl, setBrandLogoUrl] = useState(organization.branding?.logoUrl || '');
+  const [brandLogoTemplate, setBrandLogoTemplate] = useState<'round' | 'square' | 'rectangle'>(
+    organization.branding?.logoTemplate || 'rectangle'
+  );
+  const [brandLogoWidth, setBrandLogoWidth] = useState(organization.branding?.logoWidth || 200);
+  const [brandLogoHeight, setBrandLogoHeight] = useState(organization.branding?.logoHeight || 80);
   const [brandLogoLoadError, setBrandLogoLoadError] = useState(false);
-  const [brandTitle, setBrandTitle] = useState(organization.branding.productName);
-  const [brandEmail, setBrandEmail] = useState(organization.branding.supportEmail);
-  const [portalWelcome, setPortalWelcome] = useState(organization.branding.portalWelcome);
+  const [brandTitle, setBrandTitle] = useState(organization.branding.productName || 'IT Helpdesk by Lakhan');
+  const [brandSubtitle, setBrandSubtitle] = useState((organization.branding as any).subtitle || 'Enterprise Support');
+  const [brandEmail, setBrandEmail] = useState(organization.branding.supportEmail || 'helpdesk@lakhanglobal.com');
+  const [portalWelcome, setPortalWelcome] = useState(organization.branding.portalWelcome || '');
   const [savedBranding, setSavedBranding] = useState(false);
 
   useEffect(() => {
     if (organization?.branding) {
       if (organization.branding.logoUrl !== undefined) {
         setBrandLogoUrl(organization.branding.logoUrl || '');
+      }
+      if (organization.branding.logoTemplate) {
+        setBrandLogoTemplate(organization.branding.logoTemplate);
+      }
+      if ((organization.branding as any).subtitle) {
+        setBrandSubtitle((organization.branding as any).subtitle);
+      }
+      if (organization.branding.logoWidth) {
+        setBrandLogoWidth(organization.branding.logoWidth);
+      }
+      if (organization.branding.logoHeight) {
+        setBrandLogoHeight(organization.branding.logoHeight);
       }
       if (organization.branding.productName) {
         setBrandTitle(organization.branding.productName);
@@ -860,10 +893,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       branding: {
         ...organization.branding,
         logoUrl: brandLogoUrl.trim() || undefined,
-        productName: brandTitle.trim(),
+        logoTemplate: brandLogoTemplate,
+        productName: brandTitle.trim() || 'IT Helpdesk by Lakhan',
+        subtitle: brandSubtitle.trim() || 'Enterprise Support',
         supportEmail: brandEmail.trim(),
         portalWelcome: portalWelcome.trim(),
-      },
+        logoWidth: Number(brandLogoWidth) || 200,
+        logoHeight: Number(brandLogoHeight) || 80,
+      } as any,
     });
     setSavedBranding(true);
     setTimeout(() => setSavedBranding(false), 2500);
@@ -1025,6 +1062,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUserFormTitle('Staff Requester');
     setUserFormPhone('');
     setUserFormTeam('General Operations');
+    setUserFormGroupId('');
+    setUserFormGroupName('');
+    setUserFormManagerId('');
     setUserFormStatus('active');
     setUserFormOrgId(organization.id);
     setShowUserModal(true);
@@ -1039,6 +1079,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUserFormTitle(user.title || '');
     setUserFormPhone(user.phone || '');
     setUserFormTeam(user.team || 'General Operations');
+    setUserFormGroupId(user.groupId || '');
+    setUserFormGroupName(user.groupName || '');
+    setUserFormManagerId(user.managerId || '');
     setUserFormStatus(user.status === 'suspended' ? 'suspended' : 'active');
     setUserFormOrgId(user.organizationId || organization.id);
     setShowUserModal(true);
@@ -1058,6 +1101,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             title: userFormTitle.trim(),
             phone: userFormPhone.trim(),
             team: userFormTeam,
+            groupId: userFormGroupId || undefined,
+            groupName: userFormGroupName || undefined,
+            managerId: userFormManagerId || undefined,
             status: userFormStatus,
             organizationId: userFormOrgId,
           });
@@ -1072,6 +1118,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             title: userFormTitle.trim(),
             phone: userFormPhone.trim(),
             team: userFormTeam,
+            groupId: userFormGroupId || undefined,
+            groupName: userFormGroupName || undefined,
+            managerId: userFormManagerId || undefined,
             status: userFormStatus,
             organizationId: userFormOrgId,
           });
@@ -1245,7 +1294,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             { id: 'assets', label: 'Hardware Assets & CMDB', icon: HardDrive, roles: ['superadmin', 'admin', 'manager', 'technician'] },
             { id: 'fields', label: 'Custom Fields & Form Builder', icon: Sliders, roles: ['superadmin', 'admin'] },
             { id: 'admin-mailbox', label: 'Admin Mailboxes (IMAP/POP3/SMTP)', icon: Mail, roles: ['superadmin', 'admin'] },
-            { id: 'default-gateway', label: 'Default Reply & Polling Gateway', icon: Server, roles: ['superadmin', 'admin'] },
+            { id: 'default-gateway', label: 'Default Reply & Polling Gateway', icon: Server, roles: ['superadmin'] },
             { id: 'sla', label: 'SLA Target Matrix', icon: Clock, roles: ['superadmin', 'admin'] },
             { id: 'automations', label: 'Automation Rules', icon: Zap, roles: ['superadmin', 'admin'] },
             { id: 'branding', label: 'Branding & Identity', icon: Palette, roles: ['superadmin'] },
@@ -1803,6 +1852,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <option value="admin">Admin</option>
                 <option value="manager">Manager</option>
                 <option value="technician">Technician / Agent</option>
+                <option value="inventory_manager">Inventory Manager</option>
+                <option value="auditor">Auditor</option>
                 <option value="requester">User / Requester</option>
               </select>
             </div>
@@ -1856,10 +1907,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                               ? 'text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-800/40'
                               : user.role === 'technician'
                               ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-800/40'
+                              : user.role === 'inventory_manager'
+                              ? 'text-teal-700 dark:text-teal-300 bg-teal-100 dark:bg-teal-950/60 border-teal-300 dark:border-teal-800/40'
+                              : user.role === 'auditor'
+                              ? 'text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800/40'
                               : 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/60 border-slate-300 dark:border-slate-700/40'
                           }`}
                         >
-                          {user.role}
+                          {user.role === 'inventory_manager' ? 'Inv Manager' : user.role}
                         </span>
                       </td>
 
@@ -1932,7 +1987,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       </td>
 
                       <td className="py-3 px-3 text-slate-700 dark:text-slate-300 font-medium">
-                        {user.title || <span className="text-slate-400 italic">Not specified</span>}
+                        <div>{user.title || <span className="text-slate-400 italic">Not specified</span>}</div>
+                        {user.groupName && (
+                          <div className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold mt-0.5">
+                            Group: {user.groupName}
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3 px-3 text-slate-600 dark:text-slate-400 font-mono text-[11px]">
@@ -3850,61 +3910,148 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSaveBranding} className="space-y-4">
+          <form onSubmit={handleSaveBranding} className="space-y-5">
+            {/* Shape / Template Selector */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                Logo Shape &amp; Display Template
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBrandLogoTemplate('rectangle');
+                    setBrandLogoWidth(200);
+                    setBrandLogoHeight(80);
+                  }}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                    brandLogoTemplate === 'rectangle'
+                      ? 'bg-cyan-500/15 border-cyan-500 text-cyan-800 dark:text-cyan-300 shadow-sm ring-1 ring-cyan-500/40'
+                      : 'bg-white/60 dark:bg-slate-900/60 border-slate-200 dark:border-white/10 hover:border-slate-300 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-6 h-3 rounded-xs border-2 border-current" />
+                    <span className="text-xs font-bold">Rectangle Banner</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Horizontal company wordmarks, full width SVGs/PNGs (auto scales in header).
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBrandLogoTemplate('round');
+                    setBrandLogoWidth(80);
+                    setBrandLogoHeight(80);
+                  }}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                    brandLogoTemplate === 'round'
+                      ? 'bg-cyan-500/15 border-cyan-500 text-cyan-800 dark:text-cyan-300 shadow-sm ring-1 ring-cyan-500/40'
+                      : 'bg-white/60 dark:bg-slate-900/60 border-slate-200 dark:border-white/10 hover:border-slate-300 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-4 h-4 rounded-full border-2 border-current" />
+                    <span className="text-xs font-bold">Round (Circle)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Emblems, circular stamps, seals, or avatars with rounded ring.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBrandLogoTemplate('square');
+                    setBrandLogoWidth(80);
+                    setBrandLogoHeight(80);
+                  }}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                    brandLogoTemplate === 'square'
+                      ? 'bg-cyan-500/15 border-cyan-500 text-cyan-800 dark:text-cyan-300 shadow-sm ring-1 ring-cyan-500/40'
+                      : 'bg-white/60 dark:bg-slate-900/60 border-slate-200 dark:border-white/10 hover:border-slate-300 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-4 h-4 rounded-xs border-2 border-current" />
+                    <span className="text-xs font-bold">Square Icon</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    App icons, square shields, favicons with subtle rounded corners.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* Logo Upload & URL Box */}
             <div>
               <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
-                <span>Organization / Portal Branding Logo</span>
+                <span>Upload Logo or Specify Image URL</span>
                 <span className="text-[10px] font-mono text-cyan-600 dark:text-cyan-400 font-bold">
-                  Target Dimension: 250 × 150 px (auto adjusts)
+                  Accepts PNG, SVG, JPG, WebP (Transparent supported)
                 </span>
               </label>
 
-              {/* 250 x 150 px Auto-Adjusting Logo Box & Upload Panel */}
               <div className="flex flex-col md:flex-row items-start gap-4 p-4 rounded-2xl bg-slate-100/70 dark:bg-slate-900/50 border border-slate-300 dark:border-white/10">
-                {/* 250 x 150 px Preview Frame with Auto Adjust (object-contain) */}
+                {/* Visual Preview Box */}
                 <div className="flex flex-col items-center gap-1.5 shrink-0">
                   <div
-                    className="w-[250px] h-[150px] rounded-xl border-2 border-dashed border-cyan-500/40 bg-white dark:bg-slate-950 flex items-center justify-center overflow-hidden p-2 relative shadow-inner group"
-                    title="Logo Preview Frame (250 × 150 px auto adjusts)"
+                    className={`w-[200px] h-[120px] rounded-xl border-2 border-dashed border-cyan-500/40 bg-white dark:bg-slate-950 flex items-center justify-center overflow-hidden p-2 relative shadow-inner group ${
+                      brandLogoTemplate === 'round' ? 'p-1' : ''
+                    }`}
+                    title="Logo Preview Frame"
                   >
                     {brandLogoUrl && !brandLogoLoadError ? (
-                      <img
-                        src={brandLogoUrl}
-                        alt="Brand Logo Preview"
-                        className="w-full h-full object-contain select-none transition-transform group-hover:scale-105"
-                        onError={() => setBrandLogoLoadError(true)}
-                      />
+                      <div
+                        className={`w-full h-full flex items-center justify-center ${
+                          brandLogoTemplate === 'round'
+                            ? 'rounded-full overflow-hidden'
+                            : brandLogoTemplate === 'square'
+                            ? 'rounded-lg overflow-hidden'
+                            : ''
+                        }`}
+                      >
+                        <img
+                          src={brandLogoUrl}
+                          alt="Brand Logo Preview"
+                          className={`max-w-full max-h-full ${
+                            brandLogoTemplate === 'round'
+                              ? 'w-full h-full object-cover rounded-full'
+                              : 'object-contain'
+                          } select-none transition-transform group-hover:scale-105`}
+                          onError={() => setBrandLogoLoadError(true)}
+                        />
+                      </div>
                     ) : brandLogoUrl && brandLogoLoadError ? (
                       <div className="text-center p-2 text-rose-600 dark:text-rose-400 space-y-1">
-                        <AlertCircle className="w-6 h-6 mx-auto text-rose-500" />
+                        <AlertCircle className="w-5 h-5 mx-auto text-rose-500" />
                         <div className="text-[11px] font-bold">Image failed to load</div>
-                        <div className="text-[10px] text-slate-500">Check image URL or choose a preset/upload file</div>
+                        <div className="text-[10px] text-slate-500">Check URL or select a preset</div>
                       </div>
                     ) : (
                       <div className="text-center p-3 text-slate-400 dark:text-slate-500 space-y-1">
-                        <Palette className="w-8 h-8 mx-auto text-cyan-500/60" />
-                        <div className="text-[11px] font-bold">250 × 150 px Frame</div>
-                        <div className="text-[10px]">Auto-adjusts PNG, SVG, JPG</div>
+                        <Palette className="w-7 h-7 mx-auto text-cyan-500/60" />
+                        <div className="text-[11px] font-bold">Upload Any Logo</div>
+                        <div className="text-[10px]">PNG · SVG · JPG</div>
                       </div>
                     )}
                   </div>
-                  <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 font-semibold">
-                    Preview (250 × 150 px auto-fit)
+                  <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 font-semibold capitalize">
+                    {brandLogoTemplate} Preview
                   </span>
                 </div>
 
-                {/* File Upload Controls & URL Input */}
+                {/* Upload & Controls */}
                 <div className="flex-1 space-y-3 w-full">
                   <div>
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block mb-1">
-                      Upload Logo (PNG, SVG, or JPG)
-                    </span>
-                    <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-cyan-500/50 hover:border-cyan-500 bg-cyan-50/50 dark:bg-cyan-950/20 text-cyan-800 dark:text-cyan-300 text-xs font-bold cursor-pointer transition-all hover:bg-cyan-100/60 dark:hover:bg-cyan-950/40">
+                    <label className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-cyan-500/50 hover:border-cyan-500 bg-cyan-50/50 dark:bg-cyan-950/20 text-cyan-800 dark:text-cyan-300 text-xs font-bold cursor-pointer transition-all hover:bg-cyan-100/60 dark:hover:bg-cyan-950/40 shadow-xs">
                       <Upload className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                      <span>Choose File (PNG, SVG, JPG - 250×150 px)</span>
+                      <span>Choose File (PNG, SVG, JPG, WebP)</span>
                       <input
                         type="file"
-                        accept=".png,.svg,.jpg,.jpeg,image/png,image/svg+xml,image/jpeg"
+                        accept=".png,.svg,.jpg,.jpeg,.webp,image/png,image/svg+xml,image/jpeg,image/webp"
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
@@ -3926,7 +4073,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </label>
                     <div className="flex items-center gap-2">
                       <input
-                        type="url"
+                        type="text"
                         placeholder="https://example.com/logo.png or data:image/png;base64,..."
                         value={brandLogoUrl}
                         onChange={(e) => setBrandLogoUrl(e.target.value)}
@@ -3947,88 +4094,192 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   {/* One-Click Presets */}
                   <div className="space-y-1.5 pt-1">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      Ready-to-use Crisp SVG Presets:
+                      Sample SVG Logo Presets:
                     </span>
                     <div className="flex items-center gap-2 flex-wrap">
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
                           setBrandLogoUrl(
-                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 150"><rect width="250" height="150" rx="16" fill="%230f172a"/><path d="M125 25 L165 45 V85 C165 110 125 125 125 125 C125 125 85 110 85 85 V45 Z" fill="%230284c7" stroke="%2338bdf8" stroke-width="4"/><path d="M125 45 L135 70 H115 L125 95" stroke="%23ffffff" stroke-width="5" stroke-linecap="round" fill="none"/></svg>'
-                          )
-                        }
+                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60"><rect width="200" height="60" rx="10" fill="%230f172a"/><path d="M30 15 L45 22 V38 C45 48 30 54 30 54 C30 54 15 48 15 38 V22 Z" fill="%230284c7" stroke="%2338bdf8" stroke-width="2"/><text x="55" y="32" fill="%23ffffff" font-family="sans-serif" font-weight="900" font-size="14">IT HELPDESK</text><text x="55" y="45" fill="%2338bdf8" font-family="sans-serif" font-weight="700" font-size="9">BY LAKHAN</text></svg>'
+                          );
+                          setBrandLogoTemplate('rectangle');
+                        }}
                         className="px-2.5 py-1 text-[11px] font-bold rounded-lg neu-btn text-cyan-700 dark:text-cyan-300 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 cursor-pointer"
                       >
-                        Cyber Shield SVG
+                        Cyber Wordmark (Rectangle)
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
                           setBrandLogoUrl(
-                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 150"><rect width="250" height="150" rx="16" fill="%230f172a"/><path d="M75 90 A25 25 0 0 1 115 65 A35 35 0 0 1 165 75 A25 25 0 0 1 165 105 H75 Z" fill="%2306b6d4" stroke="%2367e8f9" stroke-width="3"/><circle cx="125" cy="85" r="8" fill="%23ffffff"/></svg>'
-                          )
-                        }
+                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="%230284c7"/><path d="M50 20 L75 32 V58 C75 73 50 82 50 82 C50 82 25 73 25 58 V32 Z" fill="%230f172a" stroke="%23ffffff" stroke-width="3"/><path d="M50 35 L58 52 H42 L50 68" stroke="%2338bdf8" stroke-width="3" stroke-linecap="round" fill="none"/></svg>'
+                          );
+                          setBrandLogoTemplate('round');
+                        }}
                         className="px-2.5 py-1 text-[11px] font-bold rounded-lg neu-btn text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer"
                       >
-                        Cloud Ops SVG
+                        Shield Seal (Round)
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
                           setBrandLogoUrl(
-                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 150"><rect width="250" height="150" rx="16" fill="%231e1b4b"/><circle cx="125" cy="75" r="42" fill="none" stroke="%23818cf8" stroke-width="4"/><ellipse cx="125" cy="75" rx="42" ry="18" fill="none" stroke="%23c7d2fe" stroke-width="3"/><path d="M105 75 H145 M125 55 V95" stroke="%2338bdf8" stroke-width="4" stroke-linecap="round"/></svg>'
-                          )
-                        }
+                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="%234f46e5"/><circle cx="50" cy="50" r="28" fill="none" stroke="%23ffffff" stroke-width="5"/><ellipse cx="50" cy="50" rx="28" ry="12" fill="none" stroke="%23a5b4fc" stroke-width="3"/><circle cx="50" cy="50" r="6" fill="%23ffffff"/></svg>'
+                          );
+                          setBrandLogoTemplate('square');
+                        }}
                         className="px-2.5 py-1 text-[11px] font-bold rounded-lg neu-btn text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer"
                       >
-                        Apex Global SVG
+                        Apex Orb (Square)
                       </button>
                     </div>
                   </div>
-
-                  <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
-                    Upload your high-resolution company or department emblem in PNG, SVG, or JPG format. The logo automatically scales and preserves its aspect ratio within the 250 × 150 px frame on headers and the user portal.
-                  </p>
                 </div>
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Product Title</label>
-              <input
-                type="text"
-                value={brandTitle}
-                onChange={(e) => setBrandTitle(e.target.value)}
-                className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-semibold"
-              />
+            {/* Live Header Navbar Preview Widget */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/90 border border-slate-200 dark:border-white/10 space-y-2.5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  Live Header Navbar Rendering Preview
+                </span>
+                <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-bold uppercase font-mono">
+                  Real-time Simulation
+                </span>
+              </div>
+              <div className="h-16 w-full px-4 rounded-xl bg-white dark:bg-[#0b1120] border border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-xs">
+                {/* Simulated Header Brand */}
+                <div className="flex items-center gap-3">
+                  {brandLogoUrl && !brandLogoLoadError ? (
+                    <>
+                      {brandLogoTemplate === 'round' && (
+                        <div className="w-10 h-10 rounded-full overflow-hidden bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-white/10 shadow-xs flex items-center justify-center p-0.5 shrink-0 ring-2 ring-cyan-500/20">
+                          <img
+                            src={brandLogoUrl}
+                            alt="Preview"
+                            className="w-full h-full object-cover rounded-full"
+                          />
+                        </div>
+                      )}
+                      {brandLogoTemplate === 'square' && (
+                        <div className="w-10 h-10 rounded-xl overflow-hidden bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-white/10 shadow-xs flex items-center justify-center p-1.5 shrink-0 ring-2 ring-cyan-500/20">
+                          <img
+                            src={brandLogoUrl}
+                            alt="Preview"
+                            className="w-full h-full object-contain rounded-lg"
+                          />
+                        </div>
+                      )}
+                      {brandLogoTemplate === 'rectangle' && (
+                        <div className="h-10 max-h-11 flex items-center shrink-0 max-w-[210px] overflow-hidden p-1 rounded-xl bg-white/60 dark:bg-slate-900/50 border border-slate-200/70 dark:border-white/10">
+                          <img
+                            src={brandLogoUrl}
+                            alt="Preview"
+                            className="h-full w-auto max-h-9 object-contain"
+                          />
+                        </div>
+                      )}
+                      <div className={`flex flex-col leading-tight ${brandLogoTemplate === 'rectangle' ? 'pl-2 border-l border-slate-200 dark:border-slate-800' : ''}`}>
+                        <span className="font-extrabold text-[15px] tracking-tight text-slate-900 dark:text-white">
+                          {brandTitle || 'IT Helpdesk by Lakhan'}
+                        </span>
+                        <span className="text-[10px] font-bold tracking-wider text-cyan-600 dark:text-cyan-400 uppercase font-mono">
+                          {brandSubtitle || 'Enterprise Support'}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 via-sky-600 to-indigo-600 flex items-center justify-center shadow-md text-white shrink-0 ring-1 ring-cyan-400/30">
+                        <Shield className="w-5 h-5 text-white" />
+                      </div>
+                      <div className="flex flex-col leading-tight">
+                        <span className="font-extrabold text-[15px] tracking-tight text-slate-900 dark:text-white">
+                          {brandTitle || 'IT Helpdesk by Lakhan'}
+                        </span>
+                        <span className="text-[10px] font-bold tracking-wider text-slate-500 dark:text-cyan-400/90 uppercase font-mono">
+                          {brandSubtitle || 'Enterprise Support'}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Simulated Header Navigation & Profile Badges */}
+                <div className="hidden sm:flex items-center gap-2">
+                  <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-cyan-500/15 text-cyan-600 border border-cyan-500/30">
+                    Console
+                  </span>
+                  <span className="px-2.5 py-1 text-[11px] font-medium text-slate-400">
+                    Tickets
+                  </span>
+                  <span className="px-2.5 py-1 text-[11px] font-medium text-slate-400">
+                    Assets &amp; Inventory
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Support Email Address</label>
-              <input
-                type="email"
-                value={brandEmail}
-                onChange={(e) => setBrandEmail(e.target.value)}
-                className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono"
-              />
+            {/* Title & Subtitle Inputs */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Product / Helpdesk Title
+                </label>
+                <input
+                  type="text"
+                  value={brandTitle}
+                  onChange={(e) => setBrandTitle(e.target.value)}
+                  placeholder="IT Helpdesk by Lakhan"
+                  className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Header Subtitle / Tagline
+                </label>
+                <input
+                  type="text"
+                  value={brandSubtitle}
+                  onChange={(e) => setBrandSubtitle(e.target.value)}
+                  placeholder="Enterprise Support"
+                  className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Portal Welcome Notice</label>
-              <textarea
-                rows={3}
-                value={portalWelcome}
-                onChange={(e) => setPortalWelcome(e.target.value)}
-                className="w-full p-2.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Support Email Address</label>
+                <input
+                  type="email"
+                  value={brandEmail}
+                  onChange={(e) => setBrandEmail(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Portal Welcome Notice</label>
+                <input
+                  type="text"
+                  value={portalWelcome}
+                  onChange={(e) => setPortalWelcome(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100"
+                />
+              </div>
             </div>
 
-            <div className="pt-2">
+            <div className="pt-2 flex justify-end">
               <button
                 type="submit"
-                className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                className="neu-btn-primary px-6 py-2.5 text-xs font-bold rounded-xl cursor-pointer shadow-md flex items-center gap-2"
               >
-                Save Branding Settings
+                <span>Save Branding &amp; Apply Logo</span>
               </button>
             </div>
           </form>
@@ -4287,7 +4538,9 @@ WantedBy=multi-user.target`}
                   >
                     <option value="requester">User / Requester</option>
                     <option value="technician">Technician / Agent</option>
-                    <option value="manager">Manager</option>
+                    <option value="manager">Team Manager</option>
+                    <option value="inventory_manager">Inventory Manager</option>
+                    <option value="auditor">Compliance Auditor</option>
                     <option value="admin">Administrator</option>
                     <option value="superadmin">Super Admin</option>
                   </select>
@@ -4305,6 +4558,79 @@ WantedBy=multi-user.target`}
                   </select>
                 </div>
               </div>
+
+              {userFormRole === 'requester' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                    <span>Requester Group &amp; Assigned Manager for Approval</span>
+                    <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Manager Routing</span>
+                  </label>
+                  <select
+                    value={userFormGroupId}
+                    onChange={(e) => {
+                      const gid = e.target.value;
+                      setUserFormGroupId(gid);
+                      const team = dbTeams.find((t) => t.id === gid);
+                      if (team) {
+                        setUserFormGroupName(team.name);
+                        setUserFormManagerId(team.managerId || '');
+                      } else {
+                        setUserFormGroupName('');
+                        setUserFormManagerId('');
+                      }
+                    }}
+                    className="w-full px-3 py-1.5 text-xs neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                  >
+                    <option value="">No Group Assigned (Unassigned)</option>
+                    {dbTeams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} {t.managerName ? `(Manager: ${t.managerName})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {userFormManagerId ? (
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 block font-medium">
+                      ✓ Tickets and approvals from this requester route to Team Manager: <strong>{dbTeams.find((t) => t.id === userFormGroupId)?.managerName || 'Assigned Manager'}</strong>
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 block font-medium">
+                      Assign this requester to a group so their respective Team Manager can view and approve their requests.
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {userFormRole === 'manager' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Managed Team / Requester Group
+                  </label>
+                  <select
+                    value={userFormGroupId}
+                    onChange={(e) => {
+                      const gid = e.target.value;
+                      setUserFormGroupId(gid);
+                      const team = dbTeams.find((t) => t.id === gid);
+                      if (team) {
+                        setUserFormGroupName(team.name);
+                      } else {
+                        setUserFormGroupName('');
+                      }
+                    }}
+                    className="w-full px-3 py-1.5 text-xs neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                  >
+                    <option value="">Select team to manage...</option>
+                    {dbTeams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 mt-0.5 block font-medium">
+                    This manager will only be permitted to view and close tickets and inventory belonging to this group/team.
+                  </span>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">

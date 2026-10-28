@@ -1,0 +1,823 @@
+{
+  "organizations": [
+    {
+      "id": "org-lakhan-tech",
+      "name": "Lakhan Global Technologies",
+      "domain": "lakhanglobal.com",
+      "slug": "lakhan-tech",
+      "plan": "enterprise",
+      "status": "active",
+      "branding": {
+        "productName": "IT Helpdesk by Lakhan",
+        "supportEmail": "helpdesk@lakhanglobal.com",
+        "primaryColor": "#0284c7",
+        "secondaryColor": "#4f46e5",
+        "portalTitle": "IT Self-Service & Support Portal",
+        "portalWelcome": "Welcome to the IT Service Desk. Submit a request, track open tickets, or explore self-help articles.",
+        "footerText": "Powered by IT Helpdesk by Lakhan · Enterprise ITSM",
+        "logoTemplate": "rectangle",
+        "logoWidth": 200,
+        "logoHeight": 80
+      },
+      "systemSettings": {
+        "requireOtpForTicketSubmission": false,
+        "enableTicketRating": true,
+        "enableCategoryAutoAssign": true,
+        "categoryAutoAssignRules": {
+          "Hardware & Workstations": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          },
+          "Software & Cloud Apps": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          },
+          "Network & VPN": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          },
+          "Cybersecurity & Access": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          },
+          "Email & Collaboration": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          }
+        },
+        "preSharedKey": "Sports@9433",
+        "defaultCurrency": "₹",
+        "allowRequesterAssetSelfService": true
+      },
+      "storageUsedMb": 0,
+      "ticketCount": 0,
+      "createdAt": "2026-01-10T08:00:00Z"
+    },
+    {
+      "id": "org-acme-finance",
+      "name": "Acme Financial Services",
+      "domain": "acmefinance.com",
+      "slug": "acme-finance",
+      "plan": "professional",
+      "status": "active",
+      "branding": {
+        "productName": "Acme IT Helpdesk",
+        "supportEmail": "support@acmefinance.com",
+        "primaryColor": "#059669",
+        "secondaryColor": "#0f766e",
+        "portalTitle": "Acme Financial IT Portal",
+        "portalWelcome": "Corporate technology support for banking and trading desks.",
+        "footerText": "Acme Financial IT Operations"
+      },
+      "storageUsedMb": 185,
+      "ticketCount": 46,
+      "createdAt": "2026-02-15T09:30:00Z",
+      "systemSettings": {
+        "requireOtpForTicketSubmission": false,
+        "enableTicketRating": true,
+        "enableCategoryAutoAssign": true,
+        "preSharedKey": "Sports@9433",
+        "categoryAutoAssignRules": {
+          "Hardware & Workstations": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          },
+          "Software & Cloud Apps": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          },
+          "Network & VPN": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          },
+          "Cybersecurity & Access": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          },
+          "Email & Collaboration": {
+            "technicianId": "usr-technician",
+            "technicianName": "Support Technician",
+            "teamId": "team-l1-helpdesk"
+          }
+        },
+        "defaultCurrency": "₹",
+        "allowRequesterAssetSelfService": true
+      }
+    }
+  ],
+  "departments": [
+    {
+      "id": "dept-eng",
+      "name": "Software & Infrastructure",
+      "organizationId": "org-lakhan-tech"
+    },
+    {
+      "id": "dept-sales",
+      "name": "Global Sales & Marketing",
+      "organizationId": "org-lakhan-tech"
+    },
+    {
+      "id": "dept-fin",
+      "name": "Finance & Accounting",
+      "organizationId": "org-lakhan-tech"
+    },
+    {
+      "id": "dept-hr",
+      "name": "People & Operations",
+      "organizationId": "org-lakhan-tech"
+    },
+    {
+      "id": "dept-acme-trading",
+      "name": "Capital Markets Trading",
+      "organizationId": "org-acme-finance"
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc-hq-sf",
+      "name": "HQ - San Francisco (Tower 1)",
+      "organizationId": "org-lakhan-tech",
+      "address": "500 Howard St, San Francisco, CA"
+    },
+    {
+      "id": "loc-ny-office",
+      "name": "New York - Midtown Office",
+      "organizationId": "org-lakhan-tech",
+      "address": "1250 Broadway, New York, NY"
+    },
+    {
+      "id": "loc-london",
+      "name": "London - Canary Wharf Hub",
+      "organizationId": "org-lakhan-tech",
+      "address": "25 Bank St, London, UK"
+    },
+    {
+      "id": "loc-acme-chicago",
+      "name": "Chicago Trading Floor",
+      "organizationId": "org-acme-finance",
+      "address": "111 S Wacker Dr, Chicago, IL"
+    }
+  ],
+  "teams": [
+    {
+      "id": "grp-operations",
+      "name": "Operations Requester Group",
+      "organizationId": "org-lakhan-tech",
+      "managerId": "usr-team-manager",
+      "managerName": "Team Manager",
+      "managerEmail": "team.manager@lakhanglobal.com",
+      "members": [],
+      "color": "#3b82f6"
+    },
+    {
+      "id": "team-l1-helpdesk",
+      "name": "Tier 1 Service Desk",
+      "organizationId": "org-lakhan-tech",
+      "managerId": "usr-team-manager",
+      "managerName": "Team Manager",
+      "managerEmail": "team.manager@lakhanglobal.com",
+      "members": [
+        "usr-technician"
+      ],
+      "color": "#38bdf8"
+    }
+  ],
+  "users": [
+    {
+      "id": "usr-superadmin",
+      "name": "Lakhan Prajapati",
+      "email": "admin@lakhanglobal.com",
+      "username": "admin",
+      "employeeCode": "CBPL2045",
+      "password": "L@khan@123",
+      "mustChangePassword": false,
+      "role": "superadmin",
+      "title": "Super Administrator & Global Head of IT",
+      "organizationId": "org-lakhan-tech",
+      "departmentId": "dept-eng",
+      "locationId": "loc-hq-sf",
+      "phone": "+1 (555) 019-8234",
+      "status": "active",
+      "privileges": {
+        "canManageTickets": true,
+        "canDeleteTickets": true,
+        "canManageAssets": true,
+        "canManageKnowledgeBase": true,
+        "canManageApprovals": true
+      },
+      "createdAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "id": "usr-technician",
+      "name": "Support Technician",
+      "email": "technician@lakhanglobal.com",
+      "username": "technician",
+      "employeeCode": "TECH1001",
+      "password": "Tech@123",
+      "role": "technician",
+      "title": "Technical Support Specialist",
+      "organizationId": "org-lakhan-tech",
+      "departmentId": "dept-eng",
+      "locationId": "loc-ny-office",
+      "phone": "+1 (555) 019-9921",
+      "status": "active",
+      "privileges": {
+        "canManageTickets": true,
+        "canDeleteTickets": false,
+        "canManageAssets": true,
+        "canManageKnowledgeBase": true,
+        "canManageApprovals": false
+      },
+      "createdAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "id": "usr-auditor",
+      "name": "Compliance Auditor",
+      "email": "auditor@lakhanglobal.com",
+      "username": "auditor",
+      "employeeCode": "AUD1001",
+      "password": "Auditor@123",
+      "role": "auditor",
+      "title": "IT Compliance & Security Auditor",
+      "organizationId": "org-lakhan-tech",
+      "departmentId": "dept-fin",
+      "locationId": "loc-hq-sf",
+      "phone": "+1 (555) 019-5566",
+      "status": "active",
+      "privileges": {
+        "canManageTickets": false,
+        "canDeleteTickets": false,
+        "canManageAssets": false,
+        "canManageKnowledgeBase": false,
+        "canManageApprovals": false
+      },
+      "createdAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "id": "usr-inventory-mgr",
+      "name": "Inventory Manager",
+      "email": "inventory.manager@lakhanglobal.com",
+      "username": "inventory_manager",
+      "employeeCode": "INV1001",
+      "password": "Inventory@123",
+      "role": "inventory_manager",
+      "title": "Hardware Asset & Inventory Manager",
+      "organizationId": "org-lakhan-tech",
+      "departmentId": "dept-eng",
+      "locationId": "loc-hq-sf",
+      "phone": "+1 (555) 019-4412",
+      "status": "active",
+      "privileges": {
+        "canManageTickets": false,
+        "canDeleteTickets": false,
+        "canManageAssets": true,
+        "canManageKnowledgeBase": false,
+        "canManageApprovals": false
+      },
+      "createdAt": "2026-01-01T00:00:00Z"
+    },
+    {
+      "id": "usr-team-manager",
+      "name": "Team Manager",
+      "email": "team.manager@lakhanglobal.com",
+      "username": "manager",
+      "employeeCode": "MGR1001",
+      "password": "Manager@123",
+      "role": "manager",
+      "title": "Operations Team Manager",
+      "organizationId": "org-lakhan-tech",
+      "departmentId": "dept-eng",
+      "locationId": "loc-hq-sf",
+      "phone": "+1 (555) 019-7751",
+      "status": "active",
+      "privileges": {
+        "canManageTickets": true,
+        "canDeleteTickets": false,
+        "canManageAssets": false,
+        "canManageKnowledgeBase": false,
+        "canManageApprovals": true
+      },
+      "createdAt": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "customFields": [
+    {
+      "id": "cf-device-asset",
+      "name": "deviceAssetTag",
+      "label": "Asset Tag / Serial Number",
+      "type": "text",
+      "required": false,
+      "requiredOnClose": false,
+      "visibleOnPortal": true,
+      "description": "Hardware label on barcode sticker (e.g. AST-1042)"
+    },
+    {
+      "id": "cf-operating-sys",
+      "name": "operatingSystem",
+      "label": "Operating System & Version",
+      "type": "select",
+      "options": [
+        "Windows 11 Enterprise",
+        "macOS 15 Sequoia",
+        "macOS 14 Sonoma",
+        "Ubuntu 24.04 LTS",
+        "iOS / iPadOS",
+        "Other"
+      ],
+      "required": false,
+      "requiredOnClose": false,
+      "visibleOnPortal": true
+    },
+    {
+      "id": "cf-impacted-service",
+      "name": "impactedBusinessService",
+      "label": "Impacted Core Service",
+      "type": "select",
+      "options": [
+        "Corporate VPN & WAN",
+        "Email & M365 Suite",
+        "ERP / Financial Ledger",
+        "Engineering CI/CD Git",
+        "Zoom / Conference AV",
+        "Single Sign-On (Okta/Entra)"
+      ],
+      "required": true,
+      "requiredOnClose": true,
+      "visibleOnPortal": false,
+      "description": "Service mapping for incident post-mortem"
+    },
+    {
+      "id": "cf-root-cause",
+      "name": "rootCauseCategory",
+      "label": "Root Cause Category",
+      "type": "select",
+      "options": [
+        "User Error / Training",
+        "Software Bug",
+        "Hardware Degradation",
+        "Network ISP Outage",
+        "Configuration Drift",
+        "Vendor Service Disruption"
+      ],
+      "required": false,
+      "requiredOnClose": true,
+      "visibleOnPortal": false,
+      "description": "Mandatory field before ticket resolution"
+    }
+  ],
+  "slaPolicies": [
+    {
+      "id": "sla-critical",
+      "name": "Critical Sev-1 Response Policy",
+      "description": "For business stopping outages and security incidents",
+      "organizationId": "org-lakhan-tech",
+      "priority": "critical",
+      "firstResponseMinutes": 15,
+      "resolutionMinutes": 240,
+      "businessHoursOnly": false,
+      "isDefault": true
+    },
+    {
+      "id": "sla-urgent",
+      "name": "Urgent Sev-2 Service Disruption",
+      "description": "Major impairment for multiple users without workaround",
+      "organizationId": "org-lakhan-tech",
+      "priority": "urgent",
+      "firstResponseMinutes": 60,
+      "resolutionMinutes": 480,
+      "businessHoursOnly": true,
+      "isDefault": true
+    },
+    {
+      "id": "sla-high",
+      "name": "High Priority Standard SLA",
+      "description": "Significant performance degradation for single user",
+      "organizationId": "org-lakhan-tech",
+      "priority": "high",
+      "firstResponseMinutes": 120,
+      "resolutionMinutes": 960,
+      "businessHoursOnly": true,
+      "isDefault": true
+    },
+    {
+      "id": "sla-normal",
+      "name": "Normal Standard Support",
+      "description": "Routine questions, minor issues, standard requests",
+      "organizationId": "org-lakhan-tech",
+      "priority": "normal",
+      "firstResponseMinutes": 240,
+      "resolutionMinutes": 1440,
+      "businessHoursOnly": true,
+      "isDefault": true
+    },
+    {
+      "id": "sla-low",
+      "name": "Low Priority / Minor Inquiries",
+      "description": "Cosmetic issues and general non-urgent inquiries",
+      "organizationId": "org-lakhan-tech",
+      "priority": "low",
+      "firstResponseMinutes": 480,
+      "resolutionMinutes": 2880,
+      "businessHoursOnly": true,
+      "isDefault": true
+    }
+  ],
+  "tickets": [],
+  "comments": [],
+  "assets": [
+    {
+      "id": "AST-PROD-001",
+      "name": "Dell Latitude 7440",
+      "type": "laptop",
+      "manufacturer": "Dell",
+      "model": "Latitude 7440 i7 32GB",
+      "serialNumber": "SN-DELL-PROD-001",
+      "lifecycleStatus": "in_service",
+      "status": "in_service",
+      "assignedUserId": "usr-technician",
+      "assignedUserName": "Support Technician",
+      "assignedToUserId": "usr-technician",
+      "assignedToUserName": "Support Technician",
+      "assignedTeamId": "grp-operations",
+      "assignedTeamName": "Operations Requester Group",
+      "purchaseDate": "2026-01-15",
+      "warrantyExpiry": "2028-01-15",
+      "purchaseCost": 145000,
+      "costCurrency": "₹",
+      "organizationId": "org-lakhan-tech"
+    }
+  ],
+  "knowledgeArticles": [
+    {
+      "id": "kb-001",
+      "title": "How to Connect to Corporate GlobalProtect / WireGuard VPN",
+      "slug": "connect-to-corporate-vpn",
+      "category": "Network & Connectivity",
+      "tags": [
+        "vpn",
+        "remote-work",
+        "wireguard",
+        "globalprotect"
+      ],
+      "isPublic": true,
+      "status": "published",
+      "views": 482,
+      "helpfulCount": 89,
+      "notHelpfulCount": 3,
+      "authorId": "usr-alex-tech",
+      "authorName": "Alex Rivera",
+      "createdAt": "2026-02-10T10:00:00Z",
+      "updatedAt": "2026-09-15T14:00:00Z",
+      "content": "\n### Overview\nAll remote employees must connect via the corporate VPN gateway before accessing internal Git repositories, ERP databases, or staging clusters.\n\n### Step 1: Install the Client\n1. Visit `https://vpn.lakhanglobal.com` and sign in with your corporate SSO credentials.\n2. Download the client installer for Windows (MSI) or macOS (PKG).\n3. Follow the on-screen prompts. Note that macOS requires allowing system extension under **Settings > Privacy & Security**.\n\n### Step 2: Portal Address Configuration\n- **Primary Portal URL**: `vpn-us.lakhanglobal.com`\n- **EMEA Gateway**: `vpn-uk.lakhanglobal.com`\n- **Auth Method**: Corporate Okta Single Sign-On + Microsoft Authenticator Push notification.\n\n### Troubleshooting\n- If handshakes fail, verify you are not on hotel/airplane Wi-Fi blocking UDP port 443 / 500.\n- Switch to TCP Fallback mode in the app Preferences if strict firewalls drop UDP packets.\n    "
+    },
+    {
+      "id": "kb-002",
+      "title": "Self-Service Password Reset (SSPR) & Multi-Factor Auth Setup",
+      "slug": "self-service-password-reset-mfa",
+      "category": "Security & Access",
+      "tags": [
+        "password",
+        "mfa",
+        "security",
+        "authenticator"
+      ],
+      "isPublic": true,
+      "status": "published",
+      "views": 890,
+      "helpfulCount": 154,
+      "notHelpfulCount": 5,
+      "authorId": "usr-sarah-admin",
+      "authorName": "Sarah Jenkins",
+      "createdAt": "2026-01-20T08:00:00Z",
+      "updatedAt": "2026-08-01T11:30:00Z",
+      "content": "\n### Resetting Your Account Password\nIf your corporate password has expired or is locked out:\n1. Navigate to `https://auth.lakhanglobal.com/reset`.\n2. Enter your primary email address.\n3. Authenticate using your Microsoft Authenticator biometric prompt or registered hardware FIDO2 key.\n4. Select a new password meeting policy: minimum 16 characters, uppercase, lowercase, numbers, and no previous 10 passwords reused.\n\n### Adding a Backup MFA Device\nAlways register a secondary phone number or security key to prevent lockouts during international travel.\n    "
+    },
+    {
+      "id": "kb-003",
+      "title": "Outlook 365 Indexing and Search Troubleshooting Guide",
+      "slug": "outlook-search-indexing-fix",
+      "category": "Software & Cloud Apps",
+      "tags": [
+        "outlook",
+        "m365",
+        "search",
+        "email"
+      ],
+      "isPublic": true,
+      "status": "published",
+      "views": 312,
+      "helpfulCount": 47,
+      "notHelpfulCount": 2,
+      "authorId": "usr-alex-tech",
+      "authorName": "Alex Rivera",
+      "createdAt": "2026-04-12T15:00:00Z",
+      "updatedAt": "2026-10-01T09:00:00Z",
+      "content": "\n### Symptom\nSearch in Microsoft Outlook returns \"We are having trouble fetching results\" or CPU spikes to 100%.\n\n### Resolution Steps\n1. Open Windows **Control Panel > Indexing Options**.\n2. Click **Advanced**, then select **Rebuild Index**.\n3. In Outlook, navigate to **File > Account Settings > Data Files**, select your mailbox and click **Settings > Advanced**, ensuring \"Use Cached Exchange Mode\" is checked for 1 Year.\n4. Restart your workstation.\n    "
+    },
+    {
+      "id": "kb-004",
+      "title": "Connecting to Corporate High-Speed Wi-Fi (802.1X EAP-TLS)",
+      "slug": "corporate-wifi-setup-8021x",
+      "category": "Network & Connectivity",
+      "tags": [
+        "wifi",
+        "network",
+        "certificate",
+        "802.1x"
+      ],
+      "isPublic": true,
+      "status": "published",
+      "views": 260,
+      "helpfulCount": 39,
+      "notHelpfulCount": 1,
+      "authorId": "usr-elena-tech",
+      "authorName": "Elena Rostova",
+      "createdAt": "2026-03-05T12:00:00Z",
+      "updatedAt": "2026-07-20T16:00:00Z",
+      "content": "\n### SSID: `Lakhan-Corporate-Secure`\n- **Security Type**: WPA3-Enterprise (802.1X)\n- **EAP Method**: PEAP / MSCHAPv2 or EAP-TLS using your MDM machine certificate.\n- **Identity**: `username@lakhanglobal.com`\n- **Certificate Trust**: Verify root CA is `Lakhan Global Internal Root CA G3`.\n    "
+    }
+  ],
+  "serviceCatalog": [
+    {
+      "id": "cat-new-laptop",
+      "title": "New Laptop or High-Performance Workstation",
+      "description": "Request a standard Apple MacBook Pro M3 or Dell Precision workstation for new hires or hardware upgrades.",
+      "category": "Hardware",
+      "icon": "Laptop",
+      "estimatedHours": 48,
+      "requiresApproval": true,
+      "approverRole": "manager",
+      "defaultTeamId": "team-workplace",
+      "defaultPriority": "normal",
+      "fields": [
+        {
+          "id": "f_laptop_model",
+          "label": "Preferred Device Model",
+          "type": "select",
+          "required": true,
+          "options": [
+            "MacBook Pro 14\" M3 Pro",
+            "MacBook Pro 16\" M3 Max",
+            "Dell Precision 5680 64GB",
+            "Lenovo ThinkPad X1 Carbon 32GB"
+          ]
+        },
+        {
+          "id": "f_business_justification",
+          "label": "Business Justification",
+          "type": "textarea",
+          "required": true
+        },
+        {
+          "id": "f_delivery_location",
+          "label": "Delivery Office Location or Remote Address",
+          "type": "text",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "cat-software-license",
+      "title": "Software License or Cloud SaaS Seat",
+      "description": "Request access to Figma Enterprise, GitHub Copilot, Adobe Creative Cloud, or JetBrains All Products.",
+      "category": "Software",
+      "icon": "Layers",
+      "estimatedHours": 8,
+      "requiresApproval": true,
+      "approverRole": "manager",
+      "defaultTeamId": "team-l1-helpdesk",
+      "defaultPriority": "normal",
+      "fields": [
+        {
+          "id": "f_software_name",
+          "label": "Requested Application",
+          "type": "select",
+          "required": true,
+          "options": [
+            "GitHub Copilot Business",
+            "Figma Enterprise Seat",
+            "Adobe Creative Cloud All Apps",
+            "JetBrains Ultimate Suite",
+            "Tableau Desktop License"
+          ]
+        },
+        {
+          "id": "f_cost_center",
+          "label": "Department Cost Center Code",
+          "type": "text",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "cat-vpn-access",
+      "title": "Remote VPN & Production Bastion Access",
+      "description": "Elevated developer network access to staging environments, AWS private subnets, and database jump hosts.",
+      "category": "Access & Security",
+      "icon": "Shield",
+      "estimatedHours": 4,
+      "requiresApproval": true,
+      "approverRole": "it_lead",
+      "defaultTeamId": "team-sec-ops",
+      "defaultPriority": "high",
+      "fields": [
+        {
+          "id": "f_environment",
+          "label": "Target Environment",
+          "type": "select",
+          "required": true,
+          "options": [
+            "Staging VPC Subnets",
+            "Production Read-Only Cluster",
+            "Analytics Data Lake",
+            "DMZ Jump Host"
+          ]
+        },
+        {
+          "id": "f_justification",
+          "label": "Security Justification & Access Duration",
+          "type": "textarea",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "cat-guest-wifi",
+      "title": "Guest Wi-Fi Voucher & Visitor Badging",
+      "description": "Generate temporary 24-hour Wi-Fi passcodes and visitor elevator badges for clients and vendors.",
+      "category": "Workplace",
+      "icon": "Wifi",
+      "estimatedHours": 2,
+      "requiresApproval": false,
+      "defaultTeamId": "team-l1-helpdesk",
+      "defaultPriority": "low",
+      "fields": [
+        {
+          "id": "f_visitor_name",
+          "label": "Visitor Full Name & Company",
+          "type": "text",
+          "required": true
+        },
+        {
+          "id": "f_visit_date",
+          "label": "Visit Date & Sponsoring Employee",
+          "type": "text",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "approvalRequests": [],
+  "workLogs": [],
+  "tasks": [],
+  "automationRules": [
+    {
+      "id": "rule-001",
+      "name": "Auto-assign Network & VPN incidents to Cloud & NetOps Team",
+      "description": "When category contains Network or VPN, assign to team-infra-net with High priority.",
+      "organizationId": "org-lakhan-tech",
+      "enabled": true,
+      "order": 1,
+      "trigger": "ticket_created",
+      "conditions": [
+        {
+          "field": "category",
+          "operator": "contains",
+          "value": "Network"
+        }
+      ],
+      "actions": [
+        {
+          "type": "assign_team",
+          "value": "team-infra-net"
+        },
+        {
+          "type": "add_tag",
+          "value": "netops-auto"
+        }
+      ],
+      "executionCount": 42,
+      "lastExecutedAt": "2026-10-02T07:15:00Z"
+    },
+    {
+      "id": "rule-002",
+      "name": "Escalate Critical Severity Incidents",
+      "description": "When priority is critical, add internal note and notify Helpdesk Manager.",
+      "organizationId": "org-lakhan-tech",
+      "enabled": true,
+      "order": 2,
+      "trigger": "ticket_created",
+      "conditions": [
+        {
+          "field": "priority",
+          "operator": "equals",
+          "value": "critical"
+        }
+      ],
+      "actions": [
+        {
+          "type": "add_internal_note",
+          "value": "[AUTO-ESCALATION]: Critical Sev-1 ticket created. Incident commander notified per P1 SLA Runbook."
+        },
+        {
+          "type": "add_tag",
+          "value": "p1-escalated"
+        }
+      ],
+      "executionCount": 14,
+      "lastExecutedAt": "2026-10-02T07:15:00Z"
+    }
+  ],
+  "emailChannels": [
+    {
+      "id": "chan-001",
+      "name": "Primary IT Helpdesk Inbound",
+      "emailAddress": "helpdesk@lakhanglobal.com",
+      "organizationId": "org-lakhan-tech",
+      "provider": "m365",
+      "incomingHost": "graph.microsoft.com (OAuth 2.0 Client Credentials)",
+      "outgoingHost": "smtp.office365.com (Port 587 STARTTLS)",
+      "status": "connected",
+      "lastPolledAt": "2026-10-02T09:40:00Z",
+      "queueDepth": 0,
+      "totalProcessed": 1420
+    },
+    {
+      "id": "chan-002",
+      "name": "VIP Executive Support Mailbox",
+      "emailAddress": "vip-support@lakhanglobal.com",
+      "organizationId": "org-lakhan-tech",
+      "provider": "imap_smtp",
+      "incomingHost": "imap.mail.lakhanglobal.com (Port 993 SSL)",
+      "outgoingHost": "smtp.mail.lakhanglobal.com (Port 465 SSL)",
+      "status": "connected",
+      "lastPolledAt": "2026-10-02T09:42:00Z",
+      "queueDepth": 0,
+      "totalProcessed": 184
+    }
+  ],
+  "auditLogs": [
+    {
+      "id": "aud-bootstrap",
+      "timestamp": "2026-01-01T00:00:00Z",
+      "actorId": "usr-superadmin",
+      "actorName": "Lakhan Prajapati",
+      "actorRole": "superadmin",
+      "action": "system.bootstrap",
+      "entityType": "setting",
+      "entityId": "org-lakhan-tech",
+      "details": "Production IT Helpdesk system initialized with foundational roles."
+    }
+  ],
+  "surveys": [],
+  "adminMailboxes": [
+    {
+      "userId": "usr-superadmin",
+      "userEmail": "admin@lakhanglobal.com",
+      "incomingProtocol": "imap",
+      "incomingHost": "imap.lakhanglobal.com",
+      "incomingPort": 993,
+      "incomingSecurity": "ssl",
+      "incomingUsername": "admin@lakhanglobal.com",
+      "outgoingProtocol": "smtp",
+      "outgoingHost": "smtp.lakhanglobal.com",
+      "outgoingPort": 587,
+      "outgoingSecurity": "starttls",
+      "outgoingUsername": "admin@lakhanglobal.com",
+      "fromName": "Lakhan Prajapati (Superadmin)",
+      "fromEmail": "admin@lakhanglobal.com",
+      "status": "connected",
+      "lastTestedAt": "2026-10-03T18:00:00Z"
+    }
+  ],
+  "defaultGatewayConfig": {
+    "incomingProtocol": "imap",
+    "incomingHost": "imap.lakhanglobal.com",
+    "incomingPort": 993,
+    "incomingSecurity": "ssl",
+    "incomingUsername": "helpdesk@lakhanglobal.com",
+    "outgoingProtocol": "smtp",
+    "outgoingHost": "smtp.lakhanglobal.com",
+    "outgoingPort": 587,
+    "outgoingSecurity": "starttls",
+    "outgoingUsername": "helpdesk@lakhanglobal.com",
+    "fromName": "IT Helpdesk Support",
+    "fromEmail": "helpdesk@lakhanglobal.com",
+    "replyToEmail": "helpdesk@lakhanglobal.com",
+    "subjectPrefix": "[ITL-{{ticketId}}]",
+    "status": "connected",
+    "lastTestedAt": "2026-10-03T19:00:00Z"
+  },
+  "otpRecords": [],
+  "currentUserId": "",
+  "nextTicketSequence": 110
+}

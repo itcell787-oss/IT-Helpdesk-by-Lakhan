@@ -17,6 +17,7 @@ import { SuperadminView } from './components/SuperadminView';
 import { NewTicketModal } from './components/NewTicketModal';
 import { CommandPalette } from './components/CommandPalette';
 import { AuthLoginModal } from './components/AuthLoginModal';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { api } from './services/api';
 import {
   Ticket,
@@ -97,6 +98,7 @@ export default function App() {
 
   // Active View Navigation - Default to end-user portal dashboard
   const [activeView, setActiveView] = useState<string>('portal');
+  const [portalInitialTab, setPortalInitialTab] = useState<'home' | 'submit' | 'my-tickets' | 'kb' | 'register' | 'my-assets'>('home');
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketDetailData, setTicketDetailData] = useState<{
     ticket: Ticket;
@@ -110,8 +112,9 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [loginModalPortalType, setLoginModalPortalType] = useState<'user' | 'admin'>('user');
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isMandatoryPasswordResetOpen, setIsMandatoryPasswordResetOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -130,6 +133,19 @@ export default function App() {
       setCurrentUser(session.user);
       setOrganization(session.organization);
       setAvailableUsers(session.availableUsers);
+
+      if (isInitial && session.user) {
+        if (session.user.role === 'requester') {
+          setActiveView('portal');
+          setPortalInitialTab('home');
+        } else {
+          setActiveView('dashboard');
+        }
+      }
+
+      if (session.user?.mustChangePassword) {
+        setIsMandatoryPasswordResetOpen(true);
+      }
 
       const [
         ticketsData,
@@ -222,6 +238,7 @@ export default function App() {
       showToast(`Impersonating ${res.user.name} (${res.user.role.toUpperCase()})`);
       if (res.user.role === 'requester') {
         setActiveView('portal');
+        setPortalInitialTab('home');
       }
       loadData();
     } catch (err: any) {
@@ -234,14 +251,35 @@ export default function App() {
       await api.logout();
       setCurrentUser(null);
       setActiveView('portal');
+      setPortalInitialTab('home');
       showToast('Signed out. You are now browsing as Guest.');
       loadData();
     } catch (err: any) {
       console.error('Logout error:', err);
       setCurrentUser(null);
       setActiveView('portal');
+      setPortalInitialTab('home');
     }
   };
+
+  // Role Guard: End-users (requesters) and guests should not see Console, full Tickets, CMDB Assets, or Settings
+  useEffect(() => {
+    if (!currentUser || currentUser.role === 'requester') {
+      if (activeView === 'dashboard') {
+        setActiveView('portal');
+        setPortalInitialTab('home');
+      } else if (activeView === 'tickets') {
+        setActiveView('portal');
+        setPortalInitialTab('my-tickets');
+      } else if (activeView === 'assets') {
+        setActiveView('portal');
+        setPortalInitialTab('my-assets');
+      } else if (['settings', 'superadmin', 'approvals', 'reports', 'email-channels', 'settings-profile', 'settings-mailbox'].includes(activeView)) {
+        setActiveView('portal');
+        setPortalInitialTab('home');
+      }
+    }
+  }, [currentUser, activeView]);
 
   const [previousTicketView, setPreviousTicketView] = useState<string>('tickets');
   const [ticketListPage, setTicketListPage] = useState<number>(() => {
@@ -287,8 +325,10 @@ export default function App() {
       setTickets((prev) => [created, ...prev]);
       showToast(`Ticket [${created.id}] successfully created!`);
       loadData();
+      return created;
     } catch (err: any) {
       alert(`Error creating ticket: ${err.message}`);
+      throw err;
     }
   };
 
@@ -404,7 +444,7 @@ export default function App() {
       showToast(`Asset [${created.id}] registered in CMDB!`);
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message || 'Failed creating asset');
     }
   };
 
@@ -415,7 +455,7 @@ export default function App() {
       showToast(`Asset [${assetId}] removed from CMDB.`);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed deleting asset');
+      showToast(err.message || 'Failed deleting asset');
     }
   };
 
@@ -427,7 +467,7 @@ export default function App() {
       loadData();
       return updated;
     } catch (err: any) {
-      alert(err.message || 'Failed updating asset');
+      showToast(err.message || 'Failed updating asset');
     }
   };
 
@@ -753,8 +793,8 @@ export default function App() {
     }
   };
 
-  const handleSimulateInboundEmail = async (from: string, subject: string, body: string) => {
-    const res = await api.simulateInboundEmail(from, subject, body);
+  const handleSimulateInboundEmail = async (from: string, subject: string, body: string, cc?: string, managerEmail?: string) => {
+    const res = await api.simulateInboundEmail(from, subject, body, cc, managerEmail);
     showToast(
       res.mode === 'threaded'
         ? `Inbound email threaded to [${res.ticket.id}]`
@@ -820,8 +860,21 @@ export default function App() {
         availableUsers={availableUsers}
         onSwitchUser={handleSwitchUser}
         activeView={activeView}
+        portalTab={portalInitialTab}
         onNavigate={(view) => {
-          if (view === 'settings-profile') {
+          if (view === 'portal-my-tickets') {
+            setPortalInitialTab('my-tickets');
+            setActiveView('portal');
+            setSelectedTicketId(null);
+          } else if (view === 'portal-my-assets') {
+            setPortalInitialTab('my-assets');
+            setActiveView('portal');
+            setSelectedTicketId(null);
+          } else if (view === 'portal' || view === 'portal-home') {
+            setPortalInitialTab('home');
+            setActiveView('portal');
+            setSelectedTicketId(null);
+          } else if (view === 'settings-profile') {
             setSettingsInitialTab('profile');
             setActiveView('settings');
             setSelectedTicketId(null);
@@ -830,6 +883,27 @@ export default function App() {
             setActiveView('settings');
             setSelectedTicketId(null);
           } else {
+            // Guard for requesters: prevent access to staff Console, Tickets, Assets & Inventory
+            if (currentUser?.role === 'requester') {
+              if (view === 'tickets') {
+                setPortalInitialTab('my-tickets');
+                setActiveView('portal');
+                setSelectedTicketId(null);
+                return;
+              }
+              if (view === 'assets') {
+                setPortalInitialTab('my-assets');
+                setActiveView('portal');
+                setSelectedTicketId(null);
+                return;
+              }
+              if (['dashboard', 'settings', 'superadmin', 'approvals', 'reports', 'email-channels'].includes(view)) {
+                setPortalInitialTab('home');
+                setActiveView('portal');
+                setSelectedTicketId(null);
+                return;
+              }
+            }
             setSelectedTicketId(null);
             setActiveView(view);
           }
@@ -1055,7 +1129,7 @@ export default function App() {
               />
             )}
 
-            {currentUser && activeView === 'ticket-detail' && ticketDetailData && (
+            {activeView === 'ticket-detail' && ticketDetailData && (
               <TicketDetailView
                 ticket={ticketDetailData.ticket}
                 comments={ticketDetailData.comments}
@@ -1066,7 +1140,7 @@ export default function App() {
                 currentUser={currentUser}
                 onBack={() => {
                   setSelectedTicketId(null);
-                  setActiveView(previousTicketView || 'tickets');
+                  setActiveView(previousTicketView && previousTicketView !== 'ticket-detail' ? previousTicketView : (currentUser?.role === 'requester' ? 'portal' : 'tickets'));
                 }}
                 onUpdateTicket={handleUpdateTicket}
                 onDeleteTicket={handleDeleteTicket}
@@ -1087,6 +1161,7 @@ export default function App() {
                 organization={organization}
                 organizations={organizations}
                 assets={assets}
+                initialTab={portalInitialTab}
                 allowRequesterAssetSelfService={systemSettings?.allowRequesterAssetSelfService ?? organization?.systemSettings?.allowRequesterAssetSelfService ?? true}
                 onCreateAsset={handleCreateAsset}
                 onUpdateAsset={handleUpdateAsset}
@@ -1098,6 +1173,10 @@ export default function App() {
                 onSubmitSurvey={handleSubmitSurvey}
                 onSubmitTicket={handleCreateTicket}
                 onUserRegistered={handleUserRegistered}
+                onOpenLogin={(type) => {
+                  setLoginModalPortalType(type || 'user');
+                  setIsLoginModalOpen(true);
+                }}
               />
             )}
 
@@ -1250,6 +1329,9 @@ export default function App() {
                 users={availableUsers}
                 catalogItems={serviceCatalog}
                 stats={superadminStats}
+                defaultGateway={defaultGateway || fallbackGateway}
+                onSaveDefaultGateway={handleSaveDefaultGateway}
+                onTestDefaultGateway={handleTestDefaultGateway}
                 onCreateOrganization={handleCreateOrganization}
                 onUpdateOrganization={handleUpdateOrganization}
                 onDeleteOrganization={handleDeleteOrganization}
@@ -1286,11 +1368,16 @@ export default function App() {
         onLoginSuccess={(user) => {
           setCurrentUser(user);
           setIsLoginModalOpen(false);
-          showToast(`Welcome back, ${user.name}!`);
-          if (user.role === 'requester') {
-            setActiveView('portal');
+          if (user.mustChangePassword) {
+            setIsMandatoryPasswordResetOpen(true);
+            showToast(`Welcome ${user.name}! Please set a new password for Super Admin.`);
           } else {
-            setActiveView('dashboard');
+            showToast(`Welcome back, ${user.name}!`);
+            if (user.role === 'requester') {
+              setActiveView('portal');
+            } else {
+              setActiveView('dashboard');
+            }
           }
           loadData();
         }}
@@ -1304,6 +1391,27 @@ export default function App() {
         }}
       />
 
+      {/* Mandatory First-Time Super Admin Password Setup */}
+      {currentUser && (
+        <ChangePasswordModal
+          isOpen={isMandatoryPasswordResetOpen || Boolean(currentUser?.mustChangePassword)}
+          onClose={() => {
+            if (!currentUser?.mustChangePassword) {
+              setIsMandatoryPasswordResetOpen(false);
+            }
+          }}
+          currentUser={currentUser}
+          isMandatoryFirstTime={Boolean(currentUser?.mustChangePassword)}
+          onSuccess={(newPassword) => {
+            setIsMandatoryPasswordResetOpen(false);
+            setCurrentUser((prev) => (prev ? { ...prev, password: newPassword, mustChangePassword: false } : null));
+            showToast('New Super Admin password established successfully! Welcome to the Management Console.');
+            setActiveView('dashboard');
+            loadData();
+          }}
+        />
+      )}
+
       {/* Command Palette Modal (⌘K) */}
       <CommandPalette
         isOpen={isCommandPaletteOpen}
@@ -1311,10 +1419,39 @@ export default function App() {
         tickets={tickets}
         assets={assets}
         articles={knowledgeArticles}
+        currentUser={currentUser}
         onSelectTicket={handleSelectTicket}
         onNavigate={(v) => {
-          setSelectedTicketId(null);
-          setActiveView(v);
+          if (v === 'portal-my-tickets') {
+            setPortalInitialTab('my-tickets');
+            setActiveView('portal');
+            setSelectedTicketId(null);
+          } else if (v === 'portal-my-assets') {
+            setPortalInitialTab('my-assets');
+            setActiveView('portal');
+            setSelectedTicketId(null);
+          } else if (v === 'portal') {
+            setPortalInitialTab('home');
+            setActiveView('portal');
+            setSelectedTicketId(null);
+          } else {
+            if (currentUser?.role === 'requester') {
+              if (v === 'tickets') {
+                setPortalInitialTab('my-tickets');
+                setActiveView('portal');
+                setSelectedTicketId(null);
+                return;
+              }
+              if (v === 'assets') {
+                setPortalInitialTab('my-assets');
+                setActiveView('portal');
+                setSelectedTicketId(null);
+                return;
+              }
+            }
+            setSelectedTicketId(null);
+            setActiveView(v);
+          }
         }}
         onOpenNewTicket={() => setIsNewTicketOpen(true)}
         onOpenEmailSimulator={() => setActiveView('email-channels')}

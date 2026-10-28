@@ -64,19 +64,17 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
     setError(null);
 
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: email.trim(),
-          password: password.trim(),
-          portalType: activeTab === 'admin' ? 'admin' : 'user',
-        }),
+      const data = await api.login({
+        email: email.trim(),
+        password: password.trim(),
+        portalType: activeTab === 'admin' ? 'admin' : 'user',
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed. Please check your credentials.');
+      if (data.sessionToken) {
+        try {
+          localStorage.setItem('it_helpdesk_session_token', data.sessionToken);
+          localStorage.setItem('it_helpdesk_user_id', data.user.id);
+        } catch {}
       }
 
       onLoginSuccess(data.user);
@@ -114,6 +112,13 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
         psk: pskKey.trim(),
         newPassword: pskNewPassword.trim(),
       });
+
+      if ((data as any).sessionToken) {
+        try {
+          localStorage.setItem('it_helpdesk_session_token', (data as any).sessionToken);
+          localStorage.setItem('it_helpdesk_user_id', data.user.id);
+        } catch {}
+      }
 
       setSuccessMsg('✓ Password configured successfully! Authenticating your session...');
       setTimeout(() => {
@@ -324,7 +329,7 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
 
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                {activeTab === 'admin' ? 'Admin ID or Staff Work Email' : 'Employee ID or Work Email'}
+                {activeTab === 'admin' ? 'Admin Username, ID or Staff Email' : 'Employee ID or Work Email'}
               </label>
               <div className="relative">
                 <input
@@ -333,7 +338,7 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder={
                     activeTab === 'admin'
-                      ? 'e.g. lakhan.superadmin@ithelpdesk.com'
+                      ? 'e.g. admin or lakhan.superadmin@ithelpdesk.com'
                       : 'e.g. yourname@company.com'
                   }
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-900/80 border border-slate-300 dark:border-white/10 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 font-medium"
@@ -341,6 +346,27 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
                 />
               </div>
             </div>
+
+            {activeTab === 'admin' && (
+              <div className="p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800/40 text-violet-800 dark:text-violet-300 text-[11px] flex items-center justify-between">
+                <div>
+                  <span className="font-bold">Initial Host Super Admin:</span>{' '}
+                  <code className="font-mono font-bold bg-white/70 dark:bg-slate-900/70 px-1 py-0.5 rounded">admin</code>
+                  {' / '}
+                  <code className="font-mono font-bold bg-white/70 dark:bg-slate-900/70 px-1 py-0.5 rounded">L@khan@123</code>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('admin');
+                    setPassword('L@khan@123');
+                  }}
+                  className="font-bold text-violet-700 dark:text-violet-300 underline hover:opacity-80 cursor-pointer ml-2 shrink-0"
+                >
+                  Quick Fill
+                </button>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">

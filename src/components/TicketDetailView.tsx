@@ -27,9 +27,13 @@ import {
   CheckCheck,
   MapPin,
   Star,
+  Forward,
+  Mail,
+  Users,
 } from 'lucide-react';
 import { Ticket, TicketComment, TaskItem, WorkLog, AuditLog, User as UserType, formatUserBadge } from '../types';
 import { SlaCountdownBadge } from './SlaCountdownBadge';
+import { generateTicketPdf } from '../utils/ticketPdfGenerator';
 
 interface TicketDetailViewProps {
   ticket: Ticket;
@@ -38,7 +42,7 @@ interface TicketDetailViewProps {
   workLogs: WorkLog[];
   auditLogs: AuditLog[];
   users: UserType[];
-  currentUser: UserType;
+  currentUser?: UserType | null;
   onBack: () => void;
   onUpdateTicket: (id: string, updates: Partial<Ticket>) => void;
   onAddComment: (ticketId: string, content: string, isInternal: boolean, attachments?: any[]) => void;
@@ -75,8 +79,68 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
   const [resolutionSummary, setResolutionSummary] = useState(ticket.resolutionSummary || '');
   const [showResolveModal, setShowResolveModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [showSlaModal, setShowSlaModal] = useState(false);
+  const [superadminSlaStatus, setSuperadminSlaStatus] = useState<any>(ticket.slaStatusOverride || ticket.slaStatus);
+  const [superadminSlaDeadline, setSuperadminSlaDeadline] = useState(
+    ticket.slaResolutionDeadline ? new Date(ticket.slaResolutionDeadline).toISOString().slice(0, 16) : ''
+  );
+  const [superadminSlaReason, setSuperadminSlaReason] = useState(ticket.slaOverrideReason || ticket.slaBreachReason || '');
   const [commentAttachments, setCommentAttachments] = useState<Array<{ id: string; name: string; size: number; type: string; url: string; }>>([]);
   const [previewModalImg, setPreviewModalImg] = useState<{ url: string; name: string } | null>(null);
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [printToast, setPrintToast] = useState<string | null>(null);
+  const [showForwardModal, setShowForwardModal] = useState(false);
+  const [forwardManagerEmail, setForwardManagerEmail] = useState(ticket.managerEmail || '');
+  const [forwardCcRecipients, setForwardCcRecipients] = useState((ticket.ccRecipients || []).join(', '));
+  const [forwardToast, setForwardToast] = useState<string | null>(null);
+
+  const handlePrintTicket = () => {
+    setIsPrinting(true);
+    try {
+      const res = generateTicketPdf({
+        ticket,
+        comments,
+        tasks,
+        workLogs,
+        users,
+        organizationName: 'Lakhan Tech IT Helpdesk',
+        triggerBrowserPrint: true,
+      });
+
+      if (res.success) {
+        setPrintToast(`✓ Ticket PDF generated & saved! (${res.filename})`);
+      } else {
+        setPrintToast('✓ Print requested.');
+      }
+      setTimeout(() => setPrintToast(null), 4000);
+    } catch (err: any) {
+      console.error('Print ticket failed:', err);
+      try {
+        window.print();
+      } catch (e) {
+        setPrintToast('Could not print in current browser frame.');
+      }
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
+  const handleSaveSuperadminSla = () => {
+    if (!currentUser || currentUser.role !== 'superadmin') return;
+    onUpdateTicket(ticket.id, {
+      slaStatus: superadminSlaStatus,
+      slaStatusOverride: superadminSlaStatus,
+      slaResolutionDeadline: superadminSlaDeadline ? new Date(superadminSlaDeadline).toISOString() : ticket.slaResolutionDeadline,
+      slaOverrideReason: superadminSlaReason,
+      slaBreachReason: superadminSlaReason || (superadminSlaStatus === 'breached' ? 'Manually flagged as Breached by Superadmin' : undefined),
+      slaBreachOverridden: true,
+      slaOverriddenBy: currentUser.name,
+      slaOverriddenAt: new Date().toISOString(),
+    });
+    setShowSlaModal(false);
+    setPrintToast(`✓ SLA updated to "${superadminSlaStatus.toUpperCase()}" by Superadmin`);
+    setTimeout(() => setPrintToast(null), 3500);
+  };
 
   const matchedRequester = users.find((u) => u.email === ticket.requesterEmail || u.id === ticket.requesterId);
   const requesterEmpCode = ticket.requesterEmployeeCode || matchedRequester?.employeeCode || (ticket.requesterName?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1001');
@@ -94,11 +158,13 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
 
         const currentTotal = commentAttachments.reduce((acc, a) => acc + (a.size || 0), 0);
         if (commentAttachments.length >= 4) {
-          alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+          setPrintToast('⚠️ Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+          setTimeout(() => setPrintToast(null), 4000);
           return;
         }
         if (currentTotal + file.size > 2 * 1024 * 1024) {
-          alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (Current: ${(currentTotal / 1024 / 1024).toFixed(2)} MB)`);
+          setPrintToast(`⚠️ Attachment limit exceeded: Total attachments cannot exceed 2 MB. (Current: ${(currentTotal / 1024 / 1024).toFixed(2)} MB)`);
+          setTimeout(() => setPrintToast(null), 4000);
           return;
         }
 
@@ -133,11 +199,13 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (count >= 4) {
-        alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+        setPrintToast('⚠️ Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+        setTimeout(() => setPrintToast(null), 4000);
         break;
       }
       if (currentTotal + file.size > 2 * 1024 * 1024) {
-        alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (${file.name} would exceed limit)`);
+        setPrintToast(`⚠️ Attachment limit exceeded: Total attachments cannot exceed 2 MB. (${file.name} would exceed limit)`);
+        setTimeout(() => setPrintToast(null), 4000);
         break;
       }
       currentTotal += file.size;
@@ -168,7 +236,9 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
   };
 
   // Strict Rule: Technician & basic users can only manage tickets, NO deletion of tickets
-  const canDelete = currentUser.role === 'superadmin' || currentUser.role === 'admin';
+  const canDelete = currentUser ? (currentUser.role === 'superadmin' || currentUser.role === 'admin') : false;
+  const isManager = currentUser?.role === 'manager';
+  const isRequester = !currentUser || currentUser.role === 'requester';
 
   // Business Rule: Requesters & Auditors cannot be assigned tickets.
   // Only technicians, managers, admins, and superadmins are assignable.
@@ -213,7 +283,7 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
     setNewTaskTitle('');
   };
 
-  // Handle resolve submit with closure validation
+  // Handle resolve submit with closure validation & post-SLA breach enforcement
   const handleConfirmResolve = () => {
     if (!resolutionCode) {
       setErrorMessage('Resolution code is required before resolving.');
@@ -223,10 +293,19 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
       setErrorMessage('Please provide a brief resolution summary for knowledge retention.');
       return;
     }
+    const resolvedAtNow = new Date().toISOString();
+    const resolutionDeadlineMs = ticket.slaResolutionDeadline ? new Date(ticket.slaResolutionDeadline).getTime() : 0;
+    const isPastSla = resolutionDeadlineMs > 0 && Date.now() > resolutionDeadlineMs;
+
     onUpdateTicket(ticket.id, {
       status: 'resolved',
+      resolvedAt: resolvedAtNow,
       resolutionCode,
       resolutionSummary,
+      ...(isPastSla && !ticket.slaStatusOverride ? {
+        slaStatus: 'breached',
+        slaBreachReason: `SLA Breached: Ticket was resolved after the resolution timer had expired (${Math.round((Date.now() - resolutionDeadlineMs) / (60 * 1000))} min overdue).`,
+      } : {}),
     });
     setShowResolveModal(false);
     setErrorMessage('');
@@ -286,6 +365,21 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Floating Action/Print Toast */}
+      {printToast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-2xl border border-slate-700/50 dark:border-slate-200 animate-in slide-in-from-bottom-3 duration-200">
+          <Printer className="w-4 h-4 text-cyan-400 dark:text-cyan-600 shrink-0" />
+          <span className="text-xs font-semibold">{printToast}</span>
+          <button
+            type="button"
+            onClick={() => setPrintToast(null)}
+            className="ml-2 text-slate-400 hover:text-white dark:hover:text-slate-900"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
@@ -352,11 +446,13 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
 
           <button
             type="button"
-            onClick={() => window.print()}
-            className="neu-btn flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 rounded-lg cursor-pointer whitespace-nowrap hover:bg-slate-100 dark:hover:bg-white/5 shadow-xs"
-            title="Print ticket audit report with attachments & comments"
+            onClick={handlePrintTicket}
+            disabled={isPrinting}
+            className="neu-btn flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 rounded-lg cursor-pointer whitespace-nowrap hover:bg-slate-100 dark:hover:bg-white/5 shadow-xs transition-all hover:scale-[1.02]"
+            title="Print ticket audit report or download official PDF document"
           >
-            <Printer className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" /> Print Ticket
+            <Printer className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+            <span>{isPrinting ? 'Generating PDF...' : 'Print Ticket'}</span>
           </button>
 
           {canDelete && onDeleteTicket && (
@@ -839,10 +935,37 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               </div>
             </div>
 
+            {ticket.slaBreachOverridden && (
+              <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800/40 text-[11px] text-violet-800 dark:text-violet-300 flex items-center justify-between">
+                <span className="font-semibold flex items-center gap-1">
+                  <Shield className="w-3 h-3 text-violet-600 dark:text-violet-400" /> Superadmin Override Applied
+                </span>
+                <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">by {ticket.slaOverriddenBy || 'Superadmin'}</span>
+              </div>
+            )}
+
             {ticket.slaBreachReason && (
               <div className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold italic">
                 SLA Breach Note: {ticket.slaBreachReason}
               </div>
+            )}
+
+            {currentUser?.role === 'superadmin' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSuperadminSlaStatus(ticket.slaStatusOverride || ticket.slaStatus);
+                  setSuperadminSlaDeadline(
+                    ticket.slaResolutionDeadline ? new Date(ticket.slaResolutionDeadline).toISOString().slice(0, 16) : ''
+                  );
+                  setSuperadminSlaReason(ticket.slaOverrideReason || ticket.slaBreachReason || '');
+                  setShowSlaModal(true);
+                }}
+                className="w-full py-2 px-3 text-xs font-bold rounded-xl text-violet-700 dark:text-violet-300 bg-violet-100/70 dark:bg-violet-950/40 border border-violet-300 dark:border-violet-500/30 hover:bg-violet-200 dark:hover:bg-violet-900/40 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Shield className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
+                <span>Superadmin SLA Override &amp; Timers</span>
+              </button>
             )}
           </div>
 
@@ -905,72 +1028,95 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                   {ticket.status.replace(/_/g, ' ')}
                 </span>
               </div>
-              <select
-                value={ticket.status}
-                onChange={(e) => {
-                  const val = e.target.value as any;
-                  if (val === 'resolved') {
-                    setShowResolveModal(true);
-                  } else {
-                    onUpdateTicket(ticket.id, { status: val });
-                  }
-                }}
-                className="w-full px-2.5 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 mb-2 cursor-pointer"
-              >
-                <option value="new">New</option>
-                <option value="open">Open</option>
-                <option value="in_progress">In Progress</option>
-                <option value="pending_requester">Pending Requester (Paused SLA)</option>
-                <option value="waiting_approval">Waiting Approval</option>
-                <option value="on_hold">On Hold</option>
-                <option value="resolved">Resolved</option>
-                <option value="closed">Closed</option>
-              </select>
-
-              {/* Quick Resolve & Close Action Buttons in Status Field */}
-              <div className="grid grid-cols-2 gap-1.5">
-                {ticket.status !== 'resolved' ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowResolveModal(true)}
-                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs cursor-pointer transition-colors"
-                    title="Mark ticket as resolved with resolution summary"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Resolve</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => onUpdateTicket(ticket.id, { status: 'in_progress' })}
-                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white cursor-pointer transition-colors"
-                    title="Reopen ticket to In Progress"
-                  >
-                    <span>Reopen</span>
-                  </button>
-                )}
-
-                {ticket.status !== 'closed' ? (
+              {isManager ? (
+                ticket.status !== 'closed' ? (
                   <button
                     type="button"
                     onClick={() => onUpdateTicket(ticket.id, { status: 'closed' })}
-                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white shadow-xs cursor-pointer transition-colors"
-                    title="Permanently close ticket"
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white shadow-xs cursor-pointer transition-colors"
                   >
                     <CheckCheck className="w-3.5 h-3.5" />
-                    <span>Close</span>
+                    <span>Close Ticket (Manager Action)</span>
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => onUpdateTicket(ticket.id, { status: 'open' })}
-                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg neu-btn text-slate-800 dark:text-slate-200 cursor-pointer"
-                    title="Reopen closed ticket"
+                  <div className="p-2 text-center text-xs font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-white/10">
+                    Ticket Closed
+                  </div>
+                )
+              ) : isRequester ? (
+                <div className="p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-white/10">
+                  {ticket.status.replace(/_/g, ' ').toUpperCase()}
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={ticket.status}
+                    onChange={(e) => {
+                      const val = e.target.value as any;
+                      if (val === 'resolved') {
+                        setShowResolveModal(true);
+                      } else {
+                        onUpdateTicket(ticket.id, { status: val });
+                      }
+                    }}
+                    className="w-full px-2.5 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 mb-2 cursor-pointer"
                   >
-                    <span>Reopen</span>
-                  </button>
-                )}
-              </div>
+                    <option value="new">New</option>
+                    <option value="open">Open</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="pending_requester">Pending Requester (Paused SLA)</option>
+                    <option value="waiting_approval">Waiting Approval</option>
+                    <option value="on_hold">On Hold</option>
+                    <option value="resolved">Resolved</option>
+                    <option value="closed">Closed</option>
+                  </select>
+
+                  {/* Quick Resolve & Close Action Buttons in Status Field */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {ticket.status !== 'resolved' ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowResolveModal(true)}
+                        className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs cursor-pointer transition-colors"
+                        title="Mark ticket as resolved with resolution summary"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Resolve</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTicket(ticket.id, { status: 'in_progress' })}
+                        className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white cursor-pointer transition-colors"
+                        title="Reopen ticket to In Progress"
+                      >
+                        <span>Reopen</span>
+                      </button>
+                    )}
+
+                    {ticket.status !== 'closed' ? (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTicket(ticket.id, { status: 'closed' })}
+                        className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white shadow-xs cursor-pointer transition-colors"
+                        title="Permanently close ticket"
+                      >
+                        <CheckCheck className="w-3.5 h-3.5" />
+                        <span>Close</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateTicket(ticket.id, { status: 'open' })}
+                        className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg neu-btn text-slate-800 dark:text-slate-200 cursor-pointer"
+                        title="Reopen closed ticket"
+                      >
+                        <span>Reopen</span>
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Location / Desk No (Mandatory Field as in Asset & Inventory) */}
@@ -993,28 +1139,34 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
             {/* Priority */}
             <div>
               <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">Priority</label>
-              <select
-                value={ticket.priority}
-                onChange={(e) => onUpdateTicket(ticket.id, { priority: e.target.value as any })}
-                className="w-full px-2.5 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500"
-              >
-                <option value="low">Low</option>
-                <option value="normal">Normal</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-                <option value="critical">Critical</option>
-              </select>
+              {isManager || isRequester ? (
+                <div className="px-3 py-1.5 text-xs font-bold uppercase rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-slate-800 dark:text-slate-200">
+                  {ticket.priority}
+                </div>
+              ) : (
+                <select
+                  value={ticket.priority}
+                  onChange={(e) => onUpdateTicket(ticket.id, { priority: e.target.value as any })}
+                  className="w-full px-2.5 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="low">Low</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                  <option value="critical">Critical</option>
+                </select>
+              )}
             </div>
 
             {/* Assignee Technician */}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300">Assigned Technician</label>
-                {currentUser.role !== 'requester' && (
+                {currentUser && currentUser.role !== 'requester' && (
                   <span className="text-[10px] text-cyan-700 dark:text-cyan-400 font-semibold">IT Staff Only</span>
                 )}
               </div>
-              {currentUser.role === 'requester' ? (
+              {isManager || isRequester ? (
                 <div className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-slate-800 dark:text-slate-200 flex items-center justify-between">
                   <span className="font-bold">
                     {(() => {
@@ -1112,8 +1264,156 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               </div>
             )}
           </div>
+
+          {/* CC Recipients & Manager Forwarding (User Request) */}
+          <div className="neu-flat p-5 rounded-xl border border-slate-200 dark:border-white/10 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <Forward className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                <span>Manager Forward &amp; CC</span>
+              </h3>
+              {ticket.forwardedToManager && (
+                <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                  Forwarded ✓
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="p-2.5 rounded-lg neu-inset bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 space-y-1">
+                <div className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400">
+                  Manager Email
+                </div>
+                <div className="font-mono font-bold text-slate-900 dark:text-slate-100 truncate">
+                  {ticket.managerEmail || <span className="text-slate-400 font-normal italic">None specified</span>}
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg neu-inset bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 space-y-1">
+                <div className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400">
+                  CC Recipients ({ticket.ccRecipients?.length || 0})
+                </div>
+                {ticket.ccRecipients && ticket.ccRecipients.length > 0 ? (
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {ticket.ccRecipients.map((em, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 text-cyan-700 dark:text-cyan-300"
+                      >
+                        {em}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-slate-400 italic text-[11px]">No additional CC recipients.</div>
+                )}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setForwardManagerEmail(ticket.managerEmail || '');
+                setForwardCcRecipients((ticket.ccRecipients || []).join(', '));
+                setShowForwardModal(true);
+              }}
+              className="w-full py-2 px-3 text-xs font-bold rounded-xl text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800/40 hover:bg-cyan-100 dark:hover:bg-cyan-900/40 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+            >
+              <Forward className="w-3.5 h-3.5" />
+              <span>Forward to Manager / Update CC</span>
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Modal: Forward to Manager & CC Configuration */}
+      {showForwardModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md neu-modal p-6 rounded-2xl border border-slate-200 dark:border-white/15 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-white/10">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Forward className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                Forward Ticket to Manager &amp; CC
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowForwardModal(false)}
+                className="p-1 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+              Specify your manager's email to automatically forward a copy of this ticket with ongoing updates, and add any other colleagues on CC.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Manager Email Address
+                </label>
+                <input
+                  type="email"
+                  placeholder="manager@company.com"
+                  value={forwardManagerEmail}
+                  onChange={(e) => setForwardManagerEmail(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Additional CC Recipients (Comma-separated)
+                </label>
+                <input
+                  type="text"
+                  placeholder="lead@company.com, colleague@company.com"
+                  value={forwardCcRecipients}
+                  onChange={(e) => setForwardCcRecipients(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowForwardModal(false)}
+                className="neu-btn px-4 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const cleanedCc = forwardCcRecipients
+                    ? forwardCcRecipients.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
+                    : [];
+                  onUpdateTicket(ticket.id, {
+                    managerEmail: forwardManagerEmail.trim() || undefined,
+                    ccRecipients: cleanedCc,
+                    forwardedToManager: Boolean(forwardManagerEmail.trim()),
+                  });
+                  setShowForwardModal(false);
+                  setForwardToast('✓ Ticket forwarded to manager and CC updated!');
+                  setTimeout(() => setForwardToast(null), 3500);
+                }}
+                className="neu-btn-primary px-4 py-1.5 text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Save &amp; Forward
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forward Toast notification */}
+      {forwardToast && (
+        <div className="fixed bottom-6 right-6 z-50 glass-modal px-4 py-2.5 rounded-xl border border-emerald-500/50 shadow-2xl flex items-center gap-2 text-xs font-bold text-emerald-200 animate-in fade-in">
+          <span>{forwardToast}</span>
+        </div>
+      )}
 
       {/* Modal: Resolve with mandatory fields */}
       {showResolveModal && (
@@ -1275,6 +1575,91 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                 alt={previewModalImg.name}
                 className="max-h-[76vh] w-auto max-w-full object-contain rounded-xl select-none"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Superadmin SLA Modification */}
+      {showSlaModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md neu-modal p-6 rounded-2xl border border-violet-500/30 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-white/10">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Shield className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                Superadmin SLA Modification &amp; Override
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowSlaModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800/40 text-xs text-violet-900 dark:text-violet-300">
+              As Superadmin, you have administrative authority to override the SLA breach status, adjust the resolution target timer, or record official deadline extensions.
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  SLA Status Override
+                </label>
+                <select
+                  value={superadminSlaStatus}
+                  onChange={(e) => setSuperadminSlaStatus(e.target.value as any)}
+                  className="w-full px-3 py-2 neu-input rounded-lg font-bold"
+                >
+                  <option value="within_target">within_target (Target Met / SLA Compliant)</option>
+                  <option value="warning">warning (Approaching SLA Deadline)</option>
+                  <option value="breached">breached (SLA Breached / Overdue)</option>
+                  <option value="paused">paused (Paused / Awaiting Response)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Resolution Target Deadline
+                </label>
+                <input
+                  type="datetime-local"
+                  value={superadminSlaDeadline}
+                  onChange={(e) => setSuperadminSlaDeadline(e.target.value)}
+                  className="w-full px-3 py-2 neu-input rounded-lg font-mono font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Superadmin Justification / Audit Note
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. Vendor delivery delay approved by Superadmin, SLA breach excused due to power outage..."
+                  value={superadminSlaReason}
+                  onChange={(e) => setSuperadminSlaReason(e.target.value)}
+                  className="w-full p-2.5 neu-input rounded-lg font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowSlaModal(false)}
+                className="neu-btn px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 rounded-lg cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSuperadminSla}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg text-white bg-violet-600 hover:bg-violet-500 shadow-sm cursor-pointer"
+              >
+                Apply SLA Modification
+              </button>
             </div>
           </div>
         </div>

@@ -17,12 +17,34 @@ import {
   SatisfactionSurvey,
   MailboxConnectionConfig,
   DefaultEmailGatewayConfig,
+  Team,
 } from '../types';
 
+function getSessionToken(): string {
+  try {
+    return localStorage.getItem('it_helpdesk_session_token') || '';
+  } catch {
+    return '';
+  }
+}
+
+function getStoredUserId(): string {
+  try {
+    return localStorage.getItem('it_helpdesk_user_id') || '';
+  } catch {
+    return '';
+  }
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const token = getSessionToken();
+  const userId = getStoredUserId();
+
   const res = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { 'x-session-token': token } : {}),
+      ...(userId ? { 'x-user-id': userId } : {}),
       ...options?.headers,
     },
     ...options,
@@ -37,35 +59,75 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  // Session & Auth
-  async getSession(): Promise<{ user: User | null; organization: Organization; availableUsers: User[] }> {
-    return request('/api/session');
+  // Session & Auth (Isolated per client device / PC)
+  async getSession(): Promise<{ user: User | null; organization: Organization; availableUsers: User[]; sessionToken?: string | null }> {
+    const data = await request<{ user: User | null; organization: Organization; availableUsers: User[]; sessionToken?: string | null }>('/api/session');
+    if (data.sessionToken) {
+      try {
+        localStorage.setItem('it_helpdesk_session_token', data.sessionToken);
+        if (data.user?.id) {
+          localStorage.setItem('it_helpdesk_user_id', data.user.id);
+        }
+      } catch {}
+    } else if (!data.user) {
+      try {
+        localStorage.removeItem('it_helpdesk_session_token');
+        localStorage.removeItem('it_helpdesk_user_id');
+      } catch {}
+    }
+    return data;
   },
 
-  async login(payload: { email: string; password?: string; portalType?: 'user' | 'admin' }): Promise<{ user: User; organization: Organization }> {
-    return request('/api/auth/login', {
+  async login(payload: { email: string; password?: string; portalType?: 'user' | 'admin' }): Promise<{ user: User; organization: Organization; sessionToken?: string }> {
+    const data = await request<{ user: User; organization: Organization; sessionToken?: string }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    if (data.sessionToken) {
+      try {
+        localStorage.setItem('it_helpdesk_session_token', data.sessionToken);
+        localStorage.setItem('it_helpdesk_user_id', data.user.id);
+      } catch {}
+    }
+    return data;
   },
 
   async logout(): Promise<{ success: boolean }> {
-    return request('/api/auth/logout', {
+    try {
+      await request('/api/auth/logout', {
+        method: 'POST',
+      });
+    } finally {
+      try {
+        localStorage.removeItem('it_helpdesk_session_token');
+        localStorage.removeItem('it_helpdesk_user_id');
+      } catch {}
+    }
+    return { success: true };
+  },
+
+  async switchUser(userId: string): Promise<{ user: User; organization: Organization; sessionToken?: string }> {
+    const data = await request<{ user: User; organization: Organization; sessionToken?: string }>('/api/session/switch', {
       method: 'POST',
+      body: JSON.stringify({ userId }),
     });
+    if (data.sessionToken) {
+      try {
+        localStorage.setItem('it_helpdesk_session_token', data.sessionToken);
+        localStorage.setItem('it_helpdesk_user_id', data.user.id);
+      } catch {}
+    }
+    return data;
+  },
+
+  async getSystemStatus(): Promise<any> {
+    return request('/api/system/status');
   },
 
   async updateUserPrivileges(userId: string, privileges: Partial<User['privileges']>): Promise<User> {
     return request(`/api/users/${userId}/privileges`, {
       method: 'PATCH',
       body: JSON.stringify(privileges),
-    });
-  },
-
-  async switchUser(userId: string): Promise<{ user: User; organization: Organization }> {
-    return request('/api/session/switch', {
-      method: 'POST',
-      body: JSON.stringify({ userId }),
     });
   },
 
@@ -444,10 +506,10 @@ export const api = {
     return request('/api/email-channels');
   },
 
-  async simulateInboundEmail(from: string, subject: string, body: string): Promise<{ mode: string; ticket: Ticket }> {
+  async simulateInboundEmail(from: string, subject: string, body: string, cc?: string, managerEmail?: string): Promise<{ mode: string; ticket: Ticket; comment?: any }> {
     return request('/api/email/simulate-inbound', {
       method: 'POST',
-      body: JSON.stringify({ from, subject, body }),
+      body: JSON.stringify({ from, subject, body, cc, managerEmail }),
     });
   },
 
@@ -587,4 +649,30 @@ export const api = {
       body: JSON.stringify({ assets }),
     });
   },
+
+  // Teams & Requester Groups
+  async getTeams(): Promise<Team[]> {
+    return request('/api/teams');
+  },
+
+  async createTeam(payload: Partial<Team>): Promise<Team> {
+    return request('/api/teams', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateTeam(id: string, payload: Partial<Team>): Promise<Team> {
+    return request(`/api/teams/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteTeam(id: string): Promise<{ success: boolean; deletedTeamId: string }> {
+    return request(`/api/teams/${id}`, {
+      method: 'DELETE',
+    });
+  },
 };
+

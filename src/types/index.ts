@@ -1,4 +1,4 @@
-export type UserRole = 'superadmin' | 'admin' | 'manager' | 'technician' | 'requester' | 'auditor';
+export type UserRole = 'superadmin' | 'admin' | 'manager' | 'technician' | 'requester' | 'auditor' | 'inventory_manager';
 
 export interface AdminPrivileges {
   canManageTickets: boolean;
@@ -23,14 +23,19 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  username?: string; // e.g. "admin"
   employeeCode?: string; // e.g. "CBPL2045"
   password?: string;
+  mustChangePassword?: boolean; // Force password change on first-time login
   role: UserRole;
   title?: string;
   avatar?: string;
   organizationId: string;
   departmentId?: string;
   team?: string;
+  groupId?: string;
+  groupName?: string;
+  managerId?: string;
   locationId?: string;
   phone?: string;
   status: 'active' | 'suspended' | 'invited';
@@ -57,6 +62,7 @@ export interface Organization {
     logoTemplate?: 'round' | 'square' | 'rectangle';
     logoWidth?: number;
     logoHeight?: number;
+    subtitle?: string;
   };
   systemSettings?: SystemSettings;
   preSharedKey?: string;
@@ -84,7 +90,10 @@ export interface Team {
   name: string;
   organizationId: string;
   leaderId?: string;
-  members: string[]; // user IDs
+  managerId?: string;
+  managerName?: string;
+  managerEmail?: string;
+  members: string[]; // user IDs (assigned requesters)
   color?: string;
 }
 
@@ -137,6 +146,8 @@ export interface Ticket {
   
   followers: string[];
   ccRecipients: string[];
+  managerEmail?: string;
+  forwardedToManager?: boolean;
   
   createdAt: string;
   updatedAt: string;
@@ -160,6 +171,11 @@ export interface Ticket {
   slaFirstResponseDeadline: string;
   slaResolutionDeadline: string;
   slaBreachReason?: string;
+  slaStatusOverride?: SlaStatus;
+  slaBreachOverridden?: boolean;
+  slaOverrideReason?: string;
+  slaOverriddenBy?: string;
+  slaOverriddenAt?: string;
   
   linkedTicketIds?: string[];
   satisfactionRating?: {

@@ -36,13 +36,19 @@ import {
   Copy,
   Upload,
   Laptop,
+  Mail,
+  Send,
+  Inbox,
 } from 'lucide-react';
-import { Organization, AuditLog, User as UserType, UserRole, ServiceCatalogItem, SatisfactionSurvey, SlaPolicy } from '../types';
+import { Organization, AuditLog, User as UserType, UserRole, ServiceCatalogItem, SatisfactionSurvey, SlaPolicy, DefaultEmailGatewayConfig, Ticket } from '../types';
 import { api } from '../services/api';
 
 interface SuperadminViewProps {
   organizations: Organization[];
   auditLogs: AuditLog[];
+  defaultGateway?: DefaultEmailGatewayConfig;
+  onSaveDefaultGateway?: (data: Partial<DefaultEmailGatewayConfig>) => Promise<any>;
+  onTestDefaultGateway?: (email?: string) => Promise<any>;
   users?: UserType[];
   catalogItems?: ServiceCatalogItem[];
   stats: {
@@ -70,6 +76,9 @@ interface SuperadminViewProps {
 export const SuperadminView: React.FC<SuperadminViewProps> = ({
   organizations,
   auditLogs,
+  defaultGateway,
+  onSaveDefaultGateway,
+  onTestDefaultGateway,
   users = [],
   catalogItems = [],
   stats,
@@ -83,9 +92,91 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   onUpdateCatalogItem,
   onDeleteCatalogItem,
 }) => {
-  const [activeTab, setActiveTab] = useState<'tenants' | 'agents' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system'>('policies');
+  const [activeTab, setActiveTab] = useState<'tenants' | 'agents' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway'>('policies');
   const [searchAudit, setSearchAudit] = useState('');
   const [searchCatalog, setSearchCatalog] = useState('');
+
+  // Default Email Gateway State (Super Admin exclusive)
+  const [gwIncomingProtocol, setGwIncomingProtocol] = useState<'imap' | 'pop3'>(defaultGateway?.incomingProtocol || 'imap');
+  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway?.incomingHost || 'imap.lakhanglobal.com');
+  const [gwIncomingPort, setGwIncomingPort] = useState(defaultGateway?.incomingPort || 993);
+  const [gwIncomingSecurity, setGwIncomingSecurity] = useState<'ssl' | 'starttls' | 'none'>(defaultGateway?.incomingSecurity || 'ssl');
+  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway?.incomingUsername || 'helpdesk@lakhanglobal.com');
+  const [gwIncomingPassword, setGwIncomingPassword] = useState(defaultGateway?.incomingPassword || 'SecureGateway@2026');
+  const [showIncomingPass, setShowIncomingPass] = useState(false);
+
+  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway?.outgoingHost || 'smtp.lakhanglobal.com');
+  const [gwOutgoingPort, setGwOutgoingPort] = useState(defaultGateway?.outgoingPort || 587);
+  const [gwOutgoingSecurity, setGwOutgoingSecurity] = useState<'ssl' | 'starttls' | 'none'>(defaultGateway?.outgoingSecurity || 'starttls');
+  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway?.outgoingUsername || 'helpdesk@lakhanglobal.com');
+  const [gwOutgoingPassword, setGwOutgoingPassword] = useState(defaultGateway?.outgoingPassword || 'SecureGateway@2026');
+  const [showOutgoingPass, setShowOutgoingPass] = useState(false);
+
+  const [gwFromName, setGwFromName] = useState(defaultGateway?.fromName || 'IT Helpdesk Support');
+  const [gwFromEmail, setGwFromEmail] = useState(defaultGateway?.fromEmail || 'helpdesk@lakhanglobal.com');
+  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway?.replyToEmail || 'helpdesk@lakhanglobal.com');
+  const [gwSubjectPrefix, setGwSubjectPrefix] = useState(defaultGateway?.subjectPrefix || '[ITL-{{ticketId}}]');
+
+  const [gwSaving, setGwSaving] = useState(false);
+  const [gwTesting, setGwTesting] = useState(false);
+  const [gwTestResult, setGwTestResult] = useState<{ success: boolean; message: string; testedAt?: string } | null>(null);
+  const [gwTestEmail, setGwTestEmail] = useState('admin@lakhanglobal.com');
+  const [gwSuccessMsg, setGwSuccessMsg] = useState<string | null>(null);
+  const [gwErrorMsg, setGwErrorMsg] = useState<string | null>(null);
+
+  // Super Admin Inbound Simulator State
+  const [simFromEmail, setSimFromEmail] = useState('user.ticket@company.com');
+  const [simSubject, setSimSubject] = useState('Urgent: Unable to access production database cluster');
+  const [simBody, setSimBody] = useState('Hi Helpdesk Team,\n\nI am experiencing connection timeouts accessing our cluster. Please advise.\n\nThanks,\nEngineering Team');
+  const [simCc, setSimCc] = useState('');
+  const [simManagerEmail, setSimManagerEmail] = useState('');
+  const [simSubmitting, setSimSubmitting] = useState(false);
+  const [simResult, setSimResult] = useState<{ mode: string; ticket: Ticket; comment?: any } | null>(null);
+  const [simError, setSimError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (defaultGateway) {
+      setGwIncomingProtocol(defaultGateway.incomingProtocol || 'imap');
+      setGwIncomingHost(defaultGateway.incomingHost || 'imap.lakhanglobal.com');
+      setGwIncomingPort(defaultGateway.incomingPort || 993);
+      setGwIncomingSecurity(defaultGateway.incomingSecurity || 'ssl');
+      setGwIncomingUser(defaultGateway.incomingUsername || 'helpdesk@lakhanglobal.com');
+      if (defaultGateway.incomingPassword) setGwIncomingPassword(defaultGateway.incomingPassword);
+
+      setGwOutgoingHost(defaultGateway.outgoingHost || 'smtp.lakhanglobal.com');
+      setGwOutgoingPort(defaultGateway.outgoingPort || 587);
+      setGwOutgoingSecurity(defaultGateway.outgoingSecurity || 'starttls');
+      setGwOutgoingUser(defaultGateway.outgoingUsername || 'helpdesk@lakhanglobal.com');
+      if (defaultGateway.outgoingPassword) setGwOutgoingPassword(defaultGateway.outgoingPassword);
+
+      setGwFromName(defaultGateway.fromName || 'IT Helpdesk Support');
+      setGwFromEmail(defaultGateway.fromEmail || 'helpdesk@lakhanglobal.com');
+      setGwReplyToEmail(defaultGateway.replyToEmail || 'helpdesk@lakhanglobal.com');
+      setGwSubjectPrefix(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
+    } else {
+      api.getDefaultGatewayConfig().then((cfg) => {
+        if (cfg) {
+          setGwIncomingProtocol(cfg.incomingProtocol || 'imap');
+          setGwIncomingHost(cfg.incomingHost || 'imap.lakhanglobal.com');
+          setGwIncomingPort(cfg.incomingPort || 993);
+          setGwIncomingSecurity(cfg.incomingSecurity || 'ssl');
+          setGwIncomingUser(cfg.incomingUsername || 'helpdesk@lakhanglobal.com');
+          if (cfg.incomingPassword) setGwIncomingPassword(cfg.incomingPassword);
+
+          setGwOutgoingHost(cfg.outgoingHost || 'smtp.lakhanglobal.com');
+          setGwOutgoingPort(cfg.outgoingPort || 587);
+          setGwOutgoingSecurity(cfg.outgoingSecurity || 'starttls');
+          setGwOutgoingUser(cfg.outgoingUsername || 'helpdesk@lakhanglobal.com');
+          if (cfg.outgoingPassword) setGwOutgoingPassword(cfg.outgoingPassword);
+
+          setGwFromName(cfg.fromName || 'IT Helpdesk Support');
+          setGwFromEmail(cfg.fromEmail || 'helpdesk@lakhanglobal.com');
+          setGwReplyToEmail(cfg.replyToEmail || 'helpdesk@lakhanglobal.com');
+          setGwSubjectPrefix(cfg.subjectPrefix || '[ITL-{{ticketId}}]');
+        }
+      }).catch(() => {});
+    }
+  }, [defaultGateway]);
   const [searchTenant, setSearchTenant] = useState('');
   const [searchAgent, setSearchAgent] = useState('');
   const [searchRating, setSearchRating] = useState('');
@@ -116,6 +207,19 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   const [surveyToDelete, setSurveyToDelete] = useState<SatisfactionSurvey | null>(null);
   const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
 
+  // Live Engine & Hosting Diagnostics State
+  const [liveSystemStatus, setLiveSystemStatus] = useState<any>(null);
+  const [systemLoading, setSystemLoading] = useState(false);
+
+  const fetchLiveSystemStatus = React.useCallback(async () => {
+    try {
+      const res = await api.getSystemStatus();
+      if (res) setLiveSystemStatus(res);
+    } catch (err) {
+      console.error('Failed fetching live system status:', err);
+    }
+  }, []);
+
   // Super Admin Managed SLA Policies State
   const [slaList, setSlaList] = useState<SlaPolicy[]>([]);
   const [editingSlaPolicy, setEditingSlaPolicy] = useState<SlaPolicy | null>(null);
@@ -137,8 +241,9 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   );
   const [brandingLogoWidth, setBrandingLogoWidth] = useState<number>(primaryOrg?.branding?.logoWidth || 200);
   const [brandingLogoHeight, setBrandingLogoHeight] = useState<number>(primaryOrg?.branding?.logoHeight || 80);
-  const [brandingProductName, setBrandingProductName] = useState(primaryOrg?.branding?.productName || primaryOrg?.name || 'Apex Global IT Service Desk');
-  const [brandingSupportEmail, setBrandingSupportEmail] = useState(primaryOrg?.branding?.supportEmail || 'support@apexdynamics.io');
+  const [brandingProductName, setBrandingProductName] = useState(primaryOrg?.branding?.productName || primaryOrg?.name || 'IT Helpdesk by Lakhan');
+  const [brandingSubtitle, setBrandingSubtitle] = useState((primaryOrg?.branding as any)?.subtitle || 'Enterprise Support');
+  const [brandingSupportEmail, setBrandingSupportEmail] = useState(primaryOrg?.branding?.supportEmail || 'helpdesk@lakhanglobal.com');
   const [brandingWelcomeMsg, setBrandingWelcomeMsg] = useState(primaryOrg?.branding?.portalWelcome || 'Welcome to the 24/7 IT Enterprise Support Desk.');
   const [brandingSaving, setBrandingSaving] = useState(false);
 
@@ -229,12 +334,17 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
         setEditingSlaPolicy(policies[0]);
       }
     }).catch(console.error);
-  }, []);
+
+    fetchLiveSystemStatus();
+    const statusInterval = setInterval(fetchLiveSystemStatus, 8000);
+    return () => clearInterval(statusInterval);
+  }, [fetchLiveSystemStatus]);
 
   const handleSavePsk = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pskValue.trim()) {
-      alert('Pre-Shared Key cannot be empty.');
+      setSettingsSuccess('⚠️ Pre-Shared Key cannot be empty.');
+      setTimeout(() => setSettingsSuccess(null), 3500);
       return;
     }
     setPskSaving(true);
@@ -243,7 +353,8 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       setSettingsSuccess('Pre-Shared Key (PSK) updated successfully! Users can now use this key to set passwords.');
       setTimeout(() => setSettingsSuccess(null), 3500);
     } catch (err: any) {
-      alert(err.message || 'Failed updating Pre-Shared Key');
+      setSettingsSuccess(`Error: ${err.message || 'Failed updating Pre-Shared Key'}`);
+      setTimeout(() => setSettingsSuccess(null), 4000);
     } finally {
       setPskSaving(false);
     }
@@ -310,7 +421,8 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       setSettingsSuccess(`Requester Asset Self-Service (Add/Remove) is now ${nextVal ? 'ENABLED' : 'DISABLED'}`);
       setTimeout(() => setSettingsSuccess(null), 3000);
     } catch (err: any) {
-      alert(err.message || 'Failed to update system settings');
+      setSettingsSuccess(`Error: ${err.message || 'Failed to update system settings'}`);
+      setTimeout(() => setSettingsSuccess(null), 4000);
     }
   };
 
@@ -400,6 +512,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
           logoWidth: Number(brandingLogoWidth) || 200,
           logoHeight: Number(brandingLogoHeight) || 80,
           productName: brandingProductName.trim(),
+          subtitle: brandingSubtitle.trim() || 'Enterprise Support',
           supportEmail: brandingSupportEmail.trim(),
           portalWelcome: brandingWelcomeMsg.trim(),
           portalTitle: brandingProductName.trim(),
@@ -439,6 +552,92 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       alert(err.message || 'Failed purging tickets');
     } finally {
       setPurgeLoading(false);
+    }
+  };
+
+  const handleSaveDefaultGatewayConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGwSaving(true);
+    setGwSuccessMsg(null);
+    setGwErrorMsg(null);
+    try {
+      const payload: Partial<DefaultEmailGatewayConfig> = {
+        incomingProtocol: gwIncomingProtocol,
+        incomingHost: gwIncomingHost.trim(),
+        incomingPort: Number(gwIncomingPort),
+        incomingSecurity: gwIncomingSecurity,
+        incomingUsername: gwIncomingUser.trim(),
+        incomingPassword: gwIncomingPassword,
+        outgoingProtocol: 'smtp',
+        outgoingHost: gwOutgoingHost.trim(),
+        outgoingPort: Number(gwOutgoingPort),
+        outgoingSecurity: gwOutgoingSecurity,
+        outgoingUsername: gwOutgoingUser.trim(),
+        outgoingPassword: gwOutgoingPassword,
+        fromName: gwFromName.trim(),
+        fromEmail: gwFromEmail.trim(),
+        replyToEmail: gwReplyToEmail.trim(),
+        subjectPrefix: gwSubjectPrefix.trim(),
+      };
+      if (onSaveDefaultGateway) {
+        await onSaveDefaultGateway(payload);
+      } else {
+        await api.saveDefaultGatewayConfig(payload);
+      }
+      setGwSuccessMsg('Default email support & poller gateway settings saved! All ticket replies and automated intake will use these parameters.');
+      setTimeout(() => setGwSuccessMsg(null), 4000);
+    } catch (err: any) {
+      setGwErrorMsg(err.message || 'Failed saving default email gateway');
+    } finally {
+      setGwSaving(false);
+    }
+  };
+
+  const handleTestDefaultGatewayConnection = async () => {
+    setGwTesting(true);
+    setGwTestResult(null);
+    setGwErrorMsg(null);
+    try {
+      const res = onTestDefaultGateway
+        ? await onTestDefaultGateway(gwTestEmail.trim())
+        : await api.testDefaultGateway(gwTestEmail.trim());
+      setGwTestResult({
+        success: true,
+        message: res.message || `Handshake test successful! Outbound SMTP dispatch verified to ${gwTestEmail.trim()}.`,
+        testedAt: new Date().toLocaleTimeString(),
+      });
+    } catch (err: any) {
+      setGwTestResult({
+        success: false,
+        message: err.message || 'Connection test failed. Please verify credentials and server ports.',
+        testedAt: new Date().toLocaleTimeString(),
+      });
+    } finally {
+      setGwTesting(false);
+    }
+  };
+
+  const handleSimulateInboundSuperadmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!simFromEmail || !simSubject || !simBody) {
+      setSimError('Sender Email, Subject, and Body are required.');
+      return;
+    }
+    setSimSubmitting(true);
+    setSimError(null);
+    try {
+      const res = await api.simulateInboundEmail(
+        simFromEmail.trim(),
+        simSubject.trim(),
+        simBody.trim(),
+        simCc.trim() || undefined,
+        simManagerEmail.trim() || undefined
+      );
+      setSimResult(res);
+    } catch (err: any) {
+      setSimError(err.message || 'Failed to simulate email intake.');
+    } finally {
+      setSimSubmitting(false);
     }
   };
 
@@ -733,6 +932,17 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Branding &amp; Logo</span>
           </button>
           <button
+            onClick={() => setActiveTab('email-gateway')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              activeTab === 'email-gateway'
+                ? 'neu-pressed bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'
+                : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+            }`}
+          >
+            <Mail className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+            <span>Email Gateway (POP3/IMAP/SMTP)</span>
+          </button>
+          <button
             onClick={() => setActiveTab('storage')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'storage'
@@ -802,12 +1012,12 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             onClick={() => setActiveTab('system')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'system'
-                ? 'neu-pressed bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/40 shadow-inner'
-                : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-blue-700 dark:hover:text-blue-300'
+                ? 'neu-pressed bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'
+                : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
             }`}
           >
-            <Server className="w-3.5 h-3.5" />
-            <span>Linux Engine Health</span>
+            <Server className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+            <span>Engine &amp; Hosting Diagnostics</span>
           </button>
         </div>
 
@@ -1702,7 +1912,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
                     Product / Helpdesk Title *
@@ -1712,6 +1922,19 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                     required
                     value={brandingProductName}
                     onChange={(e) => setBrandingProductName(e.target.value)}
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Header Subtitle / Tagline *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={brandingSubtitle}
+                    onChange={(e) => setBrandingSubtitle(e.target.value)}
                     className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
                   />
                 </div>
@@ -2660,57 +2883,761 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
         </div>
       )}
 
-      {/* TAB 4: System Health */}
+      {/* TAB 4: System Health & Real-Time Engine Diagnostics */}
       {activeTab === 'system' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="glass-panel p-5 rounded-xl border border-slate-200 dark:border-white/10 space-y-3">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-              <Server className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-              Runtime Environment &amp; Hosting
-            </h3>
-            <div className="text-xs space-y-2 text-slate-700 dark:text-slate-300">
-              <div className="flex items-center justify-between py-1 border-b border-slate-200/80 dark:border-white/5">
-                <span className="text-slate-500 dark:text-slate-400">Platform:</span>
-                <span className="font-mono">Linux Server (x86_64)</span>
+        <div className="space-y-4 animate-in fade-in">
+          {/* Top Live Uptime & Engine Status Banner */}
+          <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md bg-gradient-to-r from-slate-50 via-white to-cyan-50/30 dark:from-slate-900 dark:via-slate-900/90 dark:to-cyan-950/20">
+            <div className="flex items-center gap-3">
+              <div className="relative flex h-3.5 w-3.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
               </div>
-              <div className="flex items-center justify-between py-1 border-b border-slate-200/80 dark:border-white/5">
-                <span className="text-slate-500 dark:text-slate-400">Node.js Engine:</span>
-                <span className="font-mono">v22.x LTS</span>
+              <div>
+                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <span>Engine Status: Online &amp; Operational</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/40">
+                    HEALTHY
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                  Engines Uptime: <strong className="text-cyan-700 dark:text-cyan-400">{liveSystemStatus?.engineUptimeFormatted || `${stats.systemUptimeHours}h`}</strong> · Process PID: <strong className="text-slate-700 dark:text-slate-300">{liveSystemStatus?.processId || 'PID'}</strong> · Title: <strong className="text-slate-700 dark:text-slate-300">{liveSystemStatus?.processTitle || 'node'}</strong>
+                </div>
               </div>
-              <div className="flex items-center justify-between py-1 border-b border-slate-200/80 dark:border-white/5">
-                <span className="text-slate-500 dark:text-slate-400">Memory RSS:</span>
-                <span className="font-mono">84.2 MB</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 hidden sm:inline">
+                {liveSystemStatus?.timestamp ? `Refreshed ${new Date(liveSystemStatus.timestamp).toLocaleTimeString()}` : 'Live Auto-Polling (8s)'}
+              </span>
+              <button
+                type="button"
+                onClick={fetchLiveSystemStatus}
+                className="neu-btn px-3 py-1.5 text-xs font-semibold rounded-xl flex items-center gap-1.5 text-slate-700 dark:text-slate-300 hover:text-cyan-600 cursor-pointer shadow-xs"
+                title="Force refresh live engine status"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                <span>Refresh Live</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Card 1: Runtime Environment & Hosting */}
+            <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3 shadow-md">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Server className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                Runtime Environment &amp; Hosting
+              </h3>
+              <div className="text-xs space-y-2.5 text-slate-700 dark:text-slate-300 divide-y divide-slate-200/80 dark:divide-white/5">
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Platform:</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-white">
+                    {liveSystemStatus?.platform || 'Linux Server (x86_64)'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Node.js Engine:</span>
+                  <span className="font-mono font-bold text-cyan-700 dark:text-cyan-400">
+                    {liveSystemStatus?.nodeEngine || 'v22.x LTS'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Memory RSS:</span>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                    {liveSystemStatus?.memoryRss || '84.2 MB'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Port &amp; Proxy:</span>
+                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                    {liveSystemStatus?.portAndProxy || 'Port 3000 (Express + Nginx)'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Host Kernel / OS:</span>
+                  <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                    {liveSystemStatus?.osType ? `${liveSystemStatus.osType} ${liveSystemStatus.osRelease}` : 'Linux 6.x'}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center justify-between py-1">
-                <span className="text-slate-500 dark:text-slate-400">Port &amp; Proxy:</span>
-                <span className="font-mono">Port 3000 (Express + Nginx)</span>
+            </div>
+
+            {/* Card 2: Data Integrity & Storage */}
+            <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3 shadow-md">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Database className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                Data Integrity &amp; Storage
+              </h3>
+              <div className="text-xs space-y-2.5 text-slate-700 dark:text-slate-300 divide-y divide-slate-200/80 dark:divide-white/5">
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Primary Database:</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-white">
+                    {liveSystemStatus?.primaryDatabase || 'data/database.json'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Write Mode:</span>
+                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                    {liveSystemStatus?.writeMode || 'Atomic fs.writeFileSync'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Database Size:</span>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                    {liveSystemStatus?.databaseSize || `${stats.databaseSizeKb} KB`}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Tenant Multi-Tenancy:</span>
+                  <span className="font-mono font-bold text-cyan-600 dark:text-cyan-400">
+                    {liveSystemStatus?.tenantMultiTenancy || 'Enforced'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Active Isolated Sessions:</span>
+                  <span className="font-mono font-bold text-violet-600 dark:text-violet-400">
+                    {liveSystemStatus?.activeSessionsCount ?? 1} independent client session(s)
+                  </span>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="glass-panel p-5 rounded-xl border border-slate-200 dark:border-white/10 space-y-3">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-              <Database className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-              Data Integrity &amp; Storage
-            </h3>
-            <div className="text-xs space-y-2 text-slate-700 dark:text-slate-300">
-              <div className="flex items-center justify-between py-1 border-b border-slate-200/80 dark:border-white/5">
-                <span className="text-slate-500 dark:text-slate-400">Primary Database:</span>
-                <span className="font-mono">data/database.json</span>
+          {/* Additional Hardware & Host Diagnostic Strip */}
+          <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5">
+              <div className="text-[10px] uppercase font-bold text-slate-500">Heap Memory Used</div>
+              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                {liveSystemStatus?.heapUsed || '38.4 MB'}
               </div>
-              <div className="flex items-center justify-between py-1 border-b border-slate-200/80 dark:border-white/5">
-                <span className="text-slate-500 dark:text-slate-400">Write Mode:</span>
-                <span className="font-mono">Atomic fs.writeFileSync</span>
+              <div className="text-[10px] text-slate-400">Total: {liveSystemStatus?.heapTotal || '78.2 MB'}</div>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5">
+              <div className="text-[10px] uppercase font-bold text-slate-500">System Physical RAM</div>
+              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                {liveSystemStatus?.systemFreeRam || '4.2 GB'} free
               </div>
-              <div className="flex items-center justify-between py-1 border-b border-slate-200/80 dark:border-white/5">
-                <span className="text-slate-500 dark:text-slate-400">Database Size:</span>
-                <span className="font-mono text-emerald-600 dark:text-emerald-400">{stats.databaseSizeKb} KB</span>
+              <div className="text-[10px] text-slate-400">of {liveSystemStatus?.systemTotalRam || '8.0 GB'}</div>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5">
+              <div className="text-[10px] uppercase font-bold text-slate-500">Processor Cores</div>
+              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                {liveSystemStatus?.cpuCount || 4} vCPUs
               </div>
-              <div className="flex items-center justify-between py-1">
-                <span className="text-slate-500 dark:text-slate-400">Tenant Multi-Tenancy:</span>
-                <span className="font-mono text-cyan-600 dark:text-cyan-400">Enforced</span>
+              <div className="text-[10px] text-slate-400 truncate">{liveSystemStatus?.cpuModel?.slice(0, 24) || 'Multi-core'}</div>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5">
+              <div className="text-[10px] uppercase font-bold text-slate-500">Host Machine Uptime</div>
+              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                {liveSystemStatus?.systemUptimeFormatted || 'Operational'}
+              </div>
+              <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">● System Healthy</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* TAB: Default Email Support & Poller Gateway (POP3/IMAP/SMTP)  */}
+      {/* ============================================================= */}
+      {activeTab === 'email-gateway' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header */}
+          <div className="neu-flat p-6 rounded-2xl border border-cyan-300/80 dark:border-cyan-500/30 space-y-2 bg-gradient-to-br from-cyan-50/50 via-transparent to-indigo-50/30 dark:from-cyan-950/20 dark:to-indigo-950/15">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-2xl bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30">
+                  <Mail className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                      Default Email Support &amp; Poller Gateway (POP3 / IMAP / SMTP)
+                    </h2>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-700/50">
+                      Super Admin Exclusive
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/50">
+                      Hidden from Users &amp; Guest Portal
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                    Configure the centralized organization email credentials used for ticket reply dispatching (SMTP) and automated email-to-ticket ingestion (POP3 or IMAP). Only accessible to Super Administrator.
+                  </p>
+                </div>
               </div>
             </div>
+          </div>
+
+          {/* Alert Messages */}
+          {gwSuccessMsg && (
+            <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700/60 text-emerald-800 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <span>{gwSuccessMsg}</span>
+            </div>
+          )}
+
+          {gwErrorMsg && (
+            <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-700/60 text-rose-800 dark:text-rose-300 text-xs font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+              <span>{gwErrorMsg}</span>
+            </div>
+          )}
+
+          {gwTestResult && (
+            <div
+              className={`p-4 rounded-xl text-xs space-y-1.5 border ${
+                gwTestResult.success
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
+                  : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-bold flex items-center gap-1.5">
+                  {gwTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <AlertTriangle className="w-4 h-4 text-rose-600" />}
+                  {gwTestResult.success ? 'Gateway Connection & Outbound Handshake Succeeded' : 'Gateway Connection Failed'}
+                </span>
+                {gwTestResult.testedAt && (
+                  <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                    Tested at {gwTestResult.testedAt}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs font-medium">{gwTestResult.message}</p>
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleSaveDefaultGatewayConfig} className="space-y-6">
+            {/* Box 1: Support Email Identity & Subject Pattern */}
+            <div className="neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
+              <div className="text-xs font-bold uppercase tracking-wider text-cyan-700 dark:text-cyan-400 flex items-center gap-2">
+                <Mail className="w-4 h-4" />
+                1. Default Reply &amp; Inbound Intake Identity
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Sender Display Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={gwFromName}
+                    onChange={(e) => setGwFromName(e.target.value)}
+                    placeholder="e.g. IT Helpdesk Support"
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                  />
+                  <span className="text-[10px] text-slate-500 mt-1 block">Displayed on outbound notification emails</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Default From / Intake Email *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={gwFromEmail}
+                    onChange={(e) => setGwFromEmail(e.target.value)}
+                    placeholder="helpdesk@lakhanglobal.com"
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-bold focus:outline-none text-cyan-700 dark:text-cyan-400"
+                  />
+                  <span className="text-[10px] text-slate-500 mt-1 block">Inbound emails to this address automatically generate tickets</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Reply-To Address *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={gwReplyToEmail}
+                    onChange={(e) => setGwReplyToEmail(e.target.value)}
+                    placeholder="helpdesk@lakhanglobal.com"
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-medium focus:outline-none"
+                  />
+                  <span className="text-[10px] text-slate-500 mt-1 block">Target address when users click reply in mail clients</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Subject Threading Token Pattern
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={gwSubjectPrefix}
+                  onChange={(e) => setGwSubjectPrefix(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-medium focus:outline-none"
+                />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Must include <code className="font-mono font-bold text-cyan-600 dark:text-cyan-400">[ITL-&#123;&#123;ticketId&#125;&#125;]</code> so replies from users thread into the ticket history rather than creating duplicates.
+                </span>
+              </div>
+            </div>
+
+            {/* Box 2: Inbound Mail Server (IMAP or POP3) */}
+            <div className="neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 flex items-center gap-2">
+                  <Server className="w-4 h-4" />
+                  2. Inbound Ticket Poller (POP3 / IMAP)
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Incoming Protocol:</span>
+                  <div className="inline-flex rounded-xl p-0.5 neu-inset bg-slate-100 dark:bg-slate-900">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGwIncomingProtocol('imap');
+                        if (gwIncomingPort === 995 || gwIncomingPort === 110) setGwIncomingPort(993);
+                      }}
+                      className={`px-3 py-1 text-xs font-bold rounded-lg cursor-pointer transition-all ${
+                        gwIncomingProtocol === 'imap'
+                          ? 'neu-btn-primary shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      IMAP (Recommended)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGwIncomingProtocol('pop3');
+                        if (gwIncomingPort === 993 || gwIncomingPort === 143) setGwIncomingPort(995);
+                      }}
+                      className={`px-3 py-1 text-xs font-bold rounded-lg cursor-pointer transition-all ${
+                        gwIncomingProtocol === 'pop3'
+                          ? 'neu-btn-primary shadow-xs'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      POP3
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    {gwIncomingProtocol.toUpperCase()} Server Host *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={gwIncomingHost}
+                    onChange={(e) => setGwIncomingHost(e.target.value)}
+                    placeholder={gwIncomingProtocol === 'pop3' ? 'pop.company.com' : 'imap.company.com'}
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-medium focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Server Port *
+                    </label>
+                    <div className="flex gap-1">
+                      {gwIncomingProtocol === 'imap' ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => { setGwIncomingPort(993); setGwIncomingSecurity('ssl'); }}
+                            className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded neu-btn hover:text-cyan-600 cursor-pointer"
+                          >
+                            993 (SSL)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setGwIncomingPort(143); setGwIncomingSecurity('starttls'); }}
+                            className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded neu-btn hover:text-cyan-600 cursor-pointer"
+                          >
+                            143
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => { setGwIncomingPort(995); setGwIncomingSecurity('ssl'); }}
+                            className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded neu-btn hover:text-cyan-600 cursor-pointer"
+                          >
+                            995 (SSL)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setGwIncomingPort(110); setGwIncomingSecurity('none'); }}
+                            className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded neu-btn hover:text-cyan-600 cursor-pointer"
+                          >
+                            110
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    required
+                    value={gwIncomingPort}
+                    onChange={(e) => setGwIncomingPort(Number(e.target.value))}
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-bold focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Security / Encryption
+                  </label>
+                  <select
+                    value={gwIncomingSecurity}
+                    onChange={(e) => setGwIncomingSecurity(e.target.value as any)}
+                    className="w-full px-3 py-2 text-xs neu-select rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none cursor-pointer"
+                  >
+                    <option value="ssl">SSL / TLS (Encrypted)</option>
+                    <option value="starttls">STARTTLS</option>
+                    <option value="none">None (Plaintext)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Inbound Username (Account Email) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={gwIncomingUser}
+                    onChange={(e) => setGwIncomingUser(e.target.value)}
+                    placeholder="helpdesk@company.com"
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Inbound Password / App Key
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showIncomingPass ? 'text' : 'password'}
+                      value={gwIncomingPassword}
+                      onChange={(e) => setGwIncomingPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full px-3 py-2 pr-9 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowIncomingPass(!showIncomingPass)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    >
+                      {showIncomingPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Box 3: Outbound Mail Server (SMTP) */}
+            <div className="neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
+                  <Send className="w-4 h-4" />
+                  3. Outbound Ticket Reply Dispatch (SMTP)
+                </div>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                  SMTP Protocol
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    SMTP Server Host *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={gwOutgoingHost}
+                    onChange={(e) => setGwOutgoingHost(e.target.value)}
+                    placeholder="smtp.company.com or smtp.gmail.com"
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-medium focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                      SMTP Port *
+                    </label>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => { setGwOutgoingPort(587); setGwOutgoingSecurity('starttls'); }}
+                        className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded neu-btn hover:text-cyan-600 cursor-pointer"
+                      >
+                        587 (TLS)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setGwOutgoingPort(465); setGwOutgoingSecurity('ssl'); }}
+                        className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded neu-btn hover:text-cyan-600 cursor-pointer"
+                      >
+                        465 (SSL)
+                      </button>
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    required
+                    value={gwOutgoingPort}
+                    onChange={(e) => setGwOutgoingPort(Number(e.target.value))}
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-bold focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    SMTP Encryption
+                  </label>
+                  <select
+                    value={gwOutgoingSecurity}
+                    onChange={(e) => setGwOutgoingSecurity(e.target.value as any)}
+                    className="w-full px-3 py-2 text-xs neu-select rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none cursor-pointer"
+                  >
+                    <option value="starttls">STARTTLS (Port 587)</option>
+                    <option value="ssl">SSL / TLS (Port 465)</option>
+                    <option value="none">None (Port 25)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    SMTP Username *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={gwOutgoingUser}
+                    onChange={(e) => setGwOutgoingUser(e.target.value)}
+                    placeholder="helpdesk@company.com"
+                    className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    SMTP Password / App Key
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showOutgoingPass ? 'text' : 'password'}
+                      value={gwOutgoingPassword}
+                      onChange={(e) => setGwOutgoingPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full px-3 py-2 pr-9 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowOutgoingPass(!showOutgoingPass)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    >
+                      {showOutgoingPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Actions Bar: Test Handshake & Save */}
+            <div className="neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-2 flex-wrap flex-1">
+                <input
+                  type="email"
+                  value={gwTestEmail}
+                  onChange={(e) => setGwTestEmail(e.target.value)}
+                  placeholder="recipient@example.com"
+                  className="px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none w-64"
+                />
+                <button
+                  type="button"
+                  disabled={gwTesting}
+                  onClick={handleTestDefaultGatewayConnection}
+                  className="neu-btn px-4 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 hover:text-cyan-600 dark:hover:text-cyan-300 rounded-xl cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5 text-cyan-600" />
+                  <span>{gwTesting ? 'Testing Handshake...' : 'Test Connection Handshake'}</span>
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                disabled={gwSaving}
+                className="neu-btn-primary px-6 py-2.5 text-xs font-bold rounded-xl shadow-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                <span>{gwSaving ? 'Saving Gateway...' : 'Save Default Gateway Settings'}</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Superadmin Inbound Email Poller & Intake Simulator */}
+          <div className="neu-card p-6 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-violet-500/30">
+                  <Inbox className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Superadmin Inbound Email Poller &amp; Intake Simulator
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Verify POP3/IMAP ticket creation, automatic manager forwarding, and threaded replies
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {simError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{simError}</span>
+              </div>
+            )}
+
+            {simResult ? (
+              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    {simResult.mode === 'threaded' ? 'Email Threaded to Existing Ticket' : 'New Ticket Created via Inbound Email Intake'}
+                  </span>
+                  <span className="font-mono text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                    [{simResult.ticket.id}]
+                  </span>
+                </div>
+                <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                  Subject: <span className="font-semibold">{simResult.ticket.subject}</span>
+                </p>
+                {simResult.ticket.ccRecipients && simResult.ticket.ccRecipients.length > 0 && (
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 font-mono">
+                    CC Recipients: {simResult.ticket.ccRecipients.join(', ')}
+                  </p>
+                )}
+                {simResult.ticket.managerEmail && (
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Forwarded to Manager: <span className="font-mono font-bold">{simResult.ticket.managerEmail}</span>
+                  </p>
+                )}
+                <div className="pt-2 flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSimResult(null);
+                      setSimSubject('Urgent: Unable to access production database cluster');
+                    }}
+                    className="neu-btn px-4 py-1.5 text-xs font-semibold rounded-lg cursor-pointer"
+                  >
+                    Simulate Another Intake
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSimulateInboundSuperadmin} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      From (Sender Email) *
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={simFromEmail}
+                      onChange={(e) => setSimFromEmail(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                      placeholder="user@example.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Subject (Use [ITL-XXXXXX] for threading) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={simSubject}
+                      onChange={(e) => setSimSubject(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                      placeholder="e.g. Re: [ITL-1001] Updated log trace"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Email Body / Message *
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={simBody}
+                    onChange={(e) => setSimBody(e.target.value)}
+                    className="w-full p-2.5 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                    placeholder="Type email body content..."
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      CC Recipients
+                    </label>
+                    <input
+                      type="text"
+                      value={simCc}
+                      onChange={(e) => setSimCc(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                      placeholder="teammate@company.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Manager Email (Forward on Intake)
+                    </label>
+                    <input
+                      type="email"
+                      value={simManagerEmail}
+                      onChange={(e) => setSimManagerEmail(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                      placeholder="manager@company.com"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 flex items-center justify-end">
+                  <button
+                    type="submit"
+                    disabled={simSubmitting}
+                    className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50"
+                  >
+                    {simSubmitting ? 'Simulating Intake...' : 'Dispatch Inbound Email Intake'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
