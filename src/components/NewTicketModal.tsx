@@ -31,6 +31,7 @@ interface NewTicketModalProps {
   assets: Asset[];
   currentUser: User | null;
   requireOtp?: boolean;
+  ticketCategories?: string[];
 }
 
 export const NewTicketModal: React.FC<NewTicketModalProps> = ({
@@ -43,11 +44,21 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
   assets,
   currentUser,
   requireOtp = false,
+  ticketCategories,
 }) => {
   const isRequester = !currentUser || currentUser.role === 'requester';
 
+  const categoriesList = ticketCategories && ticketCategories.length > 0 ? ticketCategories : [
+    'Hardware & Workstations',
+    'Software & Cloud Apps',
+    'Network & Connectivity',
+    'Security & Access',
+    'User Accounts & Permissions',
+    'AV & Conference Rooms',
+  ];
+
   const [subject, setSubject] = useState('');
-  const [category, setCategory] = useState('Software & Cloud Apps');
+  const [category, setCategory] = useState(categoriesList[0] || 'Hardware & Workstations');
   const [priority, setPriority] = useState('normal');
   const [type, setType] = useState('incident');
   const [description, setDescription] = useState('');
@@ -475,12 +486,11 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
                 onChange={(e) => setCategory(e.target.value)}
                 className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
               >
-                <option value="Software & Cloud Apps">Software &amp; Cloud Apps</option>
-                <option value="Hardware & Workstations">Hardware &amp; Workstations</option>
-                <option value="Network & Connectivity">Network &amp; Connectivity</option>
-                <option value="Security & Access">Security &amp; Access</option>
-                <option value="User Accounts & Access">User Accounts &amp; Access</option>
-                <option value="AV & Conference Rooms">AV &amp; Conference Rooms</option>
+                {categoriesList.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
               </select>
             </div>
 

@@ -238,7 +238,7 @@ class DatabaseEngine {
           });
         }
 
-        // Auto-assign temporary employee ID for existing users if missing
+        // Auto-assign temporary employee ID and hierarchy linking for existing users if missing
         if (parsed.users && Array.isArray(parsed.users)) {
           parsed.users = parsed.users.map((u: any, idx: number) => {
             if (!u.employeeCode || !u.employeeCode.trim()) {
@@ -246,6 +246,16 @@ class DatabaseEngine {
                 u.employeeCode = 'CBPL2045';
               } else {
                 u.employeeCode = `CBPL${1000 + (idx + 1)}`;
+              }
+            }
+            if (u.role === 'requester') {
+              if (!u.managerId) {
+                const defaultMgr = parsed.users.find((m: any) => m.role === 'manager') || parsed.users.find((m: any) => m.role === 'admin' || m.role === 'superadmin');
+                u.managerId = defaultMgr?.id || 'usr-team-manager';
+              }
+              if (!u.groupId) {
+                u.groupId = 'grp-operations';
+                u.groupName = 'Operations Requester Group';
               }
             }
             return u;

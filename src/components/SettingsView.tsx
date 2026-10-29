@@ -43,6 +43,7 @@ import {
   Building2,
   Upload,
   Laptop,
+  Tag,
 } from 'lucide-react';
 import { api } from '../services/api';
 import {
@@ -189,6 +190,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [userFormGroupName, setUserFormGroupName] = useState('');
   const [userFormManagerId, setUserFormManagerId] = useState('');
   const [userFormStatus, setUserFormStatus] = useState<'active' | 'suspended'>('active');
+  const [userFormCanManageTickets, setUserFormCanManageTickets] = useState(true);
+  const [userFormCanDeleteTickets, setUserFormCanDeleteTickets] = useState(false);
+  const [userFormCanManageAssets, setUserFormCanManageAssets] = useState(true);
+  const [userFormCanManageKb, setUserFormCanManageKb] = useState(false);
+  const [userFormCanManageApprovals, setUserFormCanManageApprovals] = useState(false);
+  // Left pane navigation view privileges
+  const [userFormCanViewDashboard, setUserFormCanViewDashboard] = useState(true);
+  const [userFormCanViewTickets, setUserFormCanViewTickets] = useState(true);
+  const [userFormCanViewAssets, setUserFormCanViewAssets] = useState(true);
+  const [userFormCanViewApprovals, setUserFormCanViewApprovals] = useState(false);
+  const [userFormCanViewReports, setUserFormCanViewReports] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
   // Requester Groups & Teams loaded from backend
@@ -530,6 +542,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [privCanManageAssets, setPrivCanManageAssets] = useState(true);
   const [privCanManageKb, setPrivCanManageKb] = useState(false);
   const [privCanManageApprovals, setPrivCanManageApprovals] = useState(false);
+  // Left pane navigation view privileges
+  const [privCanViewDashboard, setPrivCanViewDashboard] = useState(true);
+  const [privCanViewTickets, setPrivCanViewTickets] = useState(true);
+  const [privCanViewAssets, setPrivCanViewAssets] = useState(true);
+  const [privCanViewApprovals, setPrivCanViewApprovals] = useState(false);
+  const [privCanViewReports, setPrivCanViewReports] = useState(false);
   const [privSaving, setPrivSaving] = useState(false);
 
   // -------------------------------------------------------------
@@ -588,9 +606,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   });
 
   // -------------------------------------------------------------
-  // Admin Individual Mailbox (IMAP/POP3/SMTP) State
+  // Staff Individual Mailbox (IMAP/POP3/SMTP) State - Configured by Admin for Staff
   // -------------------------------------------------------------
-  const adminUsers = availableUsers.filter((u) => u.role === 'admin' || u.role === 'superadmin');
+  const staffUsers = availableUsers.filter((u) => ['superadmin', 'admin', 'technician', 'inventory_manager', 'auditor'].includes(u.role));
   const [selectedAdminId, setSelectedAdminId] = useState<string>(currentUser.id);
   const [mailboxIncomingProtocol, setMailboxIncomingProtocol] = useState<'imap' | 'pop3'>('imap');
   const [mailboxIncomingHost, setMailboxIncomingHost] = useState('');
@@ -985,6 +1003,86 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     handleSaveRequesterAssetOptions(defaultRequesterOptions);
   };
 
+  // Ticket Categories (Hardware & Workstations, Software & Cloud Apps, etc.) Customization
+  const defaultTicketCategories = [
+    'Hardware & Workstations',
+    'Software & Cloud Apps',
+    'Network & Connectivity',
+    'Security & Access',
+    'User Accounts & Permissions',
+    'AV & Conference Rooms',
+  ];
+  const [ticketCategories, setTicketCategories] = useState<string[]>(
+    organization.systemSettings?.ticketCategories || defaultTicketCategories
+  );
+  const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [editingCategoryIdx, setEditingCategoryIdx] = useState<number | null>(null);
+  const [editingCategoryText, setEditingCategoryText] = useState('');
+  const [ticketCategoriesSaveMsg, setTicketCategoriesSaveMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (organization.systemSettings?.ticketCategories && organization.systemSettings.ticketCategories.length > 0) {
+      setTicketCategories(organization.systemSettings.ticketCategories);
+    }
+  }, [organization.systemSettings?.ticketCategories]);
+
+  const handleSaveTicketCategories = async (updated: string[]) => {
+    try {
+      setTicketCategoriesSaveMsg('Saving...');
+      await api.updateSystemSettings({ ticketCategories: updated });
+      if (onUpdateOrganization) {
+        onUpdateOrganization(organization.id, {
+          systemSettings: {
+            ...organization.systemSettings,
+            ticketCategories: updated,
+          } as any,
+        });
+      }
+      setTicketCategories(updated);
+      setTicketCategoriesSaveMsg('✓ Ticket categories saved successfully!');
+      setTimeout(() => setTicketCategoriesSaveMsg(null), 3000);
+    } catch (err: any) {
+      setTicketCategoriesSaveMsg('Failed to save categories');
+    }
+  };
+
+  const handleAddTicketCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newCategoryInput.trim();
+    if (!trimmed) return;
+    if (ticketCategories.includes(trimmed)) {
+      alert('This ticket category already exists.');
+      return;
+    }
+    const updated = [...ticketCategories, trimmed];
+    handleSaveTicketCategories(updated);
+    setNewCategoryInput('');
+  };
+
+  const handleRemoveTicketCategory = (cat: string) => {
+    if (ticketCategories.length <= 1) {
+      alert('You must retain at least one ticket category.');
+      return;
+    }
+    const updated = ticketCategories.filter((c) => c !== cat);
+    handleSaveTicketCategories(updated);
+  };
+
+  const handleStartEditCategory = (idx: number, currentVal: string) => {
+    setEditingCategoryIdx(idx);
+    setEditingCategoryText(currentVal);
+  };
+
+  const handleSaveEditCategory = (idx: number) => {
+    const trimmed = editingCategoryText.trim();
+    if (!trimmed) return;
+    const updated = [...ticketCategories];
+    updated[idx] = trimmed;
+    handleSaveTicketCategories(updated);
+    setEditingCategoryIdx(null);
+    setEditingCategoryText('');
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profileName.trim() || !profileEmail.trim()) return;
@@ -1067,6 +1165,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUserFormManagerId('');
     setUserFormStatus('active');
     setUserFormOrgId(organization.id);
+    setUserFormCanManageTickets(true);
+    setUserFormCanDeleteTickets(false);
+    setUserFormCanManageAssets(true);
+    setUserFormCanManageKb(false);
+    setUserFormCanManageApprovals(false);
+    // Left pane navigation view privileges
+    setUserFormCanViewDashboard(true);
+    setUserFormCanViewTickets(true);
+    setUserFormCanViewAssets(true);
+    setUserFormCanViewApprovals(false);
+    setUserFormCanViewReports(false);
     setShowUserModal(true);
   };
 
@@ -1084,6 +1193,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUserFormManagerId(user.managerId || '');
     setUserFormStatus(user.status === 'suspended' ? 'suspended' : 'active');
     setUserFormOrgId(user.organizationId || organization.id);
+    setUserFormCanManageTickets(user.privileges?.canManageTickets ?? (user.role !== 'inventory_manager' && user.role !== 'auditor'));
+    setUserFormCanDeleteTickets(user.privileges?.canDeleteTickets ?? (user.role === 'superadmin'));
+    setUserFormCanManageAssets(user.privileges?.canManageAssets ?? true);
+    setUserFormCanManageKb(user.privileges?.canManageKnowledgeBase ?? (user.role === 'admin' || user.role === 'superadmin'));
+    setUserFormCanManageApprovals(user.privileges?.canManageApprovals ?? (user.role === 'manager' || user.role === 'admin' || user.role === 'superadmin'));
+
+    // Left pane views
+    const hasViews = Array.isArray(user.privileges?.allowedViews);
+    setUserFormCanViewDashboard(user.privileges?.canViewDashboard ?? (hasViews ? user.privileges!.allowedViews!.includes('dashboard') : (user.role !== 'inventory_manager')));
+    setUserFormCanViewTickets(user.privileges?.canViewTickets ?? (hasViews ? user.privileges!.allowedViews!.includes('tickets') : (user.role !== 'inventory_manager' && user.role !== 'auditor')));
+    setUserFormCanViewAssets(user.privileges?.canViewAssets ?? (hasViews ? user.privileges!.allowedViews!.includes('assets') : true));
+    setUserFormCanViewApprovals(user.privileges?.canViewApprovals ?? (hasViews ? user.privileges!.allowedViews!.includes('approvals') : (user.role === 'manager' || user.role === 'admin' || user.role === 'superadmin')));
+    setUserFormCanViewReports(user.privileges?.canViewReports ?? (hasViews ? user.privileges!.allowedViews!.includes('reports') : (user.role === 'superadmin' || user.role === 'admin' || user.role === 'technician')));
+
     setShowUserModal(true);
   };
 
@@ -1091,6 +1214,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     e.preventDefault();
     if (!userFormName.trim() || !userFormEmail.trim()) return;
     try {
+      const allowedViewsList: string[] = [];
+      if (userFormCanViewDashboard) allowedViewsList.push('dashboard');
+      if (userFormCanViewTickets) allowedViewsList.push('tickets');
+      if (userFormCanViewAssets) allowedViewsList.push('assets');
+      if (userFormCanViewApprovals) allowedViewsList.push('approvals');
+      if (userFormCanViewReports) allowedViewsList.push('reports');
+
+      const privilegesPayload = userFormRole !== 'requester' ? {
+        canManageTickets: userFormCanManageTickets,
+        canDeleteTickets: userFormCanDeleteTickets,
+        canManageAssets: userFormCanManageAssets,
+        canManageKnowledgeBase: userFormCanManageKb,
+        canManageApprovals: userFormCanManageApprovals,
+        canViewDashboard: userFormCanViewDashboard,
+        canViewTickets: userFormCanViewTickets,
+        canViewAssets: userFormCanViewAssets,
+        canViewApprovals: userFormCanViewApprovals,
+        canViewReports: userFormCanViewReports,
+        allowedViews: allowedViewsList,
+      } : undefined;
+
       if (editingUserId) {
         if (onUpdateUser) {
           await onUpdateUser(editingUserId, {
@@ -1106,6 +1250,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             managerId: userFormManagerId || undefined,
             status: userFormStatus,
             organizationId: userFormOrgId,
+            privileges: privilegesPayload,
           });
         }
       } else {
@@ -1123,6 +1268,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             managerId: userFormManagerId || undefined,
             status: userFormStatus,
             organizationId: userFormOrgId,
+            privileges: privilegesPayload,
           });
         }
       }
@@ -1216,11 +1362,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const openPrivilegeModal = (user: User) => {
     setPrivilegeUser(user);
-    setPrivCanManageTickets(user.privileges?.canManageTickets ?? true);
+    setPrivCanManageTickets(user.privileges?.canManageTickets ?? (user.role !== 'inventory_manager' && user.role !== 'auditor'));
     setPrivCanDeleteTickets(user.privileges?.canDeleteTickets ?? (user.role === 'superadmin'));
     setPrivCanManageAssets(user.privileges?.canManageAssets ?? true);
     setPrivCanManageKb(user.privileges?.canManageKnowledgeBase ?? (user.role === 'admin' || user.role === 'superadmin'));
     setPrivCanManageApprovals(user.privileges?.canManageApprovals ?? (user.role === 'manager' || user.role === 'admin' || user.role === 'superadmin'));
+
+    const hasAllowedViews = Array.isArray(user.privileges?.allowedViews);
+    setPrivCanViewDashboard(user.privileges?.canViewDashboard ?? (hasAllowedViews ? user.privileges!.allowedViews!.includes('dashboard') : (user.role !== 'inventory_manager')));
+    setPrivCanViewTickets(user.privileges?.canViewTickets ?? (hasAllowedViews ? user.privileges!.allowedViews!.includes('tickets') : (user.role !== 'inventory_manager' && user.role !== 'auditor')));
+    setPrivCanViewAssets(user.privileges?.canViewAssets ?? (hasAllowedViews ? user.privileges!.allowedViews!.includes('assets') : true));
+    setPrivCanViewApprovals(user.privileges?.canViewApprovals ?? (hasAllowedViews ? user.privileges!.allowedViews!.includes('approvals') : (user.role === 'manager' || user.role === 'admin' || user.role === 'superadmin')));
+    setPrivCanViewReports(user.privileges?.canViewReports ?? (hasAllowedViews ? user.privileges!.allowedViews!.includes('reports') : (user.role === 'superadmin' || user.role === 'admin' || user.role === 'technician')));
   };
 
   const handleSavePrivileges = async (e: React.FormEvent) => {
@@ -1228,17 +1381,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (!privilegeUser) return;
     setPrivSaving(true);
     try {
+      const allowedViewsList: string[] = [];
+      if (privCanViewDashboard) allowedViewsList.push('dashboard');
+      if (privCanViewTickets) allowedViewsList.push('tickets');
+      if (privCanViewAssets) allowedViewsList.push('assets');
+      if (privCanViewApprovals) allowedViewsList.push('approvals');
+      if (privCanViewReports) allowedViewsList.push('reports');
+
       const updated = await api.updateUserPrivileges(privilegeUser.id, {
         canManageTickets: privCanManageTickets,
         canDeleteTickets: privCanDeleteTickets,
         canManageAssets: privCanManageAssets,
         canManageKnowledgeBase: privCanManageKb,
         canManageApprovals: privCanManageApprovals,
+        canViewDashboard: privCanViewDashboard,
+        canViewTickets: privCanViewTickets,
+        canViewAssets: privCanViewAssets,
+        canViewApprovals: privCanViewApprovals,
+        canViewReports: privCanViewReports,
+        allowedViews: allowedViewsList,
       });
       if (onUpdateUser) {
         await onUpdateUser(privilegeUser.id, updated);
       }
       setPrivilegeUser(null);
+      alert(`Access privileges & left pane views updated successfully for ${privilegeUser.name}!\n• Views: ${allowedViewsList.join(', ')}\n• Tickets: ${privCanManageTickets ? 'Allowed' : 'Disabled'}\n• Delete: ${privCanDeleteTickets ? 'Allowed' : 'Disabled'}\n• Assets: ${privCanManageAssets ? 'Allowed' : 'Disabled'}\n• Approvals: ${privCanManageApprovals ? 'Allowed' : 'Disabled'}`);
     } catch (err: any) {
       alert(err.message || 'Failed to update access privileges');
     } finally {
@@ -1248,14 +1415,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Counts for Segmented Views
   const adminsCount = availableUsers.filter((u) => u.role === 'admin' || u.role === 'superadmin').length;
-  const staffCount = availableUsers.filter((u) => u.role === 'manager' || u.role === 'technician').length;
-  const requestersCount = availableUsers.filter((u) => u.role === 'requester' || u.role === 'auditor').length;
+  const staffCount = availableUsers.filter((u) => u.role === 'manager' || u.role === 'technician' || u.role === 'inventory_manager' || u.role === 'auditor').length;
+  const requestersCount = availableUsers.filter((u) => u.role === 'requester').length;
 
   const filteredUsers = availableUsers.filter((u) => {
     // Segment Tab Filter
     if (userSegmentTab === 'admins' && !(u.role === 'admin' || u.role === 'superadmin')) return false;
-    if (userSegmentTab === 'staff' && !(u.role === 'manager' || u.role === 'technician')) return false;
-    if (userSegmentTab === 'requesters' && !(u.role === 'requester' || u.role === 'auditor')) return false;
+    if (userSegmentTab === 'staff' && !(u.role === 'manager' || u.role === 'technician' || u.role === 'inventory_manager' || u.role === 'auditor')) return false;
+    if (userSegmentTab === 'requesters' && u.role !== 'requester') return false;
 
     // Direct Role Filter
     if (userRoleFilter !== 'all' && u.role !== userRoleFilter) return false;
@@ -1289,12 +1456,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <div className="w-full overflow-x-auto custom-scrollbar pb-1">
         <div className="inline-flex items-center gap-2 p-1.5 neu-flat rounded-2xl border border-slate-200 dark:border-white/10 min-w-max">
           {[
-            { id: 'profile', label: 'My Profile & Role', icon: UserIcon, roles: ['superadmin', 'admin', 'manager', 'technician', 'requester', 'auditor'] },
+            { id: 'profile', label: 'My Profile & Role', icon: UserIcon, roles: ['superadmin', 'admin', 'manager', 'technician', 'requester', 'auditor', 'inventory_manager'] },
             { id: 'users', label: 'User Directory & Registration', icon: Users, roles: ['superadmin', 'admin'] },
-            { id: 'assets', label: 'Hardware Assets & CMDB', icon: HardDrive, roles: ['superadmin', 'admin', 'manager', 'technician'] },
+            { id: 'assets', label: 'Hardware Assets & CMDB', icon: HardDrive, roles: ['superadmin', 'admin', 'inventory_manager'] },
             { id: 'fields', label: 'Custom Fields & Form Builder', icon: Sliders, roles: ['superadmin', 'admin'] },
-            { id: 'admin-mailbox', label: 'Admin Mailboxes (IMAP/POP3/SMTP)', icon: Mail, roles: ['superadmin', 'admin'] },
-            { id: 'default-gateway', label: 'Default Reply & Polling Gateway', icon: Server, roles: ['superadmin'] },
+            { id: 'admin-mailbox', label: 'Staff Mailboxes (IMAP/POP3/SMTP)', icon: Mail, roles: ['superadmin', 'admin'] },
+            { id: 'default-gateway', label: 'Default Reply & Polling Gateway', icon: Server, roles: ['superadmin', 'admin'] },
             { id: 'sla', label: 'SLA Target Matrix', icon: Clock, roles: ['superadmin', 'admin'] },
             { id: 'automations', label: 'Automation Rules', icon: Zap, roles: ['superadmin', 'admin'] },
             { id: 'branding', label: 'Branding & Identity', icon: Palette, roles: ['superadmin'] },
@@ -1931,57 +2098,93 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         {user.role === 'requester' ? (
                           <span className="text-[10px] text-slate-400 font-medium italic">Standard Portal Access</span>
                         ) : (
-                          <div className="flex flex-wrap items-center gap-1 max-w-[230px]">
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                          <div className="flex flex-wrap items-center gap-1.5 max-w-[260px]">
+                            <button
+                              type="button"
+                              onClick={() => currentUser.role === 'superadmin' && openPrivilegeModal(user)}
+                              disabled={currentUser.role !== 'superadmin'}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold transition-all ${
+                                currentUser.role === 'superadmin' ? 'hover:scale-105 cursor-pointer shadow-xs' : 'cursor-default'
+                              } ${
                                 user.privileges?.canManageTickets !== false
-                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                  : 'bg-slate-200 text-slate-500'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/40'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500 line-through'
                               }`}
-                              title="Can view and respond to tickets"
+                              title={currentUser.role === 'superadmin' ? "Click to configure Ticket View & Manage privilege" : "Ticket management privilege"}
                             >
-                              Tickets
-                            </span>
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                              {user.privileges?.canManageTickets !== false ? 'Tickets' : 'No-Tickets'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => currentUser.role === 'superadmin' && openPrivilegeModal(user)}
+                              disabled={currentUser.role !== 'superadmin'}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold transition-all ${
+                                currentUser.role === 'superadmin' ? 'hover:scale-105 cursor-pointer shadow-xs' : 'cursor-default'
+                              } ${
                                 user.privileges?.canDeleteTickets
                                   ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800/40'
                                   : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
                               }`}
-                              title={user.privileges?.canDeleteTickets ? 'Can permanently delete tickets' : 'No delete privilege'}
+                              title={currentUser.role === 'superadmin' ? "Click to configure Delete Ticket privilege" : "Delete ticket privilege"}
                             >
                               {user.privileges?.canDeleteTickets ? 'Delete' : 'No-Del'}
-                            </span>
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => currentUser.role === 'superadmin' && openPrivilegeModal(user)}
+                              disabled={currentUser.role !== 'superadmin'}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold transition-all ${
+                                currentUser.role === 'superadmin' ? 'hover:scale-105 cursor-pointer shadow-xs' : 'cursor-default'
+                              } ${
                                 user.privileges?.canManageAssets !== false
-                                  ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300'
-                                  : 'bg-slate-200 text-slate-500'
+                                  ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800/40'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500 line-through'
                               }`}
-                              title="Can manage IT hardware assets & CMDB"
+                              title={currentUser.role === 'superadmin' ? "Click to configure Asset Management privilege" : "Asset management privilege"}
                             >
-                              Assets
-                            </span>
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                              {user.privileges?.canManageAssets !== false ? 'Assets' : 'No-Assets'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => currentUser.role === 'superadmin' && openPrivilegeModal(user)}
+                              disabled={currentUser.role !== 'superadmin'}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold transition-all ${
+                                currentUser.role === 'superadmin' ? 'hover:scale-105 cursor-pointer shadow-xs' : 'cursor-default'
+                              } ${
                                 user.privileges?.canManageKnowledgeBase
-                                  ? 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300'
-                                  : 'bg-slate-200 text-slate-500'
+                                  ? 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300 border border-violet-300 dark:border-violet-800/40'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
                               }`}
-                              title="Can author & manage knowledge base articles"
+                              title={currentUser.role === 'superadmin' ? "Click to configure KB Management privilege" : "KB management privilege"}
                             >
-                              KB
-                            </span>
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${
+                              {user.privileges?.canManageKnowledgeBase ? 'KB' : 'No-KB'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => currentUser.role === 'superadmin' && openPrivilegeModal(user)}
+                              disabled={currentUser.role !== 'superadmin'}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold transition-all ${
+                                currentUser.role === 'superadmin' ? 'hover:scale-105 cursor-pointer shadow-xs' : 'cursor-default'
+                              } ${
                                 user.privileges?.canManageApprovals
-                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                                  : 'bg-slate-200 text-slate-500'
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800/40'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
                               }`}
-                              title="Can approve change and asset procurement requests"
+                              title={currentUser.role === 'superadmin' ? "Click to configure Approval Requests privilege" : "Approvals privilege"}
                             >
-                              Approvals
-                            </span>
+                              {user.privileges?.canManageApprovals ? 'Approvals' : 'No-Appr'}
+                            </button>
+                            {currentUser.role === 'superadmin' && (
+                              <button
+                                type="button"
+                                onClick={() => openPrivilegeModal(user)}
+                                className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer flex items-center gap-0.5 ml-0.5"
+                                title="Open granular privilege editor"
+                              >
+                                <KeyRound className="w-2.5 h-2.5" />
+                                <span>Edit</span>
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>
@@ -2023,10 +2226,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             <button
                               type="button"
                               onClick={() => openPrivilegeModal(user)}
-                              className="p-1.5 text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-white rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/40 transition-colors cursor-pointer"
-                              title="Configure Access Level & Privileges (Delete Ticket, Manage Assets, KB, Approvals)"
+                              className="flex items-center gap-1 px-2 py-1 text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800/40 rounded-lg transition-colors cursor-pointer"
+                              title="Set View/Delete Ticket, Asset Manage & Approval Privileges"
                             >
                               <KeyRound className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Privileges</span>
                             </button>
                           )}
                           {/* Superadmin can reset password of everyone */}
@@ -2904,18 +3108,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Preview Ticket Category</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Preview Ticket Category
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const el = document.getElementById('ticket-categories-manager');
+                        if (el) el.scrollIntoView({ behavior: 'smooth' });
+                      }}
+                      className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Edit2 className="w-2.5 h-2.5" /> Edit Categories
+                    </button>
+                  </div>
                   <select
-                    value={previewFormValues['category'] || ''}
+                    value={previewFormValues['category'] || ticketCategories[0] || ''}
                     onChange={(e) =>
                       setPreviewFormValues({ ...previewFormValues, category: e.target.value })
                     }
                     className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
                   >
-                    <option value="Software & Cloud Apps">Software &amp; Cloud Apps</option>
-                    <option value="Hardware & Workstations">Hardware &amp; Workstations</option>
-                    <option value="Network & Connectivity">Network &amp; Connectivity</option>
-                    <option value="Security & Access">Security &amp; Access</option>
+                    {ticketCategories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -2951,9 +3170,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                     return (
                       <div key={field.id} className="p-3 rounded-xl neu-card bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-white/10 space-y-1">
-                        <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
-                          {field.label} {field.required && <span className="text-rose-500 font-bold">*</span>}
-                        </label>
+                        <div className="flex items-center justify-between">
+                          <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                            {field.label} {field.required && <span className="text-rose-500 font-bold">*</span>}
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleEditField(field)}
+                            className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-semibold flex items-center gap-1 cursor-pointer px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800/40"
+                            title="Edit this custom field (Operating System & Version, etc.)"
+                          >
+                            <Edit2 className="w-2.5 h-2.5" /> Edit Field
+                          </button>
+                        </div>
                         {field.description && (
                           <div className="text-[10px] text-slate-500 dark:text-slate-400">{field.description}</div>
                         )}
@@ -2999,6 +3228,109 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
           )}
+
+          {/* Ticket Categories & Taxonomy Manager (Hardware & Workstations, Software & Cloud Apps, etc.) */}
+          <div id="ticket-categories-manager" className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-white/10">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  Ticket Categories &amp; Taxonomy (Super Admin Managed)
+                </h3>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+                  Categories available when submitting tickets and defining conditional routing rules (Hardware &amp; Workstations, Software &amp; Cloud Apps, etc.).
+                </p>
+              </div>
+
+              {ticketCategoriesSaveMsg && (
+                <div className="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300">
+                  {ticketCategoriesSaveMsg}
+                </div>
+              )}
+            </div>
+
+            {/* List of categories with inline edit / delete */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {ticketCategories.map((cat, idx) => (
+                <div
+                  key={cat}
+                  className="flex items-center justify-between p-2.5 rounded-xl neu-card bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-xs"
+                >
+                  {editingCategoryIdx === idx ? (
+                    <div className="flex items-center gap-1.5 w-full">
+                      <input
+                        type="text"
+                        value={editingCategoryText}
+                        onChange={(e) => setEditingCategoryText(e.target.value)}
+                        className="flex-1 px-2 py-1 text-xs neu-input bg-slate-50 dark:bg-slate-950 border border-cyan-500 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveEditCategory(idx);
+                          if (e.key === 'Escape') setEditingCategoryIdx(null);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSaveEditCategory(idx)}
+                        className="px-2 py-1 text-[11px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingCategoryIdx(null)}
+                        className="px-2 py-1 text-[11px] font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 truncate">
+                        <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
+                        <span className="truncate">{cat}</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditCategory(idx, cat)}
+                          className="p-1 text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 cursor-pointer"
+                          title="Edit Category Name"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTicketCategory(cat)}
+                          className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
+                          title="Delete Category"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Quick Add Category Form */}
+            <form onSubmit={handleAddTicketCategory} className="flex items-center gap-2 pt-2">
+              <input
+                type="text"
+                placeholder="Add new ticket category (e.g. Facilities & Infrastructure, Mobile Devices)..."
+                value={newCategoryInput}
+                onChange={(e) => setNewCategoryInput(e.target.value)}
+                className="flex-1 px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-medium"
+              />
+              <button
+                type="submit"
+                className="neu-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl cursor-pointer shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Category
+              </button>
+            </form>
+          </div>
 
           {/* Fields Table wrapped in responsive scroll container */}
           <div className="neu-flat rounded-2xl border border-slate-200 dark:border-white/10 overflow-hidden shadow-sm">
@@ -3115,25 +3447,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div>
                 <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <Mail className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-                  Admin &amp; Super Admin Mailbox Connector
+                  Staff &amp; Admin Mailbox Connector
                 </h2>
                 <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                  Connect administrator personal or shared email accounts via IMAP, POP3, and SMTP for bidirectional ticket processing.
+                  Administrator setup for staff mailboxes (Technician, Inventory Manager, Auditor, Administrators) for automated email handling and ticketing.
                 </p>
               </div>
 
-              {/* User Selector if superadmin */}
-              {currentUser.role === 'superadmin' && (
+              {/* User Selector for Staff (Technician, Inventory Manager, Auditor, Administrators) */}
+              {(currentUser.role === 'superadmin' || currentUser.role === 'admin') && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Configure for:</span>
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Configure for Staff:</span>
                   <select
                     value={selectedAdminId}
                     onChange={(e) => setSelectedAdminId(e.target.value)}
                     className="px-3 py-1.5 text-xs font-bold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
                   >
-                    {adminUsers.map((u) => (
+                    {staffUsers.map((u) => (
                       <option key={u.id} value={u.id}>
-                        {u.name} ({u.role.toUpperCase()})
+                        {u.name} ({u.role.replace('_', ' ').toUpperCase()})
                       </option>
                     ))}
                   </select>
@@ -4632,6 +4964,63 @@ WantedBy=multi-user.target`}
                 </div>
               )}
 
+              {userFormRole === 'requester' && (
+                <div className="space-y-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      Assigned Requester Group / Team
+                    </label>
+                    <select
+                      value={userFormGroupId}
+                      onChange={(e) => {
+                        const gid = e.target.value;
+                        setUserFormGroupId(gid);
+                        const team = dbTeams.find((t) => t.id === gid);
+                        if (team) {
+                          setUserFormGroupName(team.name);
+                          if (team.managerId) {
+                            setUserFormManagerId(team.managerId);
+                          }
+                        } else {
+                          setUserFormGroupName('');
+                        }
+                      }}
+                      className="w-full px-3 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                    >
+                      <option value="">Select requester group...</option>
+                      {dbTeams.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      Assigned Manager or Admin *
+                    </label>
+                    <select
+                      value={userFormManagerId}
+                      onChange={(e) => setUserFormManagerId(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-semibold"
+                    >
+                      <option value="">Select assigned manager/admin...</option>
+                      {availableUsers
+                        .filter((u) => u.role === 'manager' || u.role === 'admin' || u.role === 'superadmin')
+                        .map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.name} ({u.role.toUpperCase()})
+                          </option>
+                        ))}
+                    </select>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 block font-medium">
+                      Hierarchy: Each requester must have one assigned Manager or Admin for approvals and oversight.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
                   <span>Assigned Organization *</span>
@@ -4697,6 +5086,121 @@ WantedBy=multi-user.target`}
                   className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-medium"
                 />
               </div>
+
+              {userFormRole !== 'requester' && (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                    <span>Role Access Privileges</span>
+                    <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-normal">Super Admin Controlled</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30">
+                      <input
+                        type="checkbox"
+                        checked={userFormCanManageTickets}
+                        onChange={(e) => setUserFormCanManageTickets(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">View/Manage Tickets</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-rose-500/30">
+                      <input
+                        type="checkbox"
+                        checked={userFormCanDeleteTickets}
+                        onChange={(e) => setUserFormCanDeleteTickets(e.target.checked)}
+                        className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                      />
+                      <span className="font-semibold text-rose-700 dark:text-rose-400">Delete Tickets</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30">
+                      <input
+                        type="checkbox"
+                        checked={userFormCanManageAssets}
+                        onChange={(e) => setUserFormCanManageAssets(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Manage Assets</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30">
+                      <input
+                        type="checkbox"
+                        checked={userFormCanManageApprovals}
+                        onChange={(e) => setUserFormCanManageApprovals(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Manage Approvals</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30 col-span-1 sm:col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={userFormCanManageKb}
+                        onChange={(e) => setUserFormCanManageKb(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Manage Knowledge Base</span>
+                    </label>
+                  </div>
+
+                  {/* Left Navigation Pane Views Privileges */}
+                  <div className="pt-2.5 border-t border-slate-200 dark:border-white/10 space-y-1.5">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                      <span>Left Navigation Pane Views</span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">Toggle views visible in sidebar</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <label className="flex items-center gap-2 p-1.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30">
+                        <input
+                          type="checkbox"
+                          checked={userFormCanViewDashboard}
+                          onChange={(e) => setUserFormCanViewDashboard(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                        />
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Dashboard</span>
+                      </label>
+                      <label className="flex items-center gap-2 p-1.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30">
+                        <input
+                          type="checkbox"
+                          checked={userFormCanViewTickets}
+                          onChange={(e) => setUserFormCanViewTickets(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                        />
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Tickets</span>
+                      </label>
+                      <label className="flex items-center gap-2 p-1.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30">
+                        <input
+                          type="checkbox"
+                          checked={userFormCanViewAssets}
+                          onChange={(e) => setUserFormCanViewAssets(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                        />
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Assets</span>
+                      </label>
+                      <label className="flex items-center gap-2 p-1.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30">
+                        <input
+                          type="checkbox"
+                          checked={userFormCanViewApprovals}
+                          onChange={(e) => setUserFormCanViewApprovals(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                        />
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Approvals</span>
+                      </label>
+                      <label className="flex items-center gap-2 p-1.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/30 col-span-2">
+                        <input
+                          type="checkbox"
+                          checked={userFormCanViewReports}
+                          onChange={(e) => setUserFormCanViewReports(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                        />
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Reports &amp; SLA Metrics</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-white/10">
                 <button
@@ -4956,6 +5460,61 @@ WantedBy=multi-user.target`}
                     className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer mt-0.5"
                   />
                 </label>
+
+                {/* Left Navigation Pane Views Section */}
+                <div className="pt-2 border-t border-slate-200 dark:border-white/10 space-y-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                    <span>Left Navigation Pane Views</span>
+                    <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-semibold">Sidebar Menu Visibility</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Dashboard</span>
+                      <input
+                        type="checkbox"
+                        checked={privCanViewDashboard}
+                        onChange={(e) => setPrivCanViewDashboard(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                    </label>
+                    <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Tickets</span>
+                      <input
+                        type="checkbox"
+                        checked={privCanViewTickets}
+                        onChange={(e) => setPrivCanViewTickets(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                    </label>
+                    <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Assets</span>
+                      <input
+                        type="checkbox"
+                        checked={privCanViewAssets}
+                        onChange={(e) => setPrivCanViewAssets(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                    </label>
+                    <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Approvals</span>
+                      <input
+                        type="checkbox"
+                        checked={privCanViewApprovals}
+                        onChange={(e) => setPrivCanViewApprovals(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                    </label>
+                    <label className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/5 cursor-pointer hover:border-cyan-500/40 transition-colors col-span-2">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Reports &amp; SLA Metrics</span>
+                      <input
+                        type="checkbox"
+                        checked={privCanViewReports}
+                        onChange={(e) => setPrivCanViewReports(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                    </label>
+                  </div>
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/10">

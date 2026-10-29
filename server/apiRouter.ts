@@ -230,11 +230,25 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
     return res.status(401).json({ error: 'Invalid credentials. User ID / Email not found.' });
   }
 
-  // If logging in via Admin portal, enforce staff/admin role
+  // Enforce strict portal login isolation:
+  // Requester should be able to login from only User Portal login
+  // Staff (Inventory manager, Technician, Auditor, Manager, Admin, Superadmin) should be able to login from only Admin / Staff login
+  if (!portalType || (portalType !== 'admin' && portalType !== 'user')) {
+    return res.status(400).json({
+      error: 'Please choose either User Portal Login (Employees & Requesters) or Admin / Staff Login to sign in.',
+    });
+  }
+
   if (portalType === 'admin') {
     if (user.role === 'requester') {
       return res.status(403).json({
-        error: 'Access restricted: This portal is reserved for IT Administrators, Managers, and Technicians only. Please sign in via the End-User Portal.',
+        error: 'Access restricted: Requesters and general employees must sign in through the User Portal login.',
+      });
+    }
+  } else if (portalType === 'user') {
+    if (user.role !== 'requester') {
+      return res.status(403).json({
+        error: 'Access restricted: Staff (Super Admin, Admin, Technician, Inventory Manager, Auditor, and Team Manager) must sign in through the Admin / Staff login.',
       });
     }
   }
@@ -382,9 +396,8 @@ apiRouter.get('/system-settings', (req: Request, res: Response) => {
 });
 
 apiRouter.patch('/system-settings', (req: Request, res: Response) => {
-  const currentUserId = db.get('currentUserId');
   const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? users.find((u: User) => u.id === db.get('currentUserId')) : null) || users[0];
 
   const canUpdate = actor.role === 'superadmin' || actor.role === 'admin' || actor.role === 'manager' || actor.privileges?.canManageAssets;
   if (!canUpdate) {
@@ -412,23 +425,22 @@ apiRouter.patch('/system-settings', (req: Request, res: Response) => {
 
 apiRouter.patch('/users/:id/privileges', (req: Request, res: Response) => {
   const { id } = req.params;
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getActor(req);
 
-  if (actor.role !== 'superadmin') {
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
     return res.status(403).json({ error: 'Only Super Administrators can manage admin access levels and privileges.' });
   }
 
+  const users = db.get('users');
   const idx = users.findIndex(u => u.id === id);
   if (idx === -1) return res.status(404).json({ error: 'User not found' });
 
   const currentPrivileges = users[idx].privileges || {
-    canManageTickets: true,
-    canDeleteTickets: false,
+    canManageTickets: users[idx].role !== 'inventory_manager' && users[idx].role !== 'auditor',
+    canDeleteTickets: users[idx].role === 'superadmin',
     canManageAssets: true,
-    canManageKnowledgeBase: false,
-    canManageApprovals: false,
+    canManageKnowledgeBase: users[idx].role === 'admin' || users[idx].role === 'superadmin',
+    canManageApprovals: users[idx].role === 'manager' || users[idx].role === 'admin' || users[idx].role === 'superadmin',
   };
 
   users[idx].privileges = {
@@ -437,7 +449,7 @@ apiRouter.patch('/users/:id/privileges', (req: Request, res: Response) => {
   };
 
   db.set('users', users);
-  logAudit(actor, 'user.privileges_updated', 'user', id, `Updated access privileges for ${users[idx].name} (${users[idx].role})`);
+  logAudit(actor, 'user.privileges_updated', 'user', id, `Updated access privileges for ${users[idx].name} (${users[idx].role}): Tickets=${users[idx].privileges?.canManageTickets}, Del=${users[idx].privileges?.canDeleteTickets}, Assets=${users[idx].privileges?.canManageAssets}, KB=${users[idx].privileges?.canManageKnowledgeBase}, Approvals=${users[idx].privileges?.canManageApprovals}`);
 
   res.json(users[idx]);
 });
@@ -452,20 +464,30 @@ apiRouter.post('/users', (req: Request, res: Response) => {
   const currentUserId = db.get('currentUserId');
   const actor = users.find(u => u.id === currentUserId) || users[0];
 
+  const targetRole = req.body.role || 'requester';
+  const teams = db.get('teams') || [];
+  const assignedTeam = teams.find(t => t.id === req.body.groupId) || teams[0];
+  const assignedManager = users.find(u => 
+    u.id === req.body.managerId || 
+    (assignedTeam?.managerId && u.id === assignedTeam.managerId) || 
+    u.role === 'manager' || 
+    u.role === 'admin'
+  );
+
   const newUser: User = {
     id: `usr-${Date.now()}`,
     name: req.body.name,
     email: req.body.email,
     employeeCode: req.body.employeeCode?.trim().toUpperCase() || `CBPL${1000 + users.length + 1}`,
-    password: req.body.password || (req.body.role === 'requester' ? 'User@123' : 'Tech@123'),
-    role: req.body.role || 'requester',
-    title: req.body.title,
+    password: req.body.password || (targetRole === 'requester' ? 'User@123' : 'Tech@123'),
+    role: targetRole,
+    title: req.body.title || (targetRole === 'requester' ? 'Staff Requester' : undefined),
     organizationId: req.body.organizationId || actor.organizationId,
     departmentId: req.body.departmentId,
-    team: req.body.team,
-    groupId: req.body.groupId,
-    groupName: req.body.groupName,
-    managerId: req.body.managerId,
+    team: req.body.team || assignedTeam?.name || 'General Operations',
+    groupId: req.body.groupId || (targetRole === 'requester' ? (assignedTeam?.id || 'grp-operations') : undefined),
+    groupName: req.body.groupName || (targetRole === 'requester' ? (assignedTeam?.name || 'Operations & Support Team') : undefined),
+    managerId: req.body.managerId || (targetRole === 'requester' ? (assignedManager?.id || 'usr-team-manager') : undefined),
     locationId: req.body.locationId,
     phone: req.body.phone,
     status: 'active',
@@ -483,8 +505,7 @@ apiRouter.patch('/users/:id', (req: Request, res: Response) => {
   const idx = users.findIndex(u => u.id === id);
   if (idx === -1) return res.status(404).json({ error: 'User not found' });
 
-  const currentUserId = db.get('currentUserId');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getActor(req);
 
   const oldUser = users[idx];
   const updates = req.body;
@@ -500,7 +521,22 @@ apiRouter.patch('/users/:id', (req: Request, res: Response) => {
     ...oldUser,
     ...updates,
     role: (!isAdmin && isSelf) ? oldUser.role : (updates.role || oldUser.role),
+    privileges: updates.privileges ? { ...(oldUser.privileges || {}), ...updates.privileges } : oldUser.privileges,
   };
+
+  // Hierarchy enforcement: each requester must have one assigned manager or admin and group
+  if (updatedUser.role === 'requester') {
+    if (!updatedUser.managerId) {
+      const defaultMgr = users.find(u => u.role === 'manager') || users.find(u => u.role === 'admin' || u.role === 'superadmin');
+      updatedUser.managerId = defaultMgr?.id || 'usr-team-manager';
+    }
+    if (!updatedUser.groupId) {
+      const teams = db.get('teams') || [];
+      const defaultTeam = teams.find(t => t.id === 'grp-operations') || teams[0];
+      updatedUser.groupId = defaultTeam?.id || 'grp-operations';
+      updatedUser.groupName = defaultTeam?.name || 'Operations Requester Group';
+    }
+  }
 
   users[idx] = updatedUser;
   db.set('users', users);
@@ -524,9 +560,8 @@ apiRouter.post('/users/:id/reset-password', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
   }
 
-  const currentUserId = db.get('currentUserId');
+  const actor = getActor(req);
   const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
 
   if (actor.role !== 'superadmin' && actor.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied: Only Super Administrators can reset account passwords.' });
@@ -562,9 +597,8 @@ apiRouter.post('/users/:id/change-password', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
   }
 
-  const currentUserId = db.get('currentUserId');
+  const actor = getActor(req);
   const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
 
   const targetIdx = users.findIndex(u => u.id === id);
   if (targetIdx === -1) {
@@ -613,8 +647,7 @@ apiRouter.delete('/users/:id', (req: Request, res: Response) => {
   const userToDelete = users.find(u => u.id === id);
   if (!userToDelete) return res.status(404).json({ error: 'User not found' });
 
-  const currentUserId = db.get('currentUserId');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getActor(req);
 
   if (actor.role !== 'superadmin' && actor.role !== 'admin') {
     return res.status(403).json({ error: 'Only admins and superadmins can remove users or agents.' });
@@ -678,6 +711,15 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     }
   }
 
+  const teams = db.get('teams') || [];
+  const assignedTeam = teams.find(t => t.id === req.body.groupId) || teams[0];
+  const assignedManager = users.find(u => 
+    u.id === req.body.managerId || 
+    (assignedTeam?.managerId && u.id === assignedTeam.managerId) || 
+    u.role === 'manager' || 
+    u.role === 'admin'
+  );
+
   const newUser: User = {
     id: `usr-${Date.now()}`,
     name: name.trim(),
@@ -688,7 +730,10 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     phone: phone?.trim(),
     organizationId: targetOrg.id,
     departmentId: departmentId || 'dept-eng',
-    team: team?.trim() || 'General Operations',
+    team: assignedTeam?.name || team?.trim() || 'Operations & Support Team',
+    groupId: assignedTeam?.id || 'grp-operations',
+    groupName: assignedTeam?.name || 'Operations & Support Team',
+    managerId: assignedManager?.id || 'usr-team-manager',
     status: 'active',
     password: password ? password.trim() : undefined,
     createdAt: new Date().toISOString(),
@@ -907,13 +952,16 @@ apiRouter.get('/tickets', (req: Request, res: Response) => {
   let filtered = [...tickets];
 
   // RBAC: Data Isolation
-  if (currentUser && currentUser.role === 'requester') {
+  if (currentUser && currentUser.role === 'inventory_manager' && currentUser.privileges?.canManageTickets !== true) {
+    // Inventory manager cannot view tickets unless granted by Super Admin
+    return res.json([]);
+  } else if (currentUser && currentUser.role === 'requester') {
     filtered = filtered.filter(t =>
       t.requesterId === currentUser.id ||
       (t.requesterEmail && t.requesterEmail.toLowerCase() === currentUser.email.toLowerCase())
     );
   } else if (currentUser && currentUser.role === 'manager') {
-    // Team Manager can ONLY see their team's/group's tickets
+    // Team Manager can ONLY see tickets of requesters in their assigned group
     const teams = db.get('teams') || [];
     const myManagedTeams = teams.filter(tm => tm.managerId === currentUser.id || tm.managerEmail?.toLowerCase() === currentUser.email.toLowerCase());
     const myManagedTeamIds = new Set(myManagedTeams.map(tm => tm.id));
@@ -933,9 +981,7 @@ apiRouter.get('/tickets', (req: Request, res: Response) => {
     filtered = filtered.filter(t =>
       teamUserIds.has(t.requesterId) ||
       (t.requesterEmail && teamUserEmails.has(t.requesterEmail.toLowerCase())) ||
-      (t.assignedTeamId && myManagedTeamIds.has(t.assignedTeamId)) ||
-      (t.ccRecipients && t.ccRecipients.some((cc: string) => cc.toLowerCase() === currentUser.email.toLowerCase())) ||
-      (t.managerEmail && t.managerEmail.toLowerCase() === currentUser.email.toLowerCase())
+      (t.assignedTeamId && myManagedTeamIds.has(t.assignedTeamId))
     );
   } else if (!currentUser) {
     // Unauthenticated guest: no track ticket by id
@@ -1054,9 +1100,12 @@ apiRouter.get('/tickets/:id', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Ticket not found' });
   }
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const currentUser = currentUserId ? users.find(u => u.id === currentUserId) : null;
+  const currentUser = getOptionalActor(req);
+
+  // RBAC: Inventory Manager cannot view tickets unless granted by Super Admin
+  if (currentUser && currentUser.role === 'inventory_manager' && currentUser.privileges?.canManageTickets !== true) {
+    return res.status(403).json({ error: 'Access denied: Inventory managers cannot view tickets without ticket management privilege.' });
+  }
 
   // RBAC: Requesters can only view their own tickets
   if (currentUser && currentUser.role === 'requester') {
@@ -1065,17 +1114,46 @@ apiRouter.get('/tickets/:id', (req: Request, res: Response) => {
     }
   }
 
+  const allUsers: User[] = db.get('users') || [];
+
+  // RBAC: Managers can only view tickets belonging to their group
+  if (currentUser && currentUser.role === 'manager') {
+    const teams = db.get('teams') || [];
+    const myManagedTeams = teams.filter((tm: any) => tm.managerId === currentUser.id || tm.managerEmail?.toLowerCase() === currentUser.email.toLowerCase());
+    const myManagedTeamIds = new Set(myManagedTeams.map((tm: any) => tm.id));
+    const teamUserIds = new Set(
+      allUsers.filter((u: User) => 
+        u.managerId === currentUser.id || 
+        (u.groupId && myManagedTeamIds.has(u.groupId)) ||
+        (u.team && myManagedTeams.some((tm: any) => tm.name.toLowerCase() === u.team?.toLowerCase())) ||
+        u.id === currentUser.id
+      ).map((u: User) => u.id)
+    );
+    const teamUserEmails = new Set(
+      allUsers.filter((u: User) => teamUserIds.has(u.id)).map((u: User) => u.email.toLowerCase())
+    );
+
+    const isGroupTicket = 
+      teamUserIds.has(ticket.requesterId) ||
+      (ticket.requesterEmail && teamUserEmails.has(ticket.requesterEmail.toLowerCase())) ||
+      (ticket.assignedTeamId && myManagedTeamIds.has(ticket.assignedTeamId));
+
+    if (!isGroupTicket) {
+      return res.status(403).json({ error: 'Access denied: Managers cannot view tickets of requesters outside their assigned group.' });
+    }
+  }
+
   // Enforce business rule: Requesters cannot be assigned tickets
   let cleanTicket = { ...ticket };
   if (cleanTicket.assignedTechnicianId) {
-    const assignedUser = users.find(u => u.id === cleanTicket.assignedTechnicianId);
+    const assignedUser = allUsers.find((u: User) => u.id === cleanTicket.assignedTechnicianId);
     if (assignedUser && (assignedUser.role === 'requester' || assignedUser.role === 'auditor')) {
       cleanTicket.assignedTechnicianId = undefined;
       cleanTicket.assignedTechnicianName = undefined;
     }
   }
   if (cleanTicket.assignedTechnicianName) {
-    const assignedUser = users.find(u => u.name.toLowerCase() === cleanTicket.assignedTechnicianName?.toLowerCase());
+    const assignedUser = allUsers.find((u: User) => u.name.toLowerCase() === cleanTicket.assignedTechnicianName?.toLowerCase());
     if (assignedUser && (assignedUser.role === 'requester' || assignedUser.role === 'auditor')) {
       cleanTicket.assignedTechnicianId = undefined;
       cleanTicket.assignedTechnicianName = undefined;
@@ -1121,9 +1199,11 @@ apiRouter.get('/tickets/:id', (req: Request, res: Response) => {
 });
 
 apiRouter.post('/tickets', (req: Request, res: Response) => {
-  const currentUserId = db.get('currentUserId');
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find(u => u.id === db.get('currentUserId')) : null);
+  if (actor && actor.role === 'inventory_manager' && actor.privileges?.canManageTickets !== true) {
+    return res.status(403).json({ error: 'Access denied: Inventory managers cannot create or manage tickets without ticket management privilege.' });
+  }
   const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
 
   const {
     subject,
@@ -1296,7 +1376,15 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
   }
 
   logAudit(
-    actor || { id: 'guest', name: newTicket.requesterName, role: 'requester' as const },
+    actor || {
+      id: 'guest',
+      name: newTicket.requesterName,
+      email: newTicket.requesterEmail,
+      role: 'requester' as const,
+      organizationId: newTicket.organizationId,
+      status: 'active' as const,
+      createdAt: new Date().toISOString(),
+    },
     'ticket.created',
     'ticket',
     ticketId,
@@ -1316,6 +1404,10 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
   }
 
   const actor = getActor(req);
+  if (actor.role === 'inventory_manager' && actor.privileges?.canManageTickets !== true) {
+    return res.status(403).json({ error: 'Access denied: Inventory managers cannot modify tickets without ticket management privilege.' });
+  }
+
   const users = db.get('users');
 
   const oldTicket = tickets[idx];
@@ -1354,9 +1446,7 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
     const isTeamTicket = 
       teamUserIds.has(oldTicket.requesterId) ||
       (oldTicket.requesterEmail && teamUserEmails.has(oldTicket.requesterEmail.toLowerCase())) ||
-      (oldTicket.assignedTeamId && myManagedTeamIds.has(oldTicket.assignedTeamId)) ||
-      (oldTicket.ccRecipients && oldTicket.ccRecipients.some((cc: string) => cc.toLowerCase() === actor.email.toLowerCase())) ||
-      (oldTicket.managerEmail && oldTicket.managerEmail.toLowerCase() === actor.email.toLowerCase());
+      (oldTicket.assignedTeamId && myManagedTeamIds.has(oldTicket.assignedTeamId));
 
     if (!isTeamTicket) {
       return res.status(403).json({ error: 'Access denied: You can only view and close tickets belonging to your team/group.' });
@@ -1510,9 +1600,13 @@ apiRouter.delete('/tickets/:id', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Ticket not found' });
   }
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getActor(req);
+  if (actor.role === 'inventory_manager' && actor.privileges?.canDeleteTickets !== true) {
+    return res.status(403).json({ error: 'Access denied: Inventory managers cannot delete tickets without delete ticket privilege.' });
+  }
+  if (actor.role === 'manager') {
+    return res.status(403).json({ error: 'Access denied: Team managers only have permission to view and close tickets for their team (no deletion rights).' });
+  }
 
   // RBAC: superadmin, admin, or any staff user with canDeleteTickets privilege
   const canDelete = actor.role === 'superadmin' || actor.role === 'admin' || actor.privileges?.canDeleteTickets === true;
@@ -2529,10 +2623,18 @@ apiRouter.get('/auth/otp/status', (req: Request, res: Response) => {
 // Admin & Super Admin Individual Mailbox Connections (IMAP / POP3 / SMTP)
 // -------------------------------------------------------------
 apiRouter.get('/admin/mailboxes', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (actor && actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied: Email Gateways & Mailbox Connectors are only visible to administrators.' });
+  }
   res.json(db.get('adminMailboxes') || []);
 });
 
 apiRouter.get('/admin/mailboxes/user/:userId', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (actor && actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied: Email Gateways & Mailbox Connectors are only visible to administrators.' });
+  }
   const { userId } = req.params;
   const mailboxes = db.get('adminMailboxes') || [];
   const config = mailboxes.find((m) => m.userId === userId);
@@ -2696,9 +2798,8 @@ apiRouter.post('/custom-fields', (req: Request, res: Response) => {
   };
   db.set('customFields', [...fields, newField]);
 
-  const currentUserId = db.get('currentUserId');
   const users = db.get('users');
-  const actor = users.find((u) => u.id === currentUserId) || users[0];
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? users.find((u: User) => u.id === db.get('currentUserId')) : null) || users[0];
   logAudit(actor, 'custom_field.created', 'setting', newField.id, `Created dynamic ticket field "${newField.label}" (${newField.type})`);
 
   res.status(201).json(newField);
@@ -2713,9 +2814,8 @@ apiRouter.patch('/custom-fields/:id', (req: Request, res: Response) => {
   fields[idx] = { ...fields[idx], ...req.body };
   db.set('customFields', fields);
 
-  const currentUserId = db.get('currentUserId');
   const users = db.get('users');
-  const actor = users.find((u) => u.id === currentUserId) || users[0];
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? users.find((u: User) => u.id === db.get('currentUserId')) : null) || users[0];
   logAudit(actor, 'custom_field.updated', 'setting', id, `Updated configuration for ticket field "${fields[idx].label}"`);
 
   res.json(fields[idx]);
@@ -2727,9 +2827,8 @@ apiRouter.delete('/custom-fields/:id', (req: Request, res: Response) => {
   const filtered = fields.filter((f) => f.id !== id);
   db.set('customFields', filtered);
 
-  const currentUserId = db.get('currentUserId');
   const users = db.get('users');
-  const actor = users.find((u) => u.id === currentUserId) || users[0];
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? users.find((u: User) => u.id === db.get('currentUserId')) : null) || users[0];
   logAudit(actor, 'custom_field.deleted', 'setting', id, `Deleted dynamic custom field ${id}`);
 
   res.json({ success: true, id });
@@ -3002,6 +3101,10 @@ apiRouter.patch('/automation-rules/:id/toggle', (req: Request, res: Response) =>
 // Email Integration & Inbound Processor Simulator
 // -------------------------------------------------------------
 apiRouter.get('/email-channels', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (actor && actor.role !== 'superadmin' && actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied: Email Gateways & Mailbox Connector are only visible to administrators.' });
+  }
   res.json(db.get('emailChannels'));
 });
 
@@ -3132,6 +3235,11 @@ apiRouter.post('/email/simulate-inbound', (req: Request, res: Response) => {
 // Real Reporting & Computed Analytics
 // -------------------------------------------------------------
 apiRouter.get('/reports/metrics', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (actor && actor.role !== 'superadmin' && actor.role !== 'admin' && actor.role !== 'technician') {
+    return res.status(403).json({ error: 'Access denied: ITSM Service Performance & SLA Analytics is only visible to super admin, admin, and technician.' });
+  }
+
   const tickets = db.get('tickets');
   const surveys = db.get('surveys');
 

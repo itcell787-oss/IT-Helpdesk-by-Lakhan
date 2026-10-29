@@ -101,9 +101,19 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   useEffect(() => {
     if (initialTab) {
-      setActiveTab(initialTab as any);
+      if (initialTab === 'register' && currentUser) {
+        setActiveTab('home');
+      } else {
+        setActiveTab(initialTab as any);
+      }
     }
-  }, [initialTab]);
+  }, [initialTab, currentUser]);
+
+  useEffect(() => {
+    if (currentUser && activeTab === 'register') {
+      setActiveTab('home');
+    }
+  }, [currentUser, activeTab]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [ratingTicketId, setRatingTicketId] = useState<string | null>(null);
@@ -326,11 +336,17 @@ export const PortalView: React.FC<PortalViewProps> = ({
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab');
-      if (tabParam === 'register' || tabParam === 'submit' || tabParam === 'my-tickets') {
+      if (tabParam === 'register') {
+        if (!currentUser) {
+          setActiveTab('register');
+        } else {
+          setActiveTab('home');
+        }
+      } else if (tabParam === 'submit' || tabParam === 'my-tickets') {
         setActiveTab(tabParam as any);
       }
     }
-  }, [currentUser?.email, requireOtp]);
+  }, [currentUser, requireOtp]);
 
   const handleSendRegOtp = async () => {
     if (!regEmail || !regEmail.includes('@')) {
@@ -1903,8 +1919,8 @@ export const PortalView: React.FC<PortalViewProps> = ({
         </div>
       )}
 
-      {/* Tab 5: User Self-Registration with OTP Verification */}
-      {activeTab === 'register' && (
+      {/* Tab 5: User Self-Registration with OTP Verification (Guests only) */}
+      {!currentUser && activeTab === 'register' && (
         <div className="neu-flat p-6 sm:p-8 rounded-2xl border border-slate-200/90 dark:border-white/10 max-w-xl mx-auto space-y-6">
           <div className="space-y-1 pb-4 border-b border-slate-200 dark:border-white/10">
             <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">

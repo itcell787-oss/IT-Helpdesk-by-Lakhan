@@ -6,6 +6,13 @@ export interface AdminPrivileges {
   canManageAssets: boolean;
   canManageKnowledgeBase: boolean;
   canManageApprovals: boolean;
+  // Left pane navigation view permissions for selected staff
+  canViewDashboard?: boolean;
+  canViewTickets?: boolean;
+  canViewAssets?: boolean;
+  canViewApprovals?: boolean;
+  canViewReports?: boolean;
+  allowedViews?: string[]; // ['dashboard', 'tickets', 'assets', 'approvals', 'reports']
 }
 
 export interface SystemSettings {
@@ -17,6 +24,7 @@ export interface SystemSettings {
   categoryAutoAssignRules?: Record<string, { technicianId?: string; technicianName?: string; teamId?: string }>;
   allowRequesterAssetSelfService?: boolean; // Requesters can view and add/remove assigned assets from portal
   requesterAssetOptions?: string[]; // Customizable dropdown options for requesters: CPU, Keyboard, Mouse, Display, Laptop, Headphone, Webcam
+  ticketCategories?: string[]; // Customizable ticket categories (Hardware & Workstations, Software & Cloud Apps, etc.)
 }
 
 export interface User {

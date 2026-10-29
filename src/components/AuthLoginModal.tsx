@@ -44,6 +44,22 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
   const [pskNewPassword, setPskNewPassword] = useState('');
   const [pskConfirmPassword, setPskConfirmPassword] = useState('');
 
+  // Initial Host Super Admin hint - shown only one time when first hosted
+  const [showHostInitialHint, setShowHostInitialHint] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('initial_host_superadmin_configured') !== 'true';
+    } catch {
+      return true;
+    }
+  });
+
+  const dismissInitialHint = () => {
+    setShowHostInitialHint(false);
+    try {
+      localStorage.setItem('initial_host_superadmin_configured', 'true');
+    } catch {}
+  };
+
   if (!isOpen) return null;
 
   const handleTabChange = (tab: 'user' | 'admin' | 'psk') => {
@@ -75,6 +91,10 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
           localStorage.setItem('it_helpdesk_session_token', data.sessionToken);
           localStorage.setItem('it_helpdesk_user_id', data.user.id);
         } catch {}
+      }
+
+      if (data.user.role === 'superadmin' || email.trim() === 'admin') {
+        dismissInitialHint();
       }
 
       onLoginSuccess(data.user);
@@ -152,17 +172,17 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
             <div>
               <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
                 {activeTab === 'admin'
-                  ? 'IT Staff & Administrator Sign In'
+                  ? 'Admin & Staff Portal Sign In'
                   : activeTab === 'psk'
                   ? 'Set Password with Pre-Shared Key'
-                  : 'End-User Portal Sign In'}
+                  : 'User Portal Sign In (Employees & Requesters)'}
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
                 {activeTab === 'admin'
-                  ? 'Access IT Service Desk, Tickets, CMDB Assets & Super Admin'
+                  ? 'For Super Admin, Admin, Inventory Manager, Technician, Auditor & Manager'
                   : activeTab === 'psk'
                   ? 'Configure or reset your account password using Super Admin PSK'
-                  : 'Submit requests, access service catalog, and track support tickets'}
+                  : 'For employees and requesters to submit and track their support requests'}
               </p>
             </div>
           </div>
@@ -347,7 +367,7 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
               </div>
             </div>
 
-            {activeTab === 'admin' && (
+            {activeTab === 'admin' && showHostInitialHint && (
               <div className="p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800/40 text-violet-800 dark:text-violet-300 text-[11px] flex items-center justify-between">
                 <div>
                   <span className="font-bold">Initial Host Super Admin:</span>{' '}
@@ -355,16 +375,27 @@ export const AuthLoginModal: React.FC<AuthLoginModalProps> = ({
                   {' / '}
                   <code className="font-mono font-bold bg-white/70 dark:bg-slate-900/70 px-1 py-0.5 rounded">L@khan@123</code>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('admin');
-                    setPassword('L@khan@123');
-                  }}
-                  className="font-bold text-violet-700 dark:text-violet-300 underline hover:opacity-80 cursor-pointer ml-2 shrink-0"
-                >
-                  Quick Fill
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail('admin');
+                      setPassword('L@khan@123');
+                      dismissInitialHint();
+                    }}
+                    className="font-bold text-violet-700 dark:text-violet-300 underline hover:opacity-80 cursor-pointer ml-2"
+                  >
+                    Quick Fill
+                  </button>
+                  <button
+                    type="button"
+                    onClick={dismissInitialHint}
+                    className="text-violet-400 hover:text-violet-700 dark:hover:text-violet-200 font-bold px-1 cursor-pointer"
+                    title="Dismiss permanently"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             )}
 

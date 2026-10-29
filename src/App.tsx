@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, ShieldAlert } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { ShieldCheck, ShieldAlert, RotateCw, X, Ticket as TicketIcon } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
@@ -118,6 +118,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Real-time Ticket Generation Notification State
+  const [showNewTicketNotification, setShowNewTicketNotification] = useState<boolean>(false);
+  const [newTicketNotificationCount, setNewTicketNotificationCount] = useState<number>(0);
+  const ticketsCountRef = useRef<number>(0);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -138,6 +143,8 @@ export default function App() {
         if (session.user.role === 'requester') {
           setActiveView('portal');
           setPortalInitialTab('home');
+        } else if (session.user.role === 'inventory_manager') {
+          setActiveView('assets');
         } else {
           setActiveView('dashboard');
         }
@@ -184,6 +191,9 @@ export default function App() {
       ]);
 
       setTickets(ticketsData);
+      if (ticketsCountRef.current === 0 && ticketsData && ticketsData.length > 0) {
+        ticketsCountRef.current = ticketsData.length;
+      }
       setAssets(assetsData);
       setKnowledgeArticles(kbData);
       setServiceCatalog(catalogData);
@@ -215,6 +225,29 @@ export default function App() {
   useEffect(() => {
     loadData(true);
   }, [loadData]);
+
+  // Periodic Poller to detect incoming tickets from email gateways or other sessions
+  useEffect(() => {
+    const poller = setInterval(async () => {
+      try {
+        if (currentUser?.role === 'inventory_manager') return;
+        const freshTickets = await api.getTickets();
+        if (Array.isArray(freshTickets)) {
+          if (ticketsCountRef.current > 0 && freshTickets.length > ticketsCountRef.current) {
+            const delta = freshTickets.length - ticketsCountRef.current;
+            setNewTicketNotificationCount((prev) => prev + delta);
+            setShowNewTicketNotification(true);
+          }
+          ticketsCountRef.current = freshTickets.length;
+          setTickets(freshTickets);
+        }
+      } catch {
+        // Silent poll
+      }
+    }, 7000);
+
+    return () => clearInterval(poller);
+  }, [currentUser]);
 
   // Load ticket details when selected
   useEffect(() => {
@@ -262,7 +295,7 @@ export default function App() {
     }
   };
 
-  // Role Guard: End-users (requesters) and guests should not see Console, full Tickets, CMDB Assets, or Settings
+  // Role Guard: End-users, Inventory Manager, Manager, and Reports/Gateway permissions
   useEffect(() => {
     if (!currentUser || currentUser.role === 'requester') {
       if (activeView === 'dashboard') {
@@ -278,6 +311,39 @@ export default function App() {
         setActiveView('portal');
         setPortalInitialTab('home');
       }
+      return;
+    }
+
+    // Inventory manager cannot view or manage tickets; only ITSM & resources
+    if (currentUser.role === 'inventory_manager') {
+      if (['dashboard', 'tickets', 'tickets-my', 'tickets-unassigned', 'tickets-critical', 'ticket-detail', 'approvals', 'reports', 'email-channels', 'superadmin'].includes(activeView)) {
+        setActiveView('assets');
+      }
+      return;
+    }
+
+    // Manager cannot access reports, email gateway, or superadmin
+    if (currentUser.role === 'manager') {
+      if (['reports', 'email-channels', 'superadmin'].includes(activeView)) {
+        setActiveView('dashboard');
+      }
+      return;
+    }
+
+    // Reports & SLA metrics: only visible to superadmin, admin, technician
+    if (activeView === 'reports') {
+      if (currentUser.role !== 'superadmin' && currentUser.role !== 'admin' && currentUser.role !== 'technician') {
+        setActiveView('dashboard');
+      }
+      return;
+    }
+
+    // Email Gateways & Mailbox Connector: only visible to superadmin and admin
+    if (activeView === 'email-channels') {
+      if (currentUser.role !== 'superadmin' && currentUser.role !== 'admin') {
+        setActiveView('dashboard');
+      }
+      return;
     }
   }, [currentUser, activeView]);
 
@@ -323,6 +389,9 @@ export default function App() {
     try {
       const created = await api.createTicket(ticketData);
       setTickets((prev) => [created, ...prev]);
+      ticketsCountRef.current = ticketsCountRef.current + 1;
+      setNewTicketNotificationCount((prev) => prev + 1);
+      setShowNewTicketNotification(true);
       showToast(`Ticket [${created.id}] successfully created!`);
       loadData();
       return created;
@@ -936,6 +1005,7 @@ export default function App() {
               }
             }}
             userRole={currentUser.role}
+            userPrivileges={currentUser.privileges}
             collapsed={sidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
             ticketCounts={ticketCounts}
@@ -1358,6 +1428,7 @@ export default function App() {
         assets={assets}
         currentUser={currentUser}
         requireOtp={systemSettings?.ticketSubmissionOtpEnabled ?? false}
+        ticketCategories={organization?.systemSettings?.ticketCategories}
       />
 
       {/* Separate User Portal & Admin Login Modal */}
@@ -1456,6 +1527,57 @@ export default function App() {
         onOpenNewTicket={() => setIsNewTicketOpen(true)}
         onOpenEmailSimulator={() => setActiveView('email-channels')}
       />
+
+      {/* Real-time Ticket Generation Notification Popup */}
+      {showNewTicketNotification && (
+        <div
+          role="alert"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex items-center justify-between gap-4 p-4 rounded-2xl bg-slate-900/95 dark:bg-slate-900/95 text-white shadow-2xl border border-cyan-500/40 backdrop-blur-md animate-in slide-in-from-bottom-5 duration-300 max-w-md ring-1 ring-cyan-500/20"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/50 flex items-center justify-center text-cyan-400 shrink-0">
+              <TicketIcon className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="text-xs font-black tracking-wide flex items-center gap-1.5 text-cyan-300">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping inline-block" />
+                <span>
+                  {newTicketNotificationCount === 1 ? '1 ticket received' : `${newTicketNotificationCount} tickets received`}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 mt-0.5 line-clamp-1">
+                A new support ticket has been generated in the system.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={async () => {
+                setShowNewTicketNotification(false);
+                setNewTicketNotificationCount(0);
+                await loadData();
+                showToast('Tickets list refreshed');
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs transition-colors cursor-pointer shadow-md"
+              title="Refresh tickets"
+            >
+              <RotateCw className="w-3.5 h-3.5" />
+              <span>Refresh</span>
+            </button>
+            <button
+              onClick={() => {
+                setShowNewTicketNotification(false);
+                setNewTicketNotificationCount(0);
+              }}
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700/50 cursor-pointer"
+              title="Dismiss popup"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

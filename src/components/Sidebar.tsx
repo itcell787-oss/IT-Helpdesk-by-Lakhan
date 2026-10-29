@@ -19,12 +19,13 @@ import {
   ChevronRight,
   ExternalLink,
 } from 'lucide-react';
-import { UserRole } from '../types';
+import { UserRole, AdminPrivileges } from '../types';
 
 interface SidebarProps {
   activeView: string;
   onNavigate: (view: string) => void;
   userRole: UserRole;
+  userPrivileges?: AdminPrivileges;
   collapsed: boolean;
   onToggleCollapse: () => void;
   ticketCounts?: {
@@ -41,11 +42,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeView,
   onNavigate,
   userRole,
+  userPrivileges,
   collapsed,
   onToggleCollapse,
   ticketCounts,
 }) => {
   const isRequester = userRole === 'requester';
+
+  // Helper to determine if a left pane view is permitted for this staff user
+  const isViewPermitted = (viewKey: string, defaultPermitted: boolean) => {
+    if (userRole === 'superadmin') return true;
+    if (!userPrivileges) return defaultPermitted;
+
+    if (viewKey === 'dashboard') {
+      if (userPrivileges.canViewDashboard !== undefined) return userPrivileges.canViewDashboard;
+      if (Array.isArray(userPrivileges.allowedViews)) return userPrivileges.allowedViews.includes('dashboard');
+      return defaultPermitted;
+    }
+    if (viewKey === 'tickets') {
+      if (userPrivileges.canViewTickets !== undefined) return userPrivileges.canViewTickets;
+      if (Array.isArray(userPrivileges.allowedViews)) return userPrivileges.allowedViews.includes('tickets');
+      if (userPrivileges.canManageTickets !== undefined) return userPrivileges.canManageTickets;
+      return defaultPermitted;
+    }
+    if (viewKey === 'assets') {
+      if (userPrivileges.canViewAssets !== undefined) return userPrivileges.canViewAssets;
+      if (Array.isArray(userPrivileges.allowedViews)) return userPrivileges.allowedViews.includes('assets');
+      if (userPrivileges.canManageAssets !== undefined) return userPrivileges.canManageAssets;
+      return defaultPermitted;
+    }
+    if (viewKey === 'approvals') {
+      if (userPrivileges.canViewApprovals !== undefined) return userPrivileges.canViewApprovals;
+      if (Array.isArray(userPrivileges.allowedViews)) return userPrivileges.allowedViews.includes('approvals');
+      if (userPrivileges.canManageApprovals !== undefined) return userPrivileges.canManageApprovals;
+      return defaultPermitted;
+    }
+    if (viewKey === 'reports') {
+      if (userPrivileges.canViewReports !== undefined) return userPrivileges.canViewReports;
+      if (Array.isArray(userPrivileges.allowedViews)) return userPrivileges.allowedViews.includes('reports');
+      return defaultPermitted;
+    }
+
+    if (Array.isArray(userPrivileges.allowedViews)) {
+      return userPrivileges.allowedViews.includes(viewKey);
+    }
+    return defaultPermitted;
+  };
 
   const navItem = (
     id: string,
@@ -146,23 +188,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }`}
     >
       <div className={`flex-1 overflow-y-auto custom-scrollbar ${collapsed ? 'px-2 py-3 space-y-4' : 'p-3 space-y-5'}`}>
-        {/* Main Workspaces */}
-        <div>
-          {!collapsed ? (
-            <div className="px-3 pb-2 text-[11px] font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-              Service Desk
+        {/* Main Workspaces (Controlled by staff privileges) */}
+        {(isViewPermitted('dashboard', userRole !== 'inventory_manager') || isViewPermitted('tickets', userRole !== 'inventory_manager' || userPrivileges?.canManageTickets === true)) && (
+          <div>
+            {!collapsed ? (
+              <div className="px-3 pb-2 text-[11px] font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Service Desk
+              </div>
+            ) : (
+              <div className="w-6 h-0.5 bg-slate-300 dark:bg-white/10 mx-auto mb-2 rounded-full" />
+            )}
+            <div className="space-y-1.5">
+              {isViewPermitted('dashboard', userRole !== 'inventory_manager') && navItem('dashboard', 'Operations Dashboard', <LayoutDashboard className="w-4 h-4" />)}
+              {isViewPermitted('tickets', userRole !== 'inventory_manager' || userPrivileges?.canManageTickets === true) && (
+                <>
+                  {navItem('tickets', 'All Tickets', <TicketIcon className="w-4 h-4" />, ticketCounts?.all)}
+                  {navItem('tickets-my', 'Open Tickets', <Inbox className="w-4 h-4" />, ticketCounts?.open, 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800/50', true)}
+                  {navItem('tickets-unassigned', 'Unassigned Queue', <Clock className="w-4 h-4" />, ticketCounts?.unassigned, 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800/50')}
+                  {navItem('tickets-critical', 'Critical & Overdue', <AlertOctagon className="w-4 h-4" />, (ticketCounts?.critical || 0) + (ticketCounts?.overdue || 0), 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800/50')}
+                </>
+              )}
             </div>
-          ) : (
-            <div className="w-6 h-0.5 bg-slate-300 dark:bg-white/10 mx-auto mb-2 rounded-full" />
-          )}
-          <div className="space-y-1.5">
-            {navItem('dashboard', 'Operations Dashboard', <LayoutDashboard className="w-4 h-4" />)}
-            {navItem('tickets', 'All Tickets', <TicketIcon className="w-4 h-4" />, ticketCounts?.all)}
-            {navItem('tickets-my', 'Open Tickets', <Inbox className="w-4 h-4" />, ticketCounts?.open, 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800/50', true)}
-            {navItem('tickets-unassigned', 'Unassigned Queue', <Clock className="w-4 h-4" />, ticketCounts?.unassigned, 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800/50')}
-            {navItem('tickets-critical', 'Critical & Overdue', <AlertOctagon className="w-4 h-4" />, (ticketCounts?.critical || 0) + (ticketCounts?.overdue || 0), 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800/50')}
           </div>
-        </div>
+        )}
 
         {/* ITSM Modules */}
         <div>
@@ -174,12 +222,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="w-6 h-0.5 bg-slate-300 dark:bg-white/10 mx-auto my-2 rounded-full" />
           )}
           <div className="space-y-1.5">
-            {navItem('approvals', 'Approvals Queue', <ShieldAlert className="w-4 h-4" />, ticketCounts?.pendingApprovals, 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800/50')}
-            {navItem('assets', 'IT Assets & Inventory', <Server className="w-4 h-4" />)}
+            {isViewPermitted('approvals', userRole !== 'inventory_manager' && userRole !== 'requester') && navItem('approvals', 'Approvals Queue', <ShieldAlert className="w-4 h-4" />, ticketCounts?.pendingApprovals, 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800/50')}
+            {isViewPermitted('assets', true) && navItem('assets', 'IT Assets & Inventory', <Server className="w-4 h-4" />)}
             {navItem('catalog', 'Service Catalog', <Grid className="w-4 h-4" />)}
             {navItem('kb', 'Knowledge Base', <BookOpen className="w-4 h-4" />)}
-            {navItem('reports', 'Reports & SLA Metrics', <BarChart3 className="w-4 h-4" />)}
-            {navItem('email-channels', 'Email Gateway', <Mail className="w-4 h-4" />)}
+            {isViewPermitted('reports', userRole === 'superadmin' || userRole === 'admin' || userRole === 'technician') && navItem('reports', 'Reports & SLA Metrics', <BarChart3 className="w-4 h-4" />)}
+            {(userRole === 'superadmin' || userRole === 'admin') && navItem('email-channels', 'Email Gateway', <Mail className="w-4 h-4" />)}
           </div>
         </div>
 

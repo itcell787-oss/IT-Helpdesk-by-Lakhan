@@ -81,12 +81,15 @@ export const Navbar: React.FC<NavbarProps> = ({
     inventory_manager: 'text-teal-700 dark:text-teal-400 bg-teal-100 dark:bg-teal-950/60 border-teal-300 dark:border-teal-800/60',
   };
 
-  // Staff (Superadmin, Admin, Manager, Technician) vs End-User (Requester) vs Guest
+  // Staff (Superadmin, Admin, Manager, Technician, Inventory Manager) vs End-User (Requester) vs Guest
+  // Inventory Manager does NOT see Console or Tickets, only ITSM & resources
   // Users do NOT see Console, Tickets, or Assets & Inventory.
+  const isInventoryManager = currentUser?.role === 'inventory_manager';
+
   const navItems = isStaff
     ? [
-        { id: 'dashboard', label: 'Console', icon: LayoutDashboard },
-        { id: 'tickets', label: 'Tickets', icon: TicketIcon },
+        ...(isInventoryManager ? [] : [{ id: 'dashboard', label: 'Console', icon: LayoutDashboard }]),
+        ...(isInventoryManager ? [] : [{ id: 'tickets', label: 'Tickets', icon: TicketIcon }]),
         { id: 'assets', label: 'Assets & Inventory', icon: Boxes },
         { id: 'kb', label: 'Knowledge Base', icon: BookOpen },
         { id: 'portal', label: 'End-User Portal', icon: ExternalLink },
@@ -121,7 +124,7 @@ export const Navbar: React.FC<NavbarProps> = ({
            ========================================================================= */}
         <div className="flex items-center gap-3 shrink-0">
           <button
-            onClick={() => onNavigate(!currentUser || currentUser.role === 'requester' ? 'portal' : 'dashboard')}
+            onClick={() => onNavigate(!currentUser || currentUser.role === 'requester' ? 'portal' : (isInventoryManager ? 'assets' : 'dashboard'))}
             className="flex items-center gap-3 text-left group focus:outline-none cursor-pointer select-none"
             title={`${productName} · ${subtitle}`}
           >
