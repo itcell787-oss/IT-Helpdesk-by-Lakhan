@@ -74,8 +74,9 @@ export interface DatabaseSchema {
   nextTicketSequence: number;
 }
 
-export const DATA_DIR = path.resolve(process.cwd(), 'data');
-export const DB_FILE = path.join(DATA_DIR, 'database.json');
+export const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(process.cwd(), 'data');
+export const DB_FILE = process.env.DB_FILE ? path.resolve(process.env.DB_FILE) : path.join(DATA_DIR, 'database.json');
+export const DB_SEED_FILE = path.join(path.resolve(process.cwd(), 'data'), 'database.seed.json');
 
 class DatabaseEngine {
   private data: DatabaseSchema;
@@ -85,8 +86,18 @@ class DatabaseEngine {
   }
 
   private loadOrSeed(): DatabaseSchema {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    const targetDir = path.dirname(DB_FILE);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    // If destination DB does not exist, seed from database.seed.json if present
+    if (!fs.existsSync(DB_FILE) && fs.existsSync(DB_SEED_FILE)) {
+      try {
+        fs.copyFileSync(DB_SEED_FILE, DB_FILE);
+      } catch (e) {
+        console.warn('Could not copy initial seed database:', e);
+      }
     }
 
     const initialAdminMailboxes: MailboxConnectionConfig[] = [

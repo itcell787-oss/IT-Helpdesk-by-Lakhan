@@ -239,6 +239,59 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }).catch(() => {});
   }, []);
 
+  // Database Backup & Disaster Recovery State
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreSuccessMsg, setRestoreSuccessMsg] = useState<string | null>(null);
+  const [restoreErrMsg, setRestoreErrMsg] = useState<string | null>(null);
+
+  const handleDownloadBackup = async () => {
+    setBackupLoading(true);
+    try {
+      const blob = await api.downloadBackup();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `it-helpdesk-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || 'Failed to download backup');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleUploadRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!confirm('WARNING: Restoring a database backup will overwrite existing tickets, users, and settings. Are you sure you want to proceed?')) {
+      e.target.value = '';
+      return;
+    }
+    setRestoreLoading(true);
+    setRestoreErrMsg(null);
+    setRestoreSuccessMsg(null);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        const res = await api.restoreBackup(json);
+        setRestoreSuccessMsg(res.message || 'Database restored successfully! Refreshing...');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } catch (err: any) {
+        setRestoreErrMsg(err.message || 'Failed to restore database from backup file.');
+      } finally {
+        setRestoreLoading(false);
+      }
+    };
+    reader.readAsText(file);
+  };
+
   // Per-Organization PSK and Custom Registration Link State
   const [orgPskValues, setOrgPskValues] = useState<Record<string, string>>({});
   const [orgPskVisible, setOrgPskVisible] = useState<Record<string, boolean>>({});
@@ -4642,7 +4695,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* Quick Distro Selector */}
           <div className="flex items-center gap-2 border-b border-slate-200 dark:border-white/10 pb-2">
             {[
-              { id: 'ubuntu', label: 'Ubuntu / Debian (Native systemd)' },
+              { id: 'ubuntu', label: 'Ubuntu / Debian (Native systemd & PM2)' },
               { id: 'rhel', label: 'RHEL / Rocky / AlmaLinux' },
               { id: 'docker', label: 'Docker & Compose' },
             ].map((d) => (
@@ -4660,6 +4713,91 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             ))}
           </div>
 
+          {/* ZERO DATA LOSS UPDATE NOTICE (CRITICAL FOR PRODUCTION HOSTING) */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 to-slate-900 border border-emerald-500/40 space-y-3 shadow-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                Zero-Data-Loss Updates Anytime (Pulling New GitHub Features)
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                Automated Protection Included
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed font-medium">
+              When you push updates from AI Studio to your GitHub repository (<code>https://github.com/itcell787-oss/IT-Helpdesk-by-Lakhan</code>), run the automated update script on your Ubuntu server. It automatically creates a timestamped backup, safely pulls changes, rebuilds, and preserves all your tickets, users, assets, and configurations:
+            </p>
+            <div className="p-3.5 rounded-xl bg-slate-950 font-mono text-xs text-emerald-400 border border-slate-800 flex items-center justify-between select-all shadow-inner">
+              <span>cd /opt/it-helpdesk &amp;&amp; ./update.sh</span>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText('cd /opt/it-helpdesk && ./update.sh');
+                  alert('Copied update command to clipboard!');
+                }}
+                className="text-[11px] font-bold text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800 cursor-pointer"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+
+          {/* Database Backup & Disaster Recovery in UI */}
+          {currentUser.role === 'superadmin' && (
+            <div className="neu-flat p-5 rounded-2xl border border-cyan-500/30 bg-cyan-950/10 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-white/10">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
+                    <Download className="w-4 h-4 text-cyan-500" />
+                    Database Backup &amp; Disaster Recovery (Superadmin Only)
+                  </h3>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+                    Download full production database snapshots directly in your browser or restore from previous backup.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadBackup}
+                    disabled={backupLoading}
+                    className="neu-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    {backupLoading ? 'Exporting...' : 'Download Database (.json)'}
+                  </button>
+
+                  <label className="neu-btn flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl cursor-pointer text-slate-700 dark:text-slate-300 hover:text-cyan-600">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{restoreLoading ? 'Restoring...' : 'Restore from Backup'}</span>
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleUploadRestore}
+                      className="hidden"
+                      disabled={restoreLoading}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {restoreSuccessMsg && (
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs font-bold">
+                  ✓ {restoreSuccessMsg}
+                </div>
+              )}
+              {restoreErrMsg && (
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300 text-xs font-bold">
+                  ✕ {restoreErrMsg}
+                </div>
+              )}
+
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                Persistent storage location on Ubuntu: <code className="text-cyan-400 font-mono">/opt/it-helpdesk/data/database.json</code> (or custom path via <code className="text-cyan-400 font-mono">DB_FILE</code> environment variable).
+              </div>
+            </div>
+          )}
+
           {/* Installation Instructions */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Step 1 & 2 */}
@@ -4668,112 +4806,55 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-[10px] font-bold">
                   1
                 </span>
-                Prerequisites &amp; Repository Setup
+                Ubuntu Server Initial Setup (One Command)
               </div>
               <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-                Install Node.js 20+ LTS and npm, then clone and build the application inside your server directory (e.g. <code>/opt/it-helpdesk</code>):
+                Clone directly from your synced GitHub repository and run the included installer:
               </p>
               <div className="p-3.5 rounded-xl bg-slate-900 text-slate-100 font-mono text-[11px] space-y-1.5 overflow-x-auto custom-scrollbar select-all border border-slate-800 shadow-inner">
-                {linuxDistro === 'ubuntu' || linuxDistro === 'debian' ? (
-                  <>
-                    <div className="text-slate-400"># Install Node.js 20 LTS on Ubuntu/Debian</div>
-                    <div>curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -</div>
-                    <div>sudo apt-get install -y nodejs git build-essential</div>
-                  </>
-                ) : linuxDistro === 'rhel' ? (
-                  <>
-                    <div className="text-slate-400"># Install Node.js 20 LTS on RHEL / Rocky Linux</div>
-                    <div>sudo dnf module enable nodejs:20 -y</div>
-                    <div>sudo dnf install -y nodejs git gcc-c++ make</div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-slate-400"># Docker engine check</div>
-                    <div>docker --version &amp;&amp; docker compose version</div>
-                  </>
-                )}
-                <div className="text-slate-400 pt-1"># Clone &amp; Install App Dependencies</div>
-                <div>git clone &lt;your-repo-url&gt; /opt/it-helpdesk</div>
-                <div>cd /opt/it-helpdesk &amp;&amp; npm install</div>
-                <div>npm run build</div>
+                <div className="text-slate-400"># 1. Clone your repository to /opt/it-helpdesk</div>
+                <div>git clone https://github.com/itcell787-oss/IT-Helpdesk-by-Lakhan.git /opt/it-helpdesk</div>
+                <div>cd /opt/it-helpdesk</div>
+                <div className="text-slate-400 pt-1"># 2. Make scripts executable and run installer</div>
+                <div>chmod +x install-ubuntu.sh update.sh</div>
+                <div>sudo ./install-ubuntu.sh</div>
               </div>
 
               <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white pt-2">
                 <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-[10px] font-bold">
                   2
                 </span>
-                Environment Variables (<code>/opt/it-helpdesk/.env</code>)
+                Production Environment File (<code>/opt/it-helpdesk/.env</code>)
               </div>
               <div className="p-3.5 rounded-xl bg-slate-900 text-slate-100 font-mono text-[11px] space-y-1 overflow-x-auto custom-scrollbar select-all border border-slate-800 shadow-inner">
                 <div className="text-cyan-400">PORT=3000</div>
                 <div className="text-cyan-400">NODE_ENV=production</div>
                 <div className="text-cyan-400">HOST=0.0.0.0</div>
-                <div className="text-slate-400"># Optional IMAP/SMTP Poller intervals</div>
-                <div>EMAIL_POLL_INTERVAL_SEC=60</div>
+                <div className="text-slate-400"># Optional custom persistent database path outside repo:</div>
+                <div className="text-slate-400"># DB_FILE=/var/lib/it-helpdesk/database.json</div>
               </div>
             </div>
 
-            {/* Step 3: systemd daemon or docker-compose */}
+            {/* Step 3: PM2 daemon or systemd */}
             <div className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
                 <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-[10px] font-bold">
                   3
                 </span>
-                {linuxDistro === 'docker' ? 'docker-compose.yml Service' : 'systemd Service Daemon'}
+                Managing the Service (PM2 / systemd)
               </div>
 
-              {linuxDistro === 'docker' ? (
-                <>
-                  <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-                    Create <code>docker-compose.yml</code> for single-command start:
-                  </p>
-                  <pre className="p-3.5 rounded-xl bg-slate-900 text-slate-100 font-mono text-[11px] overflow-x-auto custom-scrollbar select-all border border-slate-800 leading-relaxed shadow-inner">
-{`version: '3.8'
-services:
-  it-helpdesk:
-    build: .
-    restart: always
-    ports:
-      - "3000:3000"
-    environment:
-      - PORT=3000
-      - NODE_ENV=production
-    volumes:
-      - ./data:/app/data`}
-                  </pre>
-                  <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[11px] font-mono text-emerald-700 dark:text-emerald-300 font-semibold">
-                    docker compose up -d
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-                    Create <code>/etc/systemd/system/it-helpdesk.service</code> so the portal restarts on server reboot:
-                  </p>
-                  <pre className="p-3.5 rounded-xl bg-slate-900 text-slate-100 font-mono text-[11px] overflow-x-auto custom-scrollbar select-all border border-slate-800 leading-relaxed shadow-inner">
-{`[Unit]
-Description=IT Helpdesk Service by Lakhan
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/opt/it-helpdesk
-ExecStart=/usr/bin/npx tsx server.ts
-Restart=on-failure
-RestartSec=5s
-Environment=NODE_ENV=production PORT=3000
-
-[Install]
-WantedBy=multi-user.target`}
-                  </pre>
-                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-emerald-400 space-y-1">
-                    <div>sudo systemctl daemon-reload</div>
-                    <div>sudo systemctl enable --now it-helpdesk</div>
-                    <div>sudo systemctl status it-helpdesk</div>
-                  </div>
-                </>
-              )}
+              <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                The installer sets up PM2 process manager to run 24/7 and auto-restart on boot:
+              </p>
+              <div className="p-3.5 rounded-xl bg-slate-900 text-slate-100 font-mono text-[11px] space-y-1.5 overflow-x-auto custom-scrollbar select-all border border-slate-800 shadow-inner">
+                <div className="text-slate-400"># Check status of IT Helpdesk:</div>
+                <div>pm2 status it-helpdesk</div>
+                <div className="text-slate-400 pt-1"># View live real-time server logs:</div>
+                <div>pm2 logs it-helpdesk</div>
+                <div className="text-slate-400 pt-1"># Restart application manually:</div>
+                <div>pm2 restart it-helpdesk</div>
+              </div>
             </div>
           </div>
 
@@ -4781,7 +4862,7 @@ WantedBy=multi-user.target`}
           <div className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3">
             <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <Server className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-              Nginx Reverse Proxy &amp; SSL (Optional HTTPS Domain)
+              Nginx Reverse Proxy &amp; SSL (HTTPS Domain)
             </h3>
             <p className="text-xs text-slate-600 dark:text-slate-300">
               Proxy incoming port 80/443 traffic to local port 3000 with WebSocket support:
@@ -4789,7 +4870,7 @@ WantedBy=multi-user.target`}
             <pre className="p-3.5 rounded-xl bg-slate-900 text-slate-100 font-mono text-[11px] overflow-x-auto select-all border border-slate-800 leading-relaxed">
 {`server {
     listen 80;
-    server_name helpdesk.yourcompany.local;
+    server_name helpdesk.yourdomain.com;
 
     location / {
         proxy_pass http://127.0.0.1:3000;

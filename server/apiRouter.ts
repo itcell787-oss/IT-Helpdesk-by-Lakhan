@@ -3422,3 +3422,37 @@ apiRouter.delete('/surveys/:id', (req: Request, res: Response) => {
   logAudit(actor, 'survey.deleted', 'setting', id, `Deleted ticket satisfaction rating [${id}]`);
   res.json({ success: true, deletedSurveyId: id });
 });
+
+// System Backup & Disaster Recovery (Superadmin Only)
+apiRouter.get('/system/backup', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Permission denied: Only Super Administrator can export complete database backups.' });
+  }
+
+  const data = db.getRawData();
+  const filename = `it-helpdesk-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(JSON.stringify(data, null, 2));
+});
+
+apiRouter.post('/system/restore', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Permission denied: Only Super Administrator can restore database backups.' });
+  }
+
+  const payload = req.body;
+  if (!payload || !Array.isArray(payload.users) || !Array.isArray(payload.organizations)) {
+    return res.status(400).json({ error: 'Invalid backup file: Required database tables (users, organizations) are missing.' });
+  }
+
+  try {
+    db.save(payload);
+    logAudit(actor, 'system.restored', 'setting', 'database', 'Restored system database from backup file.');
+    res.json({ success: true, message: 'Database successfully restored from backup.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to restore database.' });
+  }
+});

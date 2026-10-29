@@ -674,5 +674,27 @@ export const api = {
       method: 'DELETE',
     });
   },
+
+  // System Backup & Restore
+  async downloadBackup(): Promise<Blob> {
+    const sessionToken = getSessionToken();
+    const res = await fetch('/api/system/backup', {
+      headers: {
+        'x-session-token': sessionToken,
+      },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to download backup');
+    }
+    return res.blob();
+  },
+
+  async restoreBackup(payload: any): Promise<{ success: boolean; message: string }> {
+    return request('/api/system/restore', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
 };
 

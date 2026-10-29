@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { db } from '../server/db';
 import { calculateSlaDeadlines, evaluateSlaStatus } from '../server/slaEngine';
 import { runAutomations } from '../server/automationEngine';
@@ -368,6 +369,17 @@ function runTestSuite() {
   assert('Left pane navigation supports dashboard view toggle', staffPrivileges.canViewDashboard === true);
   assert('Left pane navigation supports tickets view revocation', staffPrivileges.canViewTickets === false);
   assert('Allowed views array accurately reflects custom selection', staffPrivileges.allowedViews.includes('dashboard') && !staffPrivileges.allowedViews.includes('tickets'));
+
+  // -------------------------------------------------------------
+  // Test 18: Ubuntu Zero-Data-Loss Deployment & Disaster Recovery
+  // -------------------------------------------------------------
+  console.log('\n--- Ubuntu Zero-Data-Loss Deployment & DR ---');
+  assert('update.sh script exists in root directory', fs.existsSync('update.sh'));
+  assert('install-ubuntu.sh script exists in root directory', fs.existsSync('install-ubuntu.sh'));
+  assert('Pristine production seed data/database.seed.json exists', fs.existsSync('data/database.seed.json'));
+
+  const rawData = db.getRawData();
+  assert('Database raw data exports valid structure with users & organizations', Boolean(rawData.users && rawData.organizations));
 
   console.log(`\n========================================`);
   console.log(`Test Results: ${passed} passed, ${failed} failed.`);
