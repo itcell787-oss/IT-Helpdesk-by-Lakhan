@@ -58,12 +58,21 @@ echo "🔄 Restarting application service..."
 if command -v pm2 &> /dev/null && pm2 list | grep -q "it-helpdesk"; then
     echo "   Restarting PM2 process 'it-helpdesk'..."
     pm2 restart it-helpdesk
+elif command -v pm2 &> /dev/null; then
+    echo "   Starting PM2 process 'it-helpdesk'..."
+    if [ -f "$APP_DIR/node_modules/.bin/tsx" ]; then
+      pm2 start "$APP_DIR/node_modules/.bin/tsx" --name "it-helpdesk" -- server.ts
+    else
+      pm2 start npm --name "it-helpdesk" -- run start
+    fi
+    pm2 save
 elif systemctl is-active --quiet it-helpdesk 2>/dev/null; then
     echo "   Restarting systemd service 'it-helpdesk'..."
     sudo systemctl restart it-helpdesk
 else
     echo "ℹ️  Neither PM2 nor systemd service named 'it-helpdesk' was detected running."
-    echo "   If running manually, restart your server with: npm run start"
+    echo "   Starting server with npm run start..."
+    npm run start &
 fi
 
 echo ""

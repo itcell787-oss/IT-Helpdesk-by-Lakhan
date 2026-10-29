@@ -32,9 +32,9 @@ fi
 echo "   ✓ Node.js version: $(node -v)"
 echo "   ✓ npm version: $(npm -v)"
 
-# Install PM2 globally for reliable process management
-echo "📦 3. Installing PM2 process manager..."
-npm install -g pm2
+# Install PM2 and tsx globally for reliable process management
+echo "📦 3. Installing PM2 and tsx globally..."
+npm install -g pm2 tsx
 
 # Install dependencies and build
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,7 +66,16 @@ fi
 # Start with PM2
 echo "🚀 7. Starting IT Helpdesk with PM2..."
 pm2 delete it-helpdesk 2>/dev/null || true
-pm2 start server.ts --name "it-helpdesk" --interpreter tsx --env NODE_ENV=production
+
+# Determine tsx runner path
+if [ -f "$APP_DIR/node_modules/.bin/tsx" ]; then
+  pm2 start "$APP_DIR/node_modules/.bin/tsx" --name "it-helpdesk" -- server.ts
+elif command -v tsx &> /dev/null; then
+  pm2 start tsx --name "it-helpdesk" -- server.ts
+else
+  pm2 start npm --name "it-helpdesk" -- run start
+fi
+
 pm2 save
 
 # Setup PM2 startup system hook
