@@ -89,6 +89,8 @@ interface SettingsViewProps {
   onUpdateUser?: (id: string, data: Partial<User>) => Promise<any>;
   onCreateUser?: (data: Partial<User>) => Promise<any>;
   onDeleteUser?: (id: string) => Promise<any>;
+  onUpdateSlaPolicy?: (id: string, updates: Partial<SlaPolicy>) => Promise<any>;
+  systemSettings?: any;
   onCreateAsset?: (data: Partial<Asset>) => void;
   onUpdateAsset?: (id: string, data: Partial<Asset>) => void;
   onDeleteAsset?: (id: string) => void;
@@ -124,6 +126,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onUpdateUser,
   onCreateUser,
   onDeleteUser,
+  onUpdateSlaPolicy,
+  systemSettings,
   onCreateAsset,
   onUpdateAsset,
   onDeleteAsset,
@@ -133,13 +137,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const allOrganizations = organizations && organizations.length > 0 ? organizations : [organization];
 
-  const [activeTab, setActiveTab] = useState<
+  const [activeTab, setActiveTabState] = useState<
     'profile' | 'users' | 'assets' | 'fields' | 'admin-mailbox' | 'default-gateway' | 'sla' | 'automations' | 'branding' | 'linux-host'
   >(() => {
-    // If initialTab is branding but user is not superadmin, fallback to profile
+    try {
+      const saved = sessionStorage.getItem('settings_active_tab');
+      if (saved) return saved as any;
+    } catch {}
     if (initialTab === 'branding' && currentUser.role !== 'superadmin') return 'profile';
     return (initialTab as any) || 'profile';
   });
+  const setActiveTab = (tab: any) => {
+    setActiveTabState(tab);
+    try {
+      sessionStorage.setItem('settings_active_tab', tab);
+    } catch {}
+  };
 
   // -------------------------------------------------------------
   // Profile Management State (Super Admin & Admin Profile Editing)
@@ -585,6 +598,98 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setRuleToDelete(null);
     } catch (err: any) {
       alert(err.message || 'Failed to delete automation rule');
+    }
+  };
+
+  // -------------------------------------------------------------
+  // SLA Policies & Target Timers State (Super Admin Managed)
+  // -------------------------------------------------------------
+  const [editingSlaPolicy, setEditingSlaPolicy] = useState<SlaPolicy | null>(null);
+  const [slaName, setSlaName] = useState('');
+  const [slaDescription, setSlaDescription] = useState('');
+  const [slaPriority, setSlaPriority] = useState<SlaPolicy['priority']>('normal');
+  const [slaFirstResponseMinutes, setSlaFirstResponseMinutes] = useState(60);
+  const [slaResolutionMinutes, setSlaResolutionMinutes] = useState(480);
+  const [slaBusinessHoursOnly, setSlaBusinessHoursOnly] = useState(false);
+  const [slaSaving, setSlaSaving] = useState(false);
+  const [slaSuccessMsg, setSlaSuccessMsg] = useState<string | null>(null);
+  const [slaErrorMsg, setSlaErrorMsg] = useState<string | null>(null);
+
+  const handleOpenEditSla = (p: SlaPolicy) => {
+    setEditingSlaPolicy(p);
+    setSlaName(p.name);
+    setSlaDescription(p.description || '');
+    setSlaPriority(p.priority);
+    setSlaFirstResponseMinutes(p.firstResponseMinutes);
+    setSlaResolutionMinutes(p.resolutionMinutes);
+    setSlaBusinessHoursOnly(p.businessHoursOnly);
+    setSlaErrorMsg(null);
+  };
+
+  const handleSaveSlaPolicy = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSlaPolicy) return;
+    if (!slaName.trim()) {
+      setSlaErrorMsg('Policy name is required.');
+      return;
+    }
+    setSlaSaving(true);
+    setSlaErrorMsg(null);
+    try {
+      const payload: Partial<SlaPolicy> = {
+        name: slaName.trim(),
+        description: slaDescription.trim(),
+        priority: slaPriority,
+        firstResponseMinutes: Number(slaFirstResponseMinutes),
+        resolutionMinutes: Number(slaResolutionMinutes),
+        businessHoursOnly: slaBusinessHoursOnly,
+      };
+      if (onUpdateSlaPolicy) {
+        await onUpdateSlaPolicy(editingSlaPolicy.id, payload);
+      } else {
+        await api.updateSlaPolicy(editingSlaPolicy.id, payload);
+      }
+      setSlaSuccessMsg(`✓ SLA Target Timers for "${slaName}" saved successfully!`);
+      setEditingSlaPolicy(null);
+      setTimeout(() => setSlaSuccessMsg(null), 3500);
+    } catch (err: any) {
+      setSlaErrorMsg(err.message || 'Failed saving SLA timers');
+    } finally {
+      setSlaSaving(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // End-User Ticket Satisfaction Rating (CSAT) Toggle State
+  // -------------------------------------------------------------
+  const [csatEnabled, setCsatEnabled] = useState<boolean>(() => {
+    return systemSettings?.enableTicketRating ?? organization.systemSettings?.enableTicketRating ?? true;
+  });
+  const [csatSaving, setCsatSaving] = useState(false);
+  const [csatMsg, setCsatMsg] = useState<string | null>(null);
+
+  const handleToggleCsat = async () => {
+    const nextVal = !csatEnabled;
+    setCsatSaving(true);
+    try {
+      await api.updateSystemSettings({ enableTicketRating: nextVal });
+      setCsatEnabled(nextVal);
+      if (onUpdateOrganization) {
+        onUpdateOrganization(organization.id, {
+          systemSettings: {
+            requireOtpForTicketSubmission: organization.systemSettings?.requireOtpForTicketSubmission ?? false,
+            enableCategoryAutoAssign: organization.systemSettings?.enableCategoryAutoAssign ?? true,
+            ...(organization.systemSettings || {}),
+            enableTicketRating: nextVal,
+          },
+        });
+      }
+      setCsatMsg(`✓ CSAT Rating is now ${nextVal ? 'ENABLED' : 'DISABLED'}`);
+      setTimeout(() => setCsatMsg(null), 3500);
+    } catch (err: any) {
+      alert(err.message || 'Failed updating CSAT setting');
+    } finally {
+      setCsatSaving(false);
     }
   };
 
@@ -3952,36 +4057,114 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* ============================================================= */}
-      {/* TAB 4: SLA Policies */}
+      {/* TAB 4: SLA Policies & Target Timers (Super Admin Managed)     */}
       {/* ============================================================= */}
       {activeTab === 'sla' && (
-        <div className="neu-flat p-6 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4 max-w-full overflow-x-hidden">
-          <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Clock className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-              Service Level Agreement (SLA) Matrix
-            </h2>
-            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-              Target response times and final resolution windows categorized by ticket severity priority.
-            </p>
+        <div className="neu-flat p-6 rounded-2xl border border-slate-200 dark:border-white/10 space-y-6 max-w-full overflow-x-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-white/10">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-600 dark:text-cyan-400">
+                  <Clock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    SLA Policies &amp; Target Timers (Super Admin Managed)
+                  </h2>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                    Managed exclusively by Super Administrator. Decide first response windows, resolution deadlines per priority, and business hours enforcement.
+                  </p>
+                </div>
+              </div>
+            </div>
+            {currentUser.role === 'superadmin' ? (
+              <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-violet-100 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 border border-violet-300 dark:border-violet-800/40 shrink-0">
+                Super Admin Access Granted
+              </span>
+            ) : (
+              <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 shrink-0">
+                Read-Only SLA Mode
+              </span>
+            )}
           </div>
 
+          {slaSuccessMsg && (
+            <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center gap-2 animate-in fade-in">
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{slaSuccessMsg}</span>
+            </div>
+          )}
+
+          {/* End-User CSAT Rating Global System Toggle */}
+          <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-300/80 dark:border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
+                  End-User Ticket Satisfaction Rating (CSAT)
+                </span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                  csatEnabled
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300'
+                    : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border border-slate-300'
+                }`}>
+                  {csatEnabled ? 'Enabled' : 'Disabled'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                Allows requesters to submit customer satisfaction ratings on their tickets (strictly enforced 1 rating per ticket limit).
+              </p>
+              {csatMsg && (
+                <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 block pt-0.5">
+                  {csatMsg}
+                </span>
+              )}
+            </div>
+
+            {(currentUser.role === 'superadmin' || currentUser.role === 'admin') && (
+              <button
+                type="button"
+                disabled={csatSaving}
+                onClick={handleToggleCsat}
+                className={`px-4 py-2 text-xs font-bold rounded-xl cursor-pointer transition-all shadow-xs flex items-center gap-2 whitespace-nowrap ${
+                  csatEnabled
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                }`}
+              >
+                {csatSaving ? 'Saving...' : csatEnabled ? 'Disable CSAT Rating' : 'Enable CSAT Rating'}
+              </button>
+            )}
+          </div>
+
+          {/* SLA Policies Table */}
           <div className="neu-card rounded-2xl border border-slate-200 dark:border-white/10 overflow-hidden shadow-sm">
             <div className="overflow-x-auto custom-scrollbar">
-              <table className="w-full text-left text-xs min-w-[650px]">
+              <table className="w-full text-left text-xs min-w-[750px]">
                 <thead className="bg-slate-100/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-white/10 uppercase tracking-wider font-bold text-[10px]">
                   <tr>
                     <th className="py-3 px-4">Priority Level</th>
                     <th className="py-3 px-4">Policy Name &amp; Description</th>
                     <th className="py-3 px-4">First Response Target</th>
                     <th className="py-3 px-4">Resolution Target</th>
-                    <th className="py-3 px-4 text-right">Operating Hours</th>
+                    <th className="py-3 px-4">Operating Hours</th>
+                    {currentUser.role === 'superadmin' && (
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-white/5">
                   {slaPolicies.map((p) => (
                     <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
-                      <td className="py-3 px-4 font-bold uppercase font-mono text-cyan-700 dark:text-cyan-400">{p.priority}</td>
+                      <td className="py-3 px-4 font-bold uppercase font-mono text-cyan-700 dark:text-cyan-400">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          p.priority === 'critical' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300' :
+                          p.priority === 'urgent' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300' :
+                          p.priority === 'high' ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300 border border-orange-300' :
+                          'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 border border-cyan-300'
+                        }`}>
+                          {p.priority}
+                        </span>
+                      </td>
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-900 dark:text-white">{p.name}</div>
                         <div className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">{p.description}</div>
@@ -3992,17 +4175,163 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           : `${p.firstResponseMinutes / 60} hours`}
                       </td>
                       <td className="py-3 px-4 font-mono font-bold text-cyan-700 dark:text-cyan-400">
-                        {p.resolutionMinutes / 60} hours
+                        {p.resolutionMinutes / 60} hours ({Math.round(p.resolutionMinutes / 60 / 24 * 10) / 10} days)
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-semibold text-slate-700 dark:text-slate-300">
+                      <td className="py-3 px-4 font-mono font-semibold text-slate-700 dark:text-slate-300">
                         {p.businessHoursOnly ? '9AM - 6PM Business Days' : '24x7 Continuous'}
                       </td>
+                      {currentUser.role === 'superadmin' && (
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditSla(p)}
+                            className="px-3 py-1 text-xs font-bold text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/60 hover:bg-cyan-100 dark:hover:bg-cyan-900/60 border border-cyan-300 dark:border-cyan-800/40 rounded-lg transition-transform hover:scale-105 cursor-pointer shadow-xs inline-flex items-center gap-1"
+                            title="Edit First Response and Resolution Target Timers"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Edit Timers</span>
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           </div>
+
+          {/* Super Admin SLA Policy Edit Modal */}
+          {editingSlaPolicy && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+              <div className="w-full max-w-lg neu-modal p-6 rounded-2xl border border-cyan-500/40 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                      <Clock className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                        Edit SLA Timers: {editingSlaPolicy.name}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                        Managed exclusively by Super Administrator
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingSlaPolicy(null)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {slaErrorMsg && (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 text-xs font-bold">
+                    {slaErrorMsg}
+                  </div>
+                )}
+
+                <form onSubmit={handleSaveSlaPolicy} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      Policy Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={slaName}
+                      onChange={(e) => setSlaName(e.target.value)}
+                      className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                      Description
+                    </label>
+                    <input
+                      type="text"
+                      value={slaDescription}
+                      onChange={(e) => setSlaDescription(e.target.value)}
+                      className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-medium focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                        First Response Target (Minutes) *
+                      </label>
+                      <input
+                        type="number"
+                        min={5}
+                        required
+                        value={slaFirstResponseMinutes}
+                        onChange={(e) => setSlaFirstResponseMinutes(Number(e.target.value))}
+                        className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-bold"
+                      />
+                      <span className="text-[10px] text-slate-500 mt-1 block">
+                        = {slaFirstResponseMinutes < 60 ? `${slaFirstResponseMinutes} mins` : `${slaFirstResponseMinutes / 60} hours`}
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                        Resolution Deadline Target (Minutes) *
+                      </label>
+                      <input
+                        type="number"
+                        min={15}
+                        required
+                        value={slaResolutionMinutes}
+                        onChange={(e) => setSlaResolutionMinutes(Number(e.target.value))}
+                        className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-mono font-bold"
+                      />
+                      <span className="text-[10px] text-slate-500 mt-1 block">
+                        = {slaResolutionMinutes / 60} hours ({Math.round(slaResolutionMinutes / 60 / 24 * 10) / 10} days)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={slaBusinessHoursOnly}
+                        onChange={(e) => setSlaBusinessHoursOnly(e.target.checked)}
+                        className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Enforce Business Hours Only (9:00 AM - 6:00 PM, Mon-Fri)
+                      </span>
+                    </label>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 pl-6">
+                      If unchecked, SLA timer ticks 24x7 continuous round-the-clock including nights, weekends, and holidays.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setEditingSlaPolicy(null)}
+                      className="neu-btn px-4 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={slaSaving}
+                      className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer shadow-md"
+                    >
+                      {slaSaving ? 'Saving Timers...' : 'Save SLA Target Timers'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -96,10 +96,10 @@ export default function App() {
   const [superadminStats, setSuperadminStats] = useState<any>(null);
   const [systemSettings, setSystemSettings] = useState<any>(null);
 
-  // Active View Navigation - Persisted in sessionStorage so screen updates/polls never reset page
+  // Active View Navigation - Persisted in sessionStorage and localStorage so browser refresh never kicks staff to portal
   const [activeView, setActiveViewState] = useState<string>(() => {
     try {
-      const saved = sessionStorage.getItem('active_view');
+      const saved = sessionStorage.getItem('active_view') || localStorage.getItem('it_helpdesk_active_view');
       if (saved) return saved;
     } catch {}
     return 'portal';
@@ -108,6 +108,7 @@ export default function App() {
     setActiveViewState(view);
     try {
       sessionStorage.setItem('active_view', view);
+      localStorage.setItem('it_helpdesk_active_view', view);
     } catch {}
   };
 
@@ -125,7 +126,23 @@ export default function App() {
     } catch {}
   };
 
-  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const [selectedTicketId, setSelectedTicketIdState] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('selected_ticket_id') || null;
+    } catch {}
+    return null;
+  });
+  const setSelectedTicketId = (id: string | null) => {
+    setSelectedTicketIdState(id);
+    try {
+      if (id) {
+        sessionStorage.setItem('selected_ticket_id', id);
+      } else {
+        sessionStorage.removeItem('selected_ticket_id');
+      }
+    } catch {}
+  };
+  const [initialAuthLoaded, setInitialAuthLoaded] = useState<boolean>(false);
   const [ticketDetailData, setTicketDetailData] = useState<{
     ticket: Ticket;
     comments: TicketComment[];
@@ -185,22 +202,22 @@ export default function App() {
       setCurrentUser(session.user);
       setOrganization(session.organization);
       setAvailableUsers(session.availableUsers);
+      setInitialAuthLoaded(true);
 
       if (isInitial && session.user) {
         let savedView: string | null = null;
         try {
-          savedView = sessionStorage.getItem('active_view');
+          savedView = sessionStorage.getItem('active_view') || localStorage.getItem('it_helpdesk_active_view');
         } catch {}
 
-        if (savedView) {
+        if (session.user.role === 'requester') {
+          setActiveViewState('portal');
+        } else if (savedView && savedView !== 'portal') {
           setActiveViewState(savedView);
-        } else if (session.user.role === 'requester') {
-          setActiveView('portal');
-          setPortalInitialTab('home');
         } else if (session.user.role === 'inventory_manager') {
-          setActiveView('assets');
+          setActiveViewState('assets');
         } else {
-          setActiveView('dashboard');
+          setActiveViewState('dashboard');
         }
       }
 
@@ -364,6 +381,9 @@ export default function App() {
 
   // Role Guard: End-users, Inventory Manager, Manager, and Reports/Gateway permissions
   useEffect(() => {
+    // CRITICAL: Do NOT execute role redirection before auth has finished loading
+    if (!initialAuthLoaded || loading) return;
+
     if (!currentUser || currentUser.role === 'requester') {
       if (activeView === 'dashboard') {
         setActiveView('portal');
@@ -412,7 +432,7 @@ export default function App() {
       }
       return;
     }
-  }, [currentUser, activeView]);
+  }, [currentUser, activeView, initialAuthLoaded, loading]);
 
   const [previousTicketView, setPreviousTicketView] = useState<string>('tickets');
   const [ticketListPage, setTicketListPage] = useState<number>(() => {
@@ -798,12 +818,34 @@ export default function App() {
 
   const handleRequestCatalog = async (catalogItemId: string, formData: Record<string, any>) => {
     try {
-      const res = await api.requestCatalogItem(catalogItemId, formData);
+      const res = await api.requestCatalogItem(catalogItemId, formData, {
+        requesterId: currentUser?.id,
+        requesterName: currentUser?.name,
+        requesterEmail: currentUser?.email,
+        requesterEmployeeCode: currentUser?.employeeCode,
+      });
       setTickets((prev) => [res.ticket, ...prev]);
       showToast(`Service request lodged [${res.ticket.id}]!`);
+      if (currentUser?.role === 'requester') {
+        setActiveView('portal');
+        setPortalInitialTab('catalog-status');
+      }
       loadData();
     } catch (err: any) {
       alert(err.message);
+    }
+  };
+
+  const handleUpdateSlaPolicy = async (id: string, updates: Partial<SlaPolicy>) => {
+    try {
+      const updated = await api.updateSlaPolicy(id, updates);
+      setSlaPolicies((prev) => prev.map((p) => (p.id === id ? updated : p)));
+      showToast(`✓ SLA Policy "${updated.name}" updated successfully!`);
+      loadData();
+      return updated;
+    } catch (err: any) {
+      alert(err.message || 'Failed updating SLA policy');
+      throw err;
     }
   };
 
@@ -1439,6 +1481,8 @@ export default function App() {
                 onUpdateUser={handleUpdateUser}
                 onCreateUser={handleCreateUser}
                 onDeleteUser={handleDeleteUser}
+                onUpdateSlaPolicy={handleUpdateSlaPolicy}
+                systemSettings={systemSettings}
                 initialTab={settingsInitialTab}
               />
             )}

@@ -1295,17 +1295,9 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                         {ticket.satisfactionRating.rating} / 5 Stars
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDetailRatingScore(ticket.satisfactionRating?.rating || 5);
-                        setDetailRatingComment(ticket.satisfactionRating?.comment || '');
-                        setIsEditingRating(true);
-                      }}
-                      className="px-2 py-0.5 text-[11px] font-bold text-cyan-700 dark:text-cyan-300 hover:underline cursor-pointer"
-                    >
-                      Update Rating
-                    </button>
+                    <span className="px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100/80 dark:bg-emerald-950/60 rounded border border-emerald-300 dark:border-emerald-800/40">
+                      Rated 1x (Locked)
+                    </span>
                   </div>
                   {ticket.satisfactionRating.comment && (
                     <p className="text-slate-700 dark:text-slate-300 italic text-[11px] bg-white/70 dark:bg-slate-900/60 p-2 rounded-md border border-slate-200 dark:border-white/10">

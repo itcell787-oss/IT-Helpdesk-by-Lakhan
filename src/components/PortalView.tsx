@@ -199,6 +199,8 @@ export const PortalView: React.FC<PortalViewProps> = ({
     return ['CPU', 'Keyboard', 'Mouse', 'Display', 'Laptop', 'Headphone', 'Webcam'];
   }, [organization?.systemSettings]);
 
+  const isCsatEnabled = systemSettings?.enableTicketRating ?? organization?.systemSettings?.enableTicketRating ?? true;
+
   const mapAssetNameToType = (name: string): any => {
     const lower = name.toLowerCase();
     if (lower.includes('cpu') || lower.includes('workstation') || lower.includes('desktop')) return 'desktop';
@@ -1554,44 +1556,38 @@ export const PortalView: React.FC<PortalViewProps> = ({
                       {t.status.replace(/_/g, ' ')}
                     </span>
 
-                    {/* CSAT Rating Option on User Side for all tickets */}
-                    {t.satisfactionRating ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRatingTicketId(t.id);
-                          setSelectedRating(t.satisfactionRating?.rating || 5);
-                          setSurveyComment(t.satisfactionRating?.comment || '');
-                          setSurveySubmitted(false);
-                        }}
-                        className="px-2.5 py-1 text-xs bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/40 rounded-lg flex items-center gap-1.5 font-bold cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/50 shadow-xs transition-colors"
-                        title={`Rating: ${t.satisfactionRating.rating}/5 stars. Click to view or update your rating.`}
-                      >
-                        <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                        <div className="flex text-amber-500 text-xs">
-                          {'★'.repeat(t.satisfactionRating.rating)}
+                    {/* CSAT Rating Option on User Side for all tickets (Controlled by CSAT Setting Toggle & 1 Ticket 1 Time Enforced) */}
+                    {isCsatEnabled && (
+                      t.satisfactionRating ? (
+                        <div
+                          className="px-2.5 py-1 text-xs bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/40 rounded-lg flex items-center gap-1.5 font-bold cursor-default shadow-xs"
+                          title={`Rating: ${t.satisfactionRating.rating}/5 stars. Submitted 1x (Locked).`}
+                        >
+                          <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                          <div className="flex text-amber-500 text-xs">
+                            {'★'.repeat(t.satisfactionRating.rating)}
+                          </div>
+                          <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold">
+                            {t.satisfactionRating.rating}/5 (Rated 1x)
+                          </span>
                         </div>
-                        <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold">
-                          {t.satisfactionRating.rating}/5
-                        </span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRatingTicketId(t.id);
-                          setSelectedRating(5);
-                          setSurveyComment('');
-                          setSurveySubmitted(false);
-                        }}
-                        className="px-3 py-1 text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 border border-amber-300 dark:border-amber-500/40 rounded-lg flex items-center gap-1.5 transition-all font-bold cursor-pointer shadow-xs hover:scale-105"
-                        title="Rate your IT support experience"
-                      >
-                        <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-                        <span>Rate Support</span>
-                      </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRatingTicketId(t.id);
+                            setSelectedRating(5);
+                            setSurveyComment('');
+                            setSurveySubmitted(false);
+                          }}
+                          className="px-3 py-1 text-xs bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 border border-amber-300 dark:border-amber-500/40 rounded-lg flex items-center gap-1.5 transition-all font-bold cursor-pointer shadow-xs hover:scale-105"
+                          title="Rate your IT support experience (1 rating per ticket)"
+                        >
+                          <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                          <span>Rate Support</span>
+                        </button>
+                      )
                     )}
 
                     <button

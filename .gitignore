@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+data/database.json
+data/database.json.bak
+data/database.json.tmp.*
+data/backups/
+backups/

@@ -18,7 +18,7 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-echo "📦 1. Updating apt package lists and installing curl and git..."
+echo "📦 1. Updating apt package lists and installing curl, git, build-essential..."
 apt-get update -y
 apt-get install -y curl git build-essential
 
@@ -56,12 +56,24 @@ HOST=0.0.0.0
 EOF
 fi
 
-# Ensure data directory and database exists
+# Ensure data directory and backups directory exist
 mkdir -p "$APP_DIR/data"
-if [ ! -f "$APP_DIR/data/database.json" ] && [ -f "$APP_DIR/data/database.seed.json" ]; then
+mkdir -p "$APP_DIR/backups"
+
+# CRITICAL ZERO-DATA-LOSS CHECK: Never overwrite existing database if already present!
+if [ -f "$APP_DIR/data/database.json" ] && [ -s "$APP_DIR/data/database.json" ]; then
+  echo "🛡️  Existing production database detected! Preserving all live users, tickets, and assets."
+  TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+  cp "$APP_DIR/data/database.json" "$APP_DIR/backups/install_preserve_$TIMESTAMP.json"
+  echo "   ✓ Safety backup preserved in: $APP_DIR/backups/install_preserve_$TIMESTAMP.json"
+elif [ -f "$APP_DIR/data/database.seed.json" ]; then
   echo "📂 Initializing production database from seed..."
   cp "$APP_DIR/data/database.seed.json" "$APP_DIR/data/database.json"
 fi
+
+# Ensure Git never overwrites the live production database
+git update-index --assume-unchanged "$APP_DIR/data/database.json" 2>/dev/null || true
+git update-index --skip-worktree "$APP_DIR/data/database.json" 2>/dev/null || true
 
 # Start with PM2
 echo "🚀 7. Starting IT Helpdesk with PM2..."
@@ -80,7 +92,9 @@ pm2 save
 
 # Setup PM2 startup system hook
 echo "⚙️  8. Configuring system startup daemon..."
-pm2 startup systemd -u $(whoami) --hp $HOME 2>/dev/null || true
+REAL_USER="${SUDO_USER:-$(whoami)}"
+USER_HOME=$(eval echo ~$REAL_USER)
+pm2 startup systemd -u "$REAL_USER" --hp "$USER_HOME" 2>/dev/null || true
 
 echo ""
 echo "=========================================================="

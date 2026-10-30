@@ -356,10 +356,19 @@ export const api = {
     });
   },
 
-  async requestCatalogItem(catalogItemId: string, formData: Record<string, any>): Promise<{ ticket: Ticket }> {
+  async requestCatalogItem(
+    catalogItemId: string,
+    formData: Record<string, any>,
+    requesterDetails?: {
+      requesterId?: string;
+      requesterName?: string;
+      requesterEmail?: string;
+      requesterEmployeeCode?: string;
+    }
+  ): Promise<{ ticket: Ticket }> {
     return request('/api/service-catalog/request', {
       method: 'POST',
-      body: JSON.stringify({ catalogItemId, formData }),
+      body: JSON.stringify({ catalogItemId, formData, ...requesterDetails }),
     });
   },
 
@@ -408,6 +417,13 @@ export const api = {
 
   async getSlaPolicies(): Promise<SlaPolicy[]> {
     return request('/api/sla-policies');
+  },
+
+  async updateSlaPolicy(id: string, payload: Partial<SlaPolicy>): Promise<SlaPolicy> {
+    return request(`/api/sla-policies/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
   },
 
   async getAutomationRules(): Promise<AutomationRule[]> {
@@ -602,14 +618,6 @@ export const api = {
     return request(`/api/users/${userId}/reset-password`, {
       method: 'POST',
       body: JSON.stringify({ newPassword }),
-    });
-  },
-
-  // SLA Policies (Superadmin Managed)
-  async updateSlaPolicy(id: string, data: Partial<SlaPolicy>): Promise<SlaPolicy> {
-    return request(`/api/sla-policies/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
     });
   },
 

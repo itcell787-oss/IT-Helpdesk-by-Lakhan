@@ -2423,14 +2423,21 @@ apiRouter.delete('/service-catalog/:id', (req: Request, res: Response) => {
 });
 
 apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
-  const { catalogItemId, formData } = req.body;
+  const { catalogItemId, formData, requesterId, requesterName, requesterEmail, requesterEmployeeCode } = req.body;
   const catalog = db.get('serviceCatalog');
   const item = catalog.find(c => c.id === catalogItemId);
   if (!item) return res.status(404).json({ error: 'Catalog item not found' });
 
-  const currentUserId = db.get('currentUserId');
   const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const optionalActor = getOptionalActor(req);
+  const matchedUserById = requesterId ? users.find(u => u.id === requesterId) : null;
+  const matchedUserByEmail = requesterEmail ? users.find(u => u.email.toLowerCase() === requesterEmail.toLowerCase()) : null;
+  const actor = optionalActor || matchedUserById || matchedUserByEmail || getActor(req);
+
+  const resolvedRequesterId = requesterId || actor.id;
+  const resolvedRequesterName = requesterName || actor.name;
+  const resolvedRequesterEmail = requesterEmail || actor.email;
+  const resolvedRequesterEmpCode = requesterEmployeeCode || actor.employeeCode || (actor.name?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010');
 
   const ticketId = db.generateTicketId();
   const slaPolicies = db.get('slaPolicies');
@@ -2457,7 +2464,7 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
   const ticket: Ticket = {
     id: ticketId,
     subject: `[Service Request]: ${item.title}`,
-    description: `Service Catalog Request submitted by ${actor.name}.\n\nForm Specification:\n${formattedDetails}`,
+    description: `Service Catalog Request submitted by [${resolvedRequesterEmpCode}] ${resolvedRequesterName} (${resolvedRequesterEmail}).\n\nForm Specification:\n${formattedDetails}`,
     status: item.requiresApproval ? 'waiting_approval' : 'open',
     priority: item.defaultPriority,
     type: 'service_request',
@@ -2465,14 +2472,15 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
     impact: 'medium',
     urgency: 'medium',
     channel: 'service_catalog',
-    requesterId: actor.id,
-    requesterName: actor.name,
-    requesterEmail: actor.email,
-    organizationId: actor.organizationId,
+    requesterId: resolvedRequesterId,
+    requesterName: resolvedRequesterName,
+    requesterEmail: resolvedRequesterEmail,
+    requesterEmployeeCode: resolvedRequesterEmpCode,
+    organizationId: actor.organizationId || 'org-lakhan-tech',
     assignedTeamId: resolvedTeamId,
     assignedTechnicianId: resolvedAssignedTechId,
     assignedTechnicianName: resolvedAssignedTechName,
-    followers: [actor.id],
+    followers: [resolvedRequesterId],
     ccRecipients: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -2487,19 +2495,19 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
     slaResolutionDeadline: resolutionDeadline,
   };
 
-  const tickets = db.get('tickets');
+  const tickets = db.get('tickets') || [];
   db.set('tickets', [ticket, ...tickets]);
 
   // If requires approval, create approval item
   if (item.requiresApproval) {
-    const approvals = db.get('approvalRequests');
+    const approvals = db.get('approvalRequests') || [];
     const newApproval = {
       id: `appr-${Date.now()}`,
       ticketId,
       catalogItemId: item.id,
       catalogItemTitle: item.title,
-      requesterId: actor.id,
-      requesterName: actor.name,
+      requesterId: resolvedRequesterId,
+      requesterName: resolvedRequesterName,
       approverRole: item.approverRole || 'manager',
       status: 'pending' as const,
       notes: `Request awaiting approval from ${item.approverRole || 'manager'}.`,
@@ -2508,19 +2516,16 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
     db.set('approvalRequests', [newApproval, ...approvals]);
   }
 
-  logAudit(actor, 'catalog.requested', 'ticket', ticketId, `Requested service catalog item "${item.title}"`);
+  logAudit(actor, 'catalog.requested', 'ticket', ticketId, `Requester [${resolvedRequesterEmpCode}] ${resolvedRequesterName} lodged service catalog item "${item.title}"`);
   res.status(201).json({ ticket });
 });
 
 apiRouter.get('/approvals', (req: Request, res: Response) => {
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const currentUser = currentUserId ? users.find(u => u.id === currentUserId) : null;
-  const approvals = db.get('approvalRequests');
+  const actor = getOptionalActor(req);
+  const approvals = db.get('approvalRequests') || [];
 
-  if (!currentUser) return res.json([]);
-  if (currentUser.role === 'requester') {
-    return res.json(approvals.filter(a => a.requesterId === currentUser.id));
+  if (actor && actor.role === 'requester') {
+    return res.json(approvals.filter(a => a.requesterId === actor.id));
   }
   res.json(approvals);
 });
@@ -2528,13 +2533,11 @@ apiRouter.get('/approvals', (req: Request, res: Response) => {
 apiRouter.post('/approvals/:id/decide', (req: Request, res: Response) => {
   const { id } = req.params;
   const { status, notes } = req.body;
-  const approvals = db.get('approvalRequests');
+  const approvals = db.get('approvalRequests') || [];
   const idx = approvals.findIndex(a => a.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Approval request not found' });
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getOptionalActor(req) || getActor(req);
 
   approvals[idx].status = status;
   approvals[idx].approverId = actor.id;
@@ -2546,7 +2549,7 @@ apiRouter.post('/approvals/:id/decide', (req: Request, res: Response) => {
 
   // Update associated ticket status
   const ticketId = approvals[idx].ticketId;
-  const tickets = db.get('tickets');
+  const tickets = db.get('tickets') || [];
   const tIdx = tickets.findIndex(t => t.id === ticketId);
   if (tIdx !== -1) {
     if (status === 'approved') {
@@ -2880,11 +2883,9 @@ apiRouter.get('/sla-policies', (req: Request, res: Response) => {
 });
 
 // SLA Timers - Superadmin Only Management
-apiRouter.patch('/sla-policies/:id', (req: Request, res: Response) => {
+const handleUpdateSlaPolicy = (req: Request, res: Response) => {
   const { id } = req.params;
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = currentUserId ? users.find((u) => u.id === currentUserId) : null;
+  const actor = getOptionalActor(req) || getActor(req);
 
   if (!actor || actor.role !== 'superadmin') {
     return res.status(403).json({
@@ -2892,13 +2893,20 @@ apiRouter.patch('/sla-policies/:id', (req: Request, res: Response) => {
     });
   }
 
-  const policies = db.get('slaPolicies');
+  const policies = db.get('slaPolicies') || [];
   const idx = policies.findIndex((p) => p.id === id);
   if (idx === -1) return res.status(404).json({ error: 'SLA policy not found' });
 
+  const { name, description, priority, firstResponseMinutes, resolutionMinutes, businessHoursOnly } = req.body;
+
   const updatedPolicy = {
     ...policies[idx],
-    ...req.body,
+    ...(name !== undefined ? { name: String(name).trim() } : {}),
+    ...(description !== undefined ? { description: String(description).trim() } : {}),
+    ...(priority !== undefined ? { priority } : {}),
+    ...(firstResponseMinutes !== undefined ? { firstResponseMinutes: Number(firstResponseMinutes) } : {}),
+    ...(resolutionMinutes !== undefined ? { resolutionMinutes: Number(resolutionMinutes) } : {}),
+    ...(businessHoursOnly !== undefined ? { businessHoursOnly: Boolean(businessHoursOnly) } : {}),
   };
 
   policies[idx] = updatedPolicy;
@@ -2913,7 +2921,10 @@ apiRouter.patch('/sla-policies/:id', (req: Request, res: Response) => {
   );
 
   res.json(updatedPolicy);
-});
+};
+
+apiRouter.patch('/sla-policies/:id', handleUpdateSlaPolicy);
+apiRouter.put('/sla-policies/:id', handleUpdateSlaPolicy);
 
 // Superadmin Old Tickets Purge by Date Range
 apiRouter.post('/superadmin/tickets/purge', (req: Request, res: Response) => {
