@@ -37,6 +37,17 @@ async function startServer() {
       server: {
         middlewareMode: true,
         hmr: process.env.DISABLE_HMR !== 'true',
+        watch: {
+          ignored: [
+            '**/data/**',
+            '**/backups/**',
+            '**/*.json',
+            '**/*.tmp*',
+            '**/*.bak',
+            '**/node_modules/**',
+            '**/.git/**',
+          ],
+        },
       },
       appType: 'spa',
     });

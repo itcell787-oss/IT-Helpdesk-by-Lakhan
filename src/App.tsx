@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ShieldCheck, ShieldAlert, RotateCw, X, Ticket as TicketIcon } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, RotateCw, X, Ticket as TicketIcon, Bell, RefreshCw } from 'lucide-react';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
@@ -96,9 +96,35 @@ export default function App() {
   const [superadminStats, setSuperadminStats] = useState<any>(null);
   const [systemSettings, setSystemSettings] = useState<any>(null);
 
-  // Active View Navigation - Default to end-user portal dashboard
-  const [activeView, setActiveView] = useState<string>('portal');
-  const [portalInitialTab, setPortalInitialTab] = useState<'home' | 'submit' | 'my-tickets' | 'kb' | 'register' | 'my-assets'>('home');
+  // Active View Navigation - Persisted in sessionStorage so screen updates/polls never reset page
+  const [activeView, setActiveViewState] = useState<string>(() => {
+    try {
+      const saved = sessionStorage.getItem('active_view');
+      if (saved) return saved;
+    } catch {}
+    return 'portal';
+  });
+  const setActiveView = (view: string) => {
+    setActiveViewState(view);
+    try {
+      sessionStorage.setItem('active_view', view);
+    } catch {}
+  };
+
+  const [portalInitialTab, setPortalInitialTabState] = useState<'home' | 'submit' | 'my-tickets' | 'kb' | 'register' | 'my-assets' | 'catalog-status'>(() => {
+    try {
+      const saved = sessionStorage.getItem('portal_initial_tab');
+      if (saved) return saved as any;
+    } catch {}
+    return 'home';
+  });
+  const setPortalInitialTab = (tab: any) => {
+    setPortalInitialTabState(tab);
+    try {
+      sessionStorage.setItem('portal_initial_tab', tab);
+    } catch {}
+  };
+
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketDetailData, setTicketDetailData] = useState<{
     ticket: Ticket;
@@ -121,11 +147,32 @@ export default function App() {
   // Real-time Ticket Generation Notification State
   const [showNewTicketNotification, setShowNewTicketNotification] = useState<boolean>(false);
   const [newTicketNotificationCount, setNewTicketNotificationCount] = useState<number>(0);
+  const [pendingFreshTickets, setPendingFreshTickets] = useState<Ticket[] | null>(null);
+  const [isRefreshingTickets, setIsRefreshingTickets] = useState(false);
   const ticketsCountRef = useRef<number>(0);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleRefreshTickets = async () => {
+    setIsRefreshingTickets(true);
+    try {
+      const fresh = pendingFreshTickets || await api.getTickets();
+      if (Array.isArray(fresh)) {
+        setTickets(fresh);
+        ticketsCountRef.current = fresh.length;
+      }
+      setShowNewTicketNotification(false);
+      setNewTicketNotificationCount(0);
+      setPendingFreshTickets(null);
+      showToast('✓ Tickets updated with latest requests');
+    } catch (err: any) {
+      console.error('Failed refreshing tickets:', err);
+    } finally {
+      setIsRefreshingTickets(false);
+    }
   };
 
   // Initial load & silent background synchronization
@@ -140,7 +187,14 @@ export default function App() {
       setAvailableUsers(session.availableUsers);
 
       if (isInitial && session.user) {
-        if (session.user.role === 'requester') {
+        let savedView: string | null = null;
+        try {
+          savedView = sessionStorage.getItem('active_view');
+        } catch {}
+
+        if (savedView) {
+          setActiveViewState(savedView);
+        } else if (session.user.role === 'requester') {
           setActiveView('portal');
           setPortalInitialTab('home');
         } else if (session.user.role === 'inventory_manager') {
@@ -230,16 +284,18 @@ export default function App() {
   useEffect(() => {
     const poller = setInterval(async () => {
       try {
-        if (currentUser?.role === 'inventory_manager') return;
+        if (currentUser?.role === 'inventory_manager' || currentUser?.role === 'requester') return;
         const freshTickets = await api.getTickets();
         if (Array.isArray(freshTickets)) {
           if (ticketsCountRef.current > 0 && freshTickets.length > ticketsCountRef.current) {
             const delta = freshTickets.length - ticketsCountRef.current;
             setNewTicketNotificationCount((prev) => prev + delta);
             setShowNewTicketNotification(true);
+            setPendingFreshTickets(freshTickets);
+          } else if (ticketsCountRef.current === 0) {
+            ticketsCountRef.current = freshTickets.length;
+            setTickets(freshTickets);
           }
-          ticketsCountRef.current = freshTickets.length;
-          setTickets(freshTickets);
         }
       } catch {
         // Silent poll
@@ -988,6 +1044,48 @@ export default function App() {
         onLogout={handleLogout}
       />
 
+      {/* Staff Real-Time Ticket Notification Banner with Refresh Button */}
+      {isStaffLoggedIn && showNewTicketNotification && newTicketNotificationCount > 0 && (
+        <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-cyan-700 text-white px-4 py-2 shadow-md flex items-center justify-between gap-3 z-30 animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-2.5 text-xs font-bold">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+            </span>
+            <Bell className="w-4 h-4 shrink-0" />
+            <span>
+              🔔 {newTicketNotificationCount} new ticket{newTicketNotificationCount > 1 ? 's' : ''} received
+            </span>
+            <span className="hidden md:inline font-normal text-[11px] opacity-90">
+              — Click refresh on right hand side to view new tickets without leaving your screen
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleRefreshTickets}
+              disabled={isRefreshingTickets}
+              className="px-3 py-1 bg-white text-slate-900 hover:bg-slate-100 rounded-lg text-xs font-black shadow-xs flex items-center gap-1.5 transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
+              title="Refresh ticket queue with incoming requests"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-700 ${isRefreshingTickets ? 'animate-spin' : ''}`} />
+              <span>{isRefreshingTickets ? 'Refreshing...' : 'Refresh Tickets'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowNewTicketNotification(false);
+                setNewTicketNotificationCount(0);
+              }}
+              className="p-1 text-white/80 hover:text-white rounded hover:bg-white/10 cursor-pointer"
+              title="Dismiss notification"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Layout Area - Static Left Sidebar & Scrollable Main Canvas */}
       <div className="flex-1 flex overflow-hidden min-h-0 relative">
         {/* Sidebar Navigation (Only visible for authenticated IT staff outside portal) */}
@@ -1094,6 +1192,7 @@ export default function App() {
                   setTicketListCustomInput(val);
                   try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
                 }}
+                onRefreshTickets={handleRefreshTickets}
               />
             )}
 
@@ -1128,6 +1227,7 @@ export default function App() {
                   setTicketListCustomInput(val);
                   try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
                 }}
+                onRefreshTickets={handleRefreshTickets}
               />
             )}
 
@@ -1162,6 +1262,7 @@ export default function App() {
                   setTicketListCustomInput(val);
                   try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
                 }}
+                onRefreshTickets={handleRefreshTickets}
               />
             )}
 
@@ -1196,6 +1297,7 @@ export default function App() {
                   setTicketListCustomInput(val);
                   try { sessionStorage.setItem('ticket_list_custom_input', val); } catch {}
                 }}
+                onRefreshTickets={handleRefreshTickets}
               />
             )}
 
@@ -1227,6 +1329,7 @@ export default function App() {
                 tickets={tickets}
                 knowledgeArticles={knowledgeArticles}
                 serviceCatalog={serviceCatalog}
+                approvals={approvals}
                 customFields={customFields}
                 organization={organization}
                 organizations={organizations}

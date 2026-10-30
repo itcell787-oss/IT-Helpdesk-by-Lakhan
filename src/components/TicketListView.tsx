@@ -31,6 +31,7 @@ import {
   ChevronsRight,
   Printer,
   Paperclip,
+  RotateCw,
 } from 'lucide-react';
 import { Ticket, User as UserType, UserRole, Organization } from '../types';
 import { SlaCountdownBadge } from './SlaCountdownBadge';
@@ -84,6 +85,7 @@ interface TicketListViewProps {
   onCustomModeChange?: (mode: boolean) => void;
   customPageInput?: string;
   onCustomPageInputChange?: (input: string) => void;
+  onRefreshTickets?: () => Promise<void> | void;
 }
 
 export const TicketListView: React.FC<TicketListViewProps> = ({
@@ -104,6 +106,7 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
   onCustomModeChange,
   customPageInput: propCustomPageInput,
   onCustomPageInputChange,
+  onRefreshTickets,
 }) => {
   const [activeQueue, setActiveQueue] = useState(initialQueue);
   const [searchQuery, setSearchQuery] = useState('');
@@ -793,6 +796,17 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
           >
             <Printer className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" /> Print / PDF
           </button>
+          {onRefreshTickets && (
+            <button
+              type="button"
+              onClick={() => onRefreshTickets()}
+              className="neu-btn flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-xl cursor-pointer hover:bg-cyan-50 dark:hover:bg-cyan-950/40"
+              title="Refresh tickets to load latest updates"
+            >
+              <RotateCw className="w-3.5 h-3.5 text-cyan-600" />
+              <span>Refresh</span>
+            </button>
+          )}
           <button
             onClick={onOpenNewTicket}
             className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.02]"

@@ -28,8 +28,10 @@ import {
   AtSign,
   Share2,
   Forward,
+  RotateCw,
+  CheckCheck,
 } from 'lucide-react';
-import { Ticket, KnowledgeArticle, ServiceCatalogItem, User, CustomFieldDefinition, Organization, Asset, DefaultEmailGatewayConfig } from '../types';
+import { Ticket, KnowledgeArticle, ServiceCatalogItem, User, CustomFieldDefinition, Organization, Asset, DefaultEmailGatewayConfig, ApprovalRequest } from '../types';
 import { api } from '../services/api';
 
 interface PortalViewProps {
@@ -37,6 +39,7 @@ interface PortalViewProps {
   tickets: Ticket[];
   knowledgeArticles: KnowledgeArticle[];
   serviceCatalog: ServiceCatalogItem[];
+  approvals?: ApprovalRequest[];
   customFields: CustomFieldDefinition[];
   organization?: Organization;
   organizations?: Organization[];
@@ -68,6 +71,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
   tickets,
   knowledgeArticles,
   serviceCatalog,
+  approvals = [],
   customFields,
   organization,
   organizations,
@@ -95,7 +99,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const allOrganizations = organizations && organizations.length > 0 ? organizations : (organization ? [organization] : []);
   const urlOrgId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('orgId') : null;
 
-  const [activeTab, setActiveTab] = useState<'home' | 'submit' | 'my-tickets' | 'kb' | 'register' | 'my-assets'>(
+  const [activeTab, setActiveTab] = useState<'home' | 'submit' | 'my-tickets' | 'kb' | 'register' | 'my-assets' | 'catalog-status'>(
     (initialTab as any) || 'home'
   );
 
@@ -176,12 +180,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   // Requester Asset Management State (Point 1-6)
   const [showAddAssetModal, setShowAddAssetModal] = useState(false);
-  const [newAssetName, setNewAssetName] = useState('Laptop');
-  const [newAssetType, setNewAssetType] = useState<any>('laptop');
+  const [newAssetName, setNewAssetName] = useState('CPU');
+  const [newAssetType, setNewAssetType] = useState<any>('desktop');
   const [newAssetManufacturer, setNewAssetManufacturer] = useState('');
   const [newAssetModel, setNewAssetModel] = useState('');
   const [newAssetSerial, setNewAssetSerial] = useState('');
   const [newAssetLocationDesk, setNewAssetLocationDesk] = useState('');
+  const [isSubmittingAsset, setIsSubmittingAsset] = useState(false);
   const [assetActionMsg, setAssetActionMsg] = useState<string | null>(null);
   const [assetActionError, setAssetActionError] = useState<string | null>(null);
 
@@ -215,6 +220,35 @@ export const PortalView: React.FC<PortalViewProps> = ({
         (a.assignedToUserEmail && a.assignedToUserEmail.toLowerCase() === currentUser.email.toLowerCase())
     );
   }, [currentUser, assets]);
+
+  // Service Catalog requests submitted by current user with approval & fulfillment status
+  const myCatalogRequests = React.useMemo(() => {
+    if (!currentUser) return [];
+    return tickets
+      .filter(
+        (t) =>
+          (t.requesterId === currentUser.id ||
+            t.requesterEmail?.toLowerCase() === currentUser.email?.toLowerCase()) &&
+          (t.type === 'service_request' ||
+            t.channel === 'service_catalog' ||
+            t.subject.toLowerCase().startsWith('[service request]') ||
+            t.tags?.includes('service-catalog'))
+      )
+      .map((t) => {
+        const approval = approvals.find((a) => a.ticketId === t.id);
+        const catalogItem = serviceCatalog.find(
+          (c) =>
+            approval?.catalogItemId === c.id ||
+            t.subject.toLowerCase().includes(c.title.toLowerCase()) ||
+            t.category.toLowerCase() === c.category.toLowerCase()
+        );
+        return {
+          ticket: t,
+          approval,
+          catalogItem,
+        };
+      });
+  }, [currentUser, tickets, approvals, serviceCatalog]);
 
   // Handle direct snip paste (Ctrl+V) into ticket description with 4 attachments & 2 MB total limit
   const handleFormPaste = (e: React.ClipboardEvent) => {
@@ -584,9 +618,9 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   const handleAddRequesterAsset = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAssetName.trim()) return;
+    const effectiveName = (newAssetName.trim() || allowedRequesterAssetNames[0] || 'CPU');
     if (!newAssetManufacturer.trim()) {
-      setAssetActionError('Manufacturer is mandatory.');
+      setAssetActionError('Manufacturer is mandatory (e.g. Dell, HP, Apple, Lenovo).');
       return;
     }
     if (!newAssetLocationDesk.trim()) {
@@ -594,10 +628,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
       return;
     }
 
+    setIsSubmittingAsset(true);
+    setAssetActionError(null);
+
     try {
       const assetPayload: Partial<Asset> = {
-        name: newAssetName.trim(),
-        type: newAssetType,
+        name: effectiveName,
+        type: newAssetType || mapAssetNameToType(effectiveName),
         manufacturer: newAssetManufacturer.trim(),
         model: newAssetModel.trim() || undefined,
         serialNumber: newAssetSerial.trim() || `TAG-${Date.now().toString().slice(-6)}`,
@@ -617,10 +654,11 @@ export const PortalView: React.FC<PortalViewProps> = ({
       if (onCreateAsset) {
         await onCreateAsset(assetPayload);
       }
-      setAssetActionMsg(`✓ Equipment "${newAssetName}" registered and marked In Service.`);
+      setAssetActionMsg(`✓ Equipment "${effectiveName}" registered and marked In Service.`);
       setShowAddAssetModal(false);
-      setNewAssetName(allowedRequesterAssetNames[0] || 'CPU');
-      setNewAssetType(mapAssetNameToType(allowedRequesterAssetNames[0] || 'CPU'));
+      const defaultName = allowedRequesterAssetNames[0] || 'CPU';
+      setNewAssetName(defaultName);
+      setNewAssetType(mapAssetNameToType(defaultName));
       setNewAssetManufacturer('');
       setNewAssetModel('');
       setNewAssetSerial('');
@@ -629,6 +667,8 @@ export const PortalView: React.FC<PortalViewProps> = ({
       setTimeout(() => setAssetActionMsg(null), 3500);
     } catch (err: any) {
       setAssetActionError(err.message || 'Failed to add asset');
+    } finally {
+      setIsSubmittingAsset(false);
     }
   };
 
@@ -715,6 +755,15 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 <span>My Assigned Equipment ({myAssignedAssets.length})</span>
               </button>
             )}
+            {currentUser && (
+              <button
+                onClick={() => setActiveTab('catalog-status')}
+                className="neu-btn px-5 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer text-center transition-all hover:text-indigo-700 dark:hover:text-indigo-300 flex items-center justify-center gap-1.5"
+              >
+                <Grid className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span>Service Requests ({myCatalogRequests.length})</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -795,6 +844,16 @@ export const PortalView: React.FC<PortalViewProps> = ({
               }`}
             >
               <Laptop className="w-3.5 h-3.5" /> My Assigned Assets ({myAssignedAssets.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('catalog-status')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'catalog-status'
+                  ? 'neu-btn-primary shadow-xs'
+                  : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+              }`}
+            >
+              <Grid className="w-3.5 h-3.5 text-indigo-500" /> Service Requests &amp; Status ({myCatalogRequests.length})
             </button>
           </>
         )}
@@ -1556,7 +1615,10 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setNewAssetName('');
+                    const defaultName = allowedRequesterAssetNames[0] || 'CPU';
+                    setNewAssetName(defaultName);
+                    setNewAssetType(mapAssetNameToType(defaultName));
+                    setNewAssetManufacturer('');
                     setNewAssetModel('');
                     setNewAssetSerial('');
                     setNewAssetLocationDesk('');
@@ -1625,7 +1687,17 @@ export const PortalView: React.FC<PortalViewProps> = ({
               {allowRequesterAssetSelfService && (
                 <button
                   type="button"
-                  onClick={() => setShowAddAssetModal(true)}
+                  onClick={() => {
+                    const defaultName = allowedRequesterAssetNames[0] || 'CPU';
+                    setNewAssetName(defaultName);
+                    setNewAssetType(mapAssetNameToType(defaultName));
+                    setNewAssetManufacturer('');
+                    setNewAssetModel('');
+                    setNewAssetSerial('');
+                    setNewAssetLocationDesk('');
+                    setAssetActionError(null);
+                    setShowAddAssetModal(true);
+                  }}
                   className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
                 >
                   + Add Your First Asset
@@ -1741,7 +1813,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                     </label>
                     <select
                       required
-                      value={newAssetName}
+                      value={newAssetName || allowedRequesterAssetNames[0] || 'CPU'}
                       onChange={(e) => {
                         const val = e.target.value;
                         setNewAssetName(val);
@@ -1861,13 +1933,323 @@ export const PortalView: React.FC<PortalViewProps> = ({
                     </button>
                     <button
                       type="submit"
-                      className="neu-btn-primary px-4 py-1.5 text-xs font-bold rounded-lg cursor-pointer"
+                      disabled={isSubmittingAsset}
+                      className="neu-btn-primary px-4 py-1.5 text-xs font-bold rounded-lg cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                     >
-                      Save & Register Equipment
+                      {isSubmittingAsset ? (
+                        <span>Saving Equipment...</span>
+                      ) : (
+                        <span>Save &amp; Register Equipment</span>
+                      )}
                     </button>
                   </div>
                 </form>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab: Service Catalog Requests & Approval Status (Requester Service Catalog Status) */}
+      {activeTab === 'catalog-status' && (
+        <div className="space-y-5 animate-in fade-in">
+          {/* Header & Controls */}
+          <div className="neu-flat p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/40">
+                  <Grid className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    Service Catalog Requests &amp; Fulfillment Status
+                  </h2>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                    Live approval progress, manager reviews, hardware provisioning, and fulfillment milestones for your requests.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onNavigateToCatalog}
+                className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Request New Catalog Item</span>
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Summary Chips */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="neu-card p-3 rounded-xl border border-slate-200/80 dark:border-white/10">
+              <div className="text-[10px] font-bold text-slate-500 uppercase">Total Requests</div>
+              <div className="text-xl font-black font-mono text-slate-900 dark:text-white mt-1">
+                {myCatalogRequests.length}
+              </div>
+            </div>
+            <div className="neu-card p-3 rounded-xl border border-amber-300/80 dark:border-amber-800/40 bg-amber-50/30 dark:bg-amber-950/20">
+              <div className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase">Awaiting Approval</div>
+              <div className="text-xl font-black font-mono text-amber-700 dark:text-amber-300 mt-1">
+                {myCatalogRequests.filter((r) => r.ticket.status === 'waiting_approval' || r.approval?.status === 'pending').length}
+              </div>
+            </div>
+            <div className="neu-card p-3 rounded-xl border border-cyan-300/80 dark:border-cyan-800/40 bg-cyan-50/30 dark:bg-cyan-950/20">
+              <div className="text-[10px] font-bold text-cyan-700 dark:text-cyan-400 uppercase">In Fulfillment</div>
+              <div className="text-xl font-black font-mono text-cyan-700 dark:text-cyan-300 mt-1">
+                {myCatalogRequests.filter((r) => (r.approval?.status === 'approved' || !r.ticket.status.includes('waiting')) && r.ticket.status !== 'resolved' && r.ticket.status !== 'closed' && r.ticket.status !== 'cancelled').length}
+              </div>
+            </div>
+            <div className="neu-card p-3 rounded-xl border border-emerald-300/80 dark:border-emerald-800/40 bg-emerald-50/30 dark:bg-emerald-950/20">
+              <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase">Fulfilled &amp; Closed</div>
+              <div className="text-xl font-black font-mono text-emerald-700 dark:text-emerald-300 mt-1">
+                {myCatalogRequests.filter((r) => r.ticket.status === 'resolved' || r.ticket.status === 'closed').length}
+              </div>
+            </div>
+          </div>
+
+          {/* Requests List */}
+          {!currentUser ? (
+            <div className="neu-card p-10 text-center rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/40 flex items-center justify-center mx-auto text-indigo-600">
+                <Grid className="w-6 h-6" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Sign In to Track Service Requests</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                Sign in with your employee portal credentials to review approval status, manager endorsements, and equipment provisioning.
+              </p>
+              {onOpenLogin && (
+                <button
+                  type="button"
+                  onClick={() => onOpenLogin('user')}
+                  className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                >
+                  Sign In to Employee Portal
+                </button>
+              )}
+            </div>
+          ) : myCatalogRequests.length === 0 ? (
+            <div className="neu-card p-10 text-center rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/40 flex items-center justify-center mx-auto text-indigo-600">
+                <Grid className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">No Service Requests Found</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+                  You haven't requested any items from the IT Service Catalog yet. Browse the catalog to order workstations, accessories, software licenses, or system access.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onNavigateToCatalog}
+                className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Browse Service Catalog &rarr;
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {myCatalogRequests.map(({ ticket, approval, catalogItem }) => {
+                const isWaitingApproval = ticket.status === 'waiting_approval' || approval?.status === 'pending';
+                const isApproved = approval?.status === 'approved' || (!ticket.status.includes('waiting') && approval?.status !== 'rejected');
+                const isRejected = approval?.status === 'rejected' || ticket.status === 'cancelled';
+                const isFulfilled = ticket.status === 'resolved' || ticket.status === 'closed';
+
+                return (
+                  <div
+                    key={ticket.id}
+                    className="neu-card p-5 rounded-2xl border border-slate-200/90 dark:border-white/10 space-y-4 shadow-xs hover:border-indigo-500/40 transition-colors"
+                  >
+                    {/* Top Row: Title, ID & Overall Status */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-slate-200 dark:border-white/10">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800/40">
+                            {ticket.id}
+                          </span>
+                          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-400 font-bold uppercase">
+                            {ticket.category}
+                          </span>
+                          <span className="text-xs text-slate-500 dark:text-slate-400">
+                            Requested on {new Date(ticket.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                          {ticket.subject.replace(/^\[Service Request\]:\s*/i, '')}
+                        </h3>
+                      </div>
+
+                      {/* Status Badge */}
+                      <div className="shrink-0">
+                        {isWaitingApproval ? (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Awaiting Manager Approval</span>
+                          </span>
+                        ) : isRejected ? (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                            <span>Request Rejected</span>
+                          </span>
+                        ) : isFulfilled ? (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Fulfilled &amp; Closed</span>
+                          </span>
+                        ) : (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border border-cyan-300 flex items-center gap-1.5">
+                            <RotateCw className="w-3.5 h-3.5 text-cyan-600 animate-spin" />
+                            <span>Approved · In Fulfillment</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Multi-step Visual Workflow Tracker */}
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 space-y-3">
+                      <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                        Workflow &amp; Approval Milestones
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {/* Step 1: Lodged */}
+                        <div className="p-3 rounded-lg bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800/40 space-y-1">
+                          <div className="flex items-center justify-between text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                            <span className="flex items-center gap-1">
+                              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>1. Request Submitted</span>
+                            </span>
+                            <span className="text-[10px] font-mono text-emerald-600">✓ Done</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            Submitted by {ticket.requesterName}
+                          </p>
+                        </div>
+
+                        {/* Step 2: Manager Review */}
+                        <div
+                          className={`p-3 rounded-lg bg-white dark:bg-slate-900 border space-y-1 ${
+                            isRejected
+                              ? 'border-rose-300 dark:border-rose-800/50'
+                              : isWaitingApproval
+                              ? 'border-amber-300 dark:border-amber-800/50 ring-1 ring-amber-400/40'
+                              : 'border-emerald-300 dark:border-emerald-800/40'
+                          }`}
+                        >
+                          <div
+                            className={`flex items-center justify-between text-xs font-bold ${
+                              isRejected
+                                ? 'text-rose-700 dark:text-rose-400'
+                                : isWaitingApproval
+                                ? 'text-amber-700 dark:text-amber-400'
+                                : 'text-emerald-700 dark:text-emerald-400'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1">
+                              {isRejected ? (
+                                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                              ) : isWaitingApproval ? (
+                                <Clock className="w-3.5 h-3.5 text-amber-600" />
+                              ) : (
+                                <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              )}
+                              <span>2. Manager Approval</span>
+                            </span>
+                            <span className="text-[10px] font-mono font-bold">
+                              {isRejected ? '✕ Rejected' : isWaitingApproval ? '⏳ In Review' : '✓ Approved'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {approval?.approverName
+                              ? `Reviewed by ${approval.approverName}`
+                              : approval?.approverRole
+                              ? `Assigned to ${approval.approverRole.toUpperCase()}`
+                              : 'Manager Endorsement'}
+                            {approval?.notes ? ` • "${approval.notes}"` : ''}
+                          </p>
+                        </div>
+
+                        {/* Step 3: Fulfillment */}
+                        <div
+                          className={`p-3 rounded-lg bg-white dark:bg-slate-900 border space-y-1 ${
+                            isFulfilled
+                              ? 'border-emerald-300 dark:border-emerald-800/40'
+                              : isApproved && !isWaitingApproval && !isRejected
+                              ? 'border-cyan-300 dark:border-cyan-800/50 ring-1 ring-cyan-400/40'
+                              : 'border-slate-200 dark:border-white/10 opacity-70'
+                          }`}
+                        >
+                          <div
+                            className={`flex items-center justify-between text-xs font-bold ${
+                              isFulfilled
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : isApproved && !isWaitingApproval && !isRejected
+                                ? 'text-cyan-700 dark:text-cyan-400'
+                                : 'text-slate-500'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1">
+                              {isFulfilled ? (
+                                <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              ) : (
+                                <RotateCw className={`w-3.5 h-3.5 ${isApproved && !isWaitingApproval && !isRejected ? 'animate-spin text-cyan-600' : ''}`} />
+                              )}
+                              <span>3. IT Provisioning</span>
+                            </span>
+                            <span className="text-[10px] font-mono font-bold">
+                              {isFulfilled ? '✓ Delivered' : isApproved && !isWaitingApproval && !isRejected ? '⚙ Active' : 'Waiting'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {ticket.assignedTechnicianName ? `Technician: ${ticket.assignedTechnicianName}` : 'Workplace IT Support Team'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Form Specification parameters */}
+                    {ticket.customFields && Object.keys(ticket.customFields).length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                          Order Specifications &amp; Requirements:
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(ticket.customFields).map(([k, v]) => (
+                            <div
+                              key={k}
+                              className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-xs font-mono"
+                            >
+                              <span className="text-slate-500 dark:text-slate-400 capitalize">{k}: </span>
+                              <strong className="text-slate-900 dark:text-white font-bold">{String(v)}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Bottom Action Footer */}
+                    <div className="pt-2 flex items-center justify-between">
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {catalogItem?.estimatedHours ? (
+                          <span>Estimated Turnaround: ~{catalogItem.estimatedHours} hours</span>
+                        ) : (
+                          <span>SLA Target: Standard SLA</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onSelectTicket(ticket.id)}
+                        className="neu-btn px-4 py-1.5 text-xs text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-300 font-bold rounded-lg cursor-pointer"
+                      >
+                        View Ticket &amp; Comments &rarr;
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
