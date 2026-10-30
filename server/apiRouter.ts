@@ -1580,6 +1580,32 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
   tickets[idx] = updatedTicket;
   db.set('tickets', tickets);
 
+  // Sync satisfactionRating into surveys store if updated
+  if (updates.satisfactionRating && typeof updates.satisfactionRating.rating === 'number') {
+    const surveys = db.get('surveys') || [];
+    const sIdx = surveys.findIndex(s => s.ticketId === id);
+    const sDate = updates.satisfactionRating.submittedAt || new Date().toISOString();
+    if (sIdx !== -1) {
+      surveys[sIdx] = {
+        ...surveys[sIdx],
+        rating: Number(updates.satisfactionRating.rating),
+        comment: updates.satisfactionRating.comment ? String(updates.satisfactionRating.comment).trim() : undefined,
+        submittedAt: sDate,
+      };
+    } else {
+      surveys.unshift({
+        id: `srv-${Date.now()}`,
+        ticketId: id,
+        requesterId: actor ? actor.id : oldTicket.requesterId,
+        requesterName: actor ? actor.name : oldTicket.requesterName,
+        rating: Number(updates.satisfactionRating.rating),
+        comment: updates.satisfactionRating.comment ? String(updates.satisfactionRating.comment).trim() : undefined,
+        submittedAt: sDate,
+      });
+    }
+    db.set('surveys', surveys);
+  }
+
   logAudit(
     actor,
     'ticket.updated',
@@ -3366,26 +3392,36 @@ apiRouter.post('/surveys', (req: Request, res: Response) => {
   if (!ticketId || !rating) return res.status(400).json({ error: 'ticketId and rating required' });
 
   const surveys = db.get('surveys');
-  const existingSurvey = surveys.find(s => s.ticketId === ticketId);
-  if (existingSurvey) {
-    return res.status(400).json({ error: 'This ticket has already been rated. Rating can only be submitted once per ticket.' });
-  }
+  const existingIndex = surveys.findIndex(s => s.ticketId === ticketId);
 
   const currentUserId = db.get('currentUserId');
   const users = db.get('users');
   const actor = users.find(u => u.id === currentUserId) || users[0];
 
-  const survey: SatisfactionSurvey = {
-    id: `srv-${Date.now()}`,
-    ticketId,
-    requesterId: actor ? actor.id : 'guest',
-    requesterName: actor ? actor.name : 'Portal User',
-    rating: Number(rating),
-    comment: comment ? String(comment).trim() : undefined,
-    submittedAt: new Date().toISOString(),
-  };
+  let survey: SatisfactionSurvey;
+  const nowIso = new Date().toISOString();
 
-  db.set('surveys', [survey, ...surveys]);
+  if (existingIndex !== -1) {
+    survey = {
+      ...surveys[existingIndex],
+      rating: Number(rating),
+      comment: comment ? String(comment).trim() : undefined,
+      submittedAt: nowIso,
+    };
+    surveys[existingIndex] = survey;
+    db.set('surveys', surveys);
+  } else {
+    survey = {
+      id: `srv-${Date.now()}`,
+      ticketId,
+      requesterId: actor ? actor.id : 'guest',
+      requesterName: actor ? actor.name : 'Portal User',
+      rating: Number(rating),
+      comment: comment ? String(comment).trim() : undefined,
+      submittedAt: nowIso,
+    };
+    db.set('surveys', [survey, ...surveys]);
+  }
 
   // Synchronize satisfactionRating directly onto the ticket record
   const tickets = db.get('tickets');
@@ -3398,11 +3434,12 @@ apiRouter.post('/surveys', (req: Request, res: Response) => {
         comment: comment ? String(comment).trim() : undefined,
         submittedAt: survey.submittedAt,
       },
+      updatedAt: nowIso,
     };
     db.set('tickets', tickets);
   }
 
-  res.status(201).json(survey);
+  res.status(existingIndex !== -1 ? 200 : 201).json(survey);
 });
 
 apiRouter.delete('/surveys/:id', (req: Request, res: Response) => {

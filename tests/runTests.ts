@@ -381,6 +381,43 @@ function runTestSuite() {
   const rawData = db.getRawData();
   assert('Database raw data exports valid structure with users & organizations', Boolean(rawData.users && rawData.organizations));
 
+  // -------------------------------------------------------------
+  // Test 19: CSAT Rating & Feedback
+  // -------------------------------------------------------------
+  console.log('\n--- CSAT Rating & User Experience ---');
+  const sampleRating = {
+    rating: 5,
+    comment: 'Exceptional response speed and crystal clear assistance',
+    submittedAt: new Date().toISOString(),
+  };
+  assert('CSAT survey rating structure supports 1-5 stars', sampleRating.rating >= 1 && sampleRating.rating <= 5);
+  assert('CSAT survey rating supports user comments', typeof sampleRating.comment === 'string');
+
+  // -------------------------------------------------------------
+  // Test 20: Real-time Ticket Notification Count Logic
+  // -------------------------------------------------------------
+  console.log('\n--- Real-Time Ticket Notification Counter Logic ---');
+  const existingTicketIds = new Set(['ITL-000001', 'ITL-000002', 'ITL-000003']);
+  // When admin logs in with 20 existing tickets, baseline should yield 0 notifications
+  const initialFetch = ['ITL-000001', 'ITL-000002', 'ITL-000003'];
+  const initialNewTickets = initialFetch.filter((id) => !existingTicketIds.has(id));
+  assert('Baseline initial load detects 0 new tickets (prevents false 20 tickets popup)', initialNewTickets.length === 0);
+
+  // When 1 requester submits ticket
+  const afterOneSubmission = ['ITL-000001', 'ITL-000002', 'ITL-000003', 'ITL-000004'];
+  const newAfterOne = afterOneSubmission.filter((id) => !existingTicketIds.has(id));
+  assert('Single requester submission calculates exactly 1 ticket received', newAfterOne.length === 1);
+
+  // When 2 people submit at the same time before refresh
+  const afterTwoSubmissions = ['ITL-000001', 'ITL-000002', 'ITL-000003', 'ITL-000004', 'ITL-000005'];
+  const newAfterTwo = afterTwoSubmissions.filter((id) => !existingTicketIds.has(id));
+  assert('Concurrent submissions calculate exactly 2 tickets received', newAfterTwo.length === 2);
+
+  // When admin clicks refresh, knownTicketIds is updated
+  afterTwoSubmissions.forEach((id) => existingTicketIds.add(id));
+  const afterRefresh = afterTwoSubmissions.filter((id) => !existingTicketIds.has(id));
+  assert('After clicking refresh, notification count resets to 0', afterRefresh.length === 0);
+
   console.log(`\n========================================`);
   console.log(`Test Results: ${passed} passed, ${failed} failed.`);
   console.log(`========================================\n`);

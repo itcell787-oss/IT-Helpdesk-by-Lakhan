@@ -120,6 +120,7 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
   const [showStatsModal, setShowStatsModal] = useState<boolean>(false);
   const [showColumnChooser, setShowColumnChooser] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Configurable Ticket Limits & Pagination: 25 (default), 50, 200, or Custom up to 500
   // Restores from props or sessionStorage so viewing a ticket and going back preserves the exact page and custom size
@@ -796,17 +797,23 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
           >
             <Printer className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" /> Print / PDF
           </button>
-          {onRefreshTickets && (
-            <button
-              type="button"
-              onClick={() => onRefreshTickets()}
-              className="neu-btn flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-xl cursor-pointer hover:bg-cyan-50 dark:hover:bg-cyan-950/40"
-              title="Refresh tickets to load latest updates"
-            >
-              <RotateCw className="w-3.5 h-3.5 text-cyan-600" />
-              <span>Refresh</span>
-            </button>
-          )}
+          {/* Physical Refresh Button for Ticket Management Workspace */}
+          <button
+            type="button"
+            onClick={async () => {
+              setIsRefreshing(true);
+              if (onRefreshTickets) {
+                await onRefreshTickets();
+              }
+              setTimeout(() => setIsRefreshing(false), 500);
+            }}
+            disabled={isRefreshing}
+            className="neu-btn flex items-center gap-2 px-4 py-2 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-xl cursor-pointer hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-cyan-400/50 dark:border-cyan-700/50 shadow-xs transition-transform hover:scale-[1.02] active:scale-95 disabled:opacity-50 whitespace-nowrap"
+            title="Physical Refresh: Reload and fetch latest tickets immediately"
+          >
+            <RotateCw className={`w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
           <button
             onClick={onOpenNewTicket}
             className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.02]"
@@ -816,32 +823,48 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
         </div>
       </div>
 
-      {/* Neumorphic Queue Tabs Deck */}
-      <div className="neu-flat p-1.5 rounded-2xl border border-slate-200/80 dark:border-white/10 flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
-        {[
-          { id: 'all', label: 'All Tickets' },
-          { id: 'open', label: 'Open Work' },
-          { id: 'unassigned', label: 'Unassigned Queue' },
-          { id: 'critical', label: 'Critical / Urgent' },
-          { id: 'overdue', label: 'Overdue' },
-          { id: 'waiting', label: 'Waiting on User' },
-          { id: 'resolved', label: 'Resolved & Closed' },
-        ].map((tab) => {
-          const isActive = activeQueue === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveQueue(tab.id)}
-              className={`px-3.5 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
-                isActive
-                  ? 'neu-btn-primary shadow-sm'
-                  : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
-              }`}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
+      {/* Neumorphic Queue Tabs Deck with Quick Refresh */}
+      <div className="neu-flat p-1.5 rounded-2xl border border-slate-200/80 dark:border-white/10 flex items-center justify-between gap-1.5 overflow-x-auto custom-scrollbar">
+        <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar">
+          {[
+            { id: 'all', label: 'All Tickets' },
+            { id: 'open', label: 'Open Work' },
+            { id: 'unassigned', label: 'Unassigned Queue' },
+            { id: 'critical', label: 'Critical / Urgent' },
+            { id: 'overdue', label: 'Overdue' },
+            { id: 'waiting', label: 'Waiting on User' },
+            { id: 'resolved', label: 'Resolved & Closed' },
+          ].map((tab) => {
+            const isActive = activeQueue === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveQueue(tab.id)}
+                className={`px-3.5 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+                  isActive
+                    ? 'neu-btn-primary shadow-sm'
+                    : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={async () => {
+            setIsRefreshing(true);
+            if (onRefreshTickets) await onRefreshTickets();
+            setTimeout(() => setIsRefreshing(false), 500);
+          }}
+          disabled={isRefreshing}
+          className="shrink-0 neu-btn px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-xl flex items-center gap-1.5 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-cyan-400/40 cursor-pointer transition-transform hover:scale-105 active:scale-95"
+          title="Physical Refresh: Reload workspace queue"
+        >
+          <RotateCw className={`w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">{isRefreshing ? 'Syncing...' : 'Refresh Queue'}</span>
+        </button>
       </div>
 
       {/* Neumorphic Comprehensive Filter and Search Bar */}

@@ -94,6 +94,33 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
   const [forwardCcRecipients, setForwardCcRecipients] = useState((ticket.ccRecipients || []).join(', '));
   const [forwardToast, setForwardToast] = useState<string | null>(null);
 
+  // CSAT Rating state
+  const [detailRatingScore, setDetailRatingScore] = useState<number>(ticket.satisfactionRating?.rating || 5);
+  const [detailRatingComment, setDetailRatingComment] = useState<string>(ticket.satisfactionRating?.comment || '');
+  const [isEditingRating, setIsEditingRating] = useState<boolean>(false);
+  const [ratingSubmitting, setRatingSubmitting] = useState<boolean>(false);
+  const [ratingSuccessMsg, setRatingSuccessMsg] = useState<string | null>(null);
+
+  const handleSubmitDetailRating = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRatingSubmitting(true);
+    try {
+      const newRating = {
+        rating: detailRatingScore,
+        comment: detailRatingComment.trim() || undefined,
+        submittedAt: new Date().toISOString(),
+      };
+      await onUpdateTicket(ticket.id, { satisfactionRating: newRating });
+      setIsEditingRating(false);
+      setRatingSuccessMsg('✓ Thank you! Your satisfaction feedback has been recorded.');
+      setTimeout(() => setRatingSuccessMsg(null), 4000);
+    } catch (err: any) {
+      console.error('Failed submitting rating:', err);
+    } finally {
+      setRatingSubmitting(false);
+    }
+  };
+
   const handlePrintTicket = () => {
     setIsPrinting(true);
     try {
@@ -1235,34 +1262,113 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               </div>
             )}
 
-            {/* Customer Satisfaction Feedback (Locked 1x Rating) */}
-            {ticket.satisfactionRating && (
-              <div className="p-3 rounded-lg bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-500/40 text-xs space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-amber-900 dark:text-amber-300 uppercase font-mono text-[10px] flex items-center gap-1.5">
-                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-                    Customer Satisfaction Feedback
-                  </span>
+            {/* Customer Satisfaction Rating & Feedback (User Side & Requesters) */}
+            <div className="p-3.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-500/40 text-xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-900 dark:text-amber-300 uppercase font-mono text-[10px] flex items-center gap-1.5">
+                  <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                  Customer Satisfaction Rating
+                </span>
+                {ticket.satisfactionRating && !isEditingRating && (
                   <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-100/70 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-800/40">
-                    Rated 1x (Locked)
+                    Recorded ✓
                   </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex text-amber-500 text-sm">
-                    {'★'.repeat(ticket.satisfactionRating.rating)}
-                    {'☆'.repeat(5 - ticket.satisfactionRating.rating)}
-                  </div>
-                  <span className="font-bold text-slate-900 dark:text-slate-100">
-                    {ticket.satisfactionRating.rating} / 5 Stars
-                  </span>
-                </div>
-                {ticket.satisfactionRating.comment && (
-                  <p className="text-slate-700 dark:text-slate-300 italic text-[11px] bg-white/70 dark:bg-slate-900/60 p-2 rounded-md border border-slate-200 dark:border-white/10">
-                    "{ticket.satisfactionRating.comment}"
-                  </p>
                 )}
               </div>
-            )}
+
+              {ratingSuccessMsg && (
+                <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>{ratingSuccessMsg}</span>
+                </div>
+              )}
+
+              {ticket.satisfactionRating && !isEditingRating ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="flex text-amber-500 text-sm">
+                        {'★'.repeat(ticket.satisfactionRating.rating)}
+                        {'☆'.repeat(5 - ticket.satisfactionRating.rating)}
+                      </div>
+                      <span className="font-bold text-slate-900 dark:text-slate-100">
+                        {ticket.satisfactionRating.rating} / 5 Stars
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDetailRatingScore(ticket.satisfactionRating?.rating || 5);
+                        setDetailRatingComment(ticket.satisfactionRating?.comment || '');
+                        setIsEditingRating(true);
+                      }}
+                      className="px-2 py-0.5 text-[11px] font-bold text-cyan-700 dark:text-cyan-300 hover:underline cursor-pointer"
+                    >
+                      Update Rating
+                    </button>
+                  </div>
+                  {ticket.satisfactionRating.comment && (
+                    <p className="text-slate-700 dark:text-slate-300 italic text-[11px] bg-white/70 dark:bg-slate-900/60 p-2 rounded-md border border-slate-200 dark:border-white/10">
+                      "{ticket.satisfactionRating.comment}"
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <form onSubmit={handleSubmitDetailRating} className="space-y-2.5 pt-1">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          type="button"
+                          key={star}
+                          onClick={() => setDetailRatingScore(star)}
+                          className="p-0.5 transition-transform hover:scale-125 focus:outline-none cursor-pointer"
+                          title={`Rate ${star} star${star > 1 ? 's' : ''}`}
+                        >
+                          <Star
+                            className={`w-5 h-5 ${
+                              star <= detailRatingScore
+                                ? 'text-amber-500 fill-amber-500'
+                                : 'text-slate-300 dark:text-slate-700'
+                            }`}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 font-mono">
+                      {detailRatingScore === 5 ? '5/5 Excellent' : detailRatingScore === 4 ? '4/5 Very Good' : detailRatingScore === 3 ? '3/5 Good' : detailRatingScore === 2 ? '2/5 Fair' : '1/5 Poor'}
+                    </span>
+                  </div>
+
+                  <textarea
+                    rows={2}
+                    placeholder="Add feedback or remarks (optional)..."
+                    value={detailRatingComment}
+                    onChange={(e) => setDetailRatingComment(e.target.value)}
+                    className="w-full p-2 text-xs neu-input rounded-lg text-slate-900 dark:text-slate-100 placeholder-slate-400 font-medium focus:outline-none"
+                  />
+
+                  <div className="flex items-center justify-end gap-1.5 pt-1">
+                    {ticket.satisfactionRating && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingRating(false)}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-white/5 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={ratingSubmitting}
+                      className="neu-btn-primary px-3 py-1 text-xs font-bold rounded-lg cursor-pointer disabled:opacity-50"
+                    >
+                      {ratingSubmitting ? 'Saving...' : ticket.satisfactionRating ? 'Update Rating' : 'Submit Rating'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
 
           {/* CC Recipients & Manager Forwarding (User Request) */}

@@ -149,7 +149,7 @@ export default function App() {
   const [newTicketNotificationCount, setNewTicketNotificationCount] = useState<number>(0);
   const [pendingFreshTickets, setPendingFreshTickets] = useState<Ticket[] | null>(null);
   const [isRefreshingTickets, setIsRefreshingTickets] = useState(false);
-  const ticketsCountRef = useRef<number>(0);
+  const knownTicketIdsRef = useRef<Set<string>>(new Set());
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -162,7 +162,7 @@ export default function App() {
       const fresh = pendingFreshTickets || await api.getTickets();
       if (Array.isArray(fresh)) {
         setTickets(fresh);
-        ticketsCountRef.current = fresh.length;
+        knownTicketIdsRef.current = new Set(fresh.map((t) => t.id));
       }
       setShowNewTicketNotification(false);
       setNewTicketNotificationCount(0);
@@ -245,8 +245,12 @@ export default function App() {
       ]);
 
       setTickets(ticketsData);
-      if (ticketsCountRef.current === 0 && ticketsData && ticketsData.length > 0) {
-        ticketsCountRef.current = ticketsData.length;
+      if (Array.isArray(ticketsData)) {
+        if (knownTicketIdsRef.current.size === 0) {
+          knownTicketIdsRef.current = new Set(ticketsData.map((t) => t.id));
+        } else {
+          ticketsData.forEach((t) => knownTicketIdsRef.current.add(t.id));
+        }
       }
       setAssets(assetsData);
       setKnowledgeArticles(kbData);
@@ -284,26 +288,33 @@ export default function App() {
   useEffect(() => {
     const poller = setInterval(async () => {
       try {
-        if (currentUser?.role === 'inventory_manager' || currentUser?.role === 'requester') return;
+        if (!currentUser || currentUser?.role === 'inventory_manager' || currentUser?.role === 'requester') return;
         const freshTickets = await api.getTickets();
         if (Array.isArray(freshTickets)) {
-          if (ticketsCountRef.current > 0 && freshTickets.length > ticketsCountRef.current) {
-            const delta = freshTickets.length - ticketsCountRef.current;
-            setNewTicketNotificationCount((prev) => prev + delta);
+          if (knownTicketIdsRef.current.size === 0) {
+            knownTicketIdsRef.current = new Set(freshTickets.map((t) => t.id));
+            setTickets(freshTickets);
+            return;
+          }
+          // Strictly count newly created tickets that were NOT in knownTicketIds
+          const newlyGenerated = freshTickets.filter((t) => !knownTicketIdsRef.current.has(t.id));
+          if (newlyGenerated.length > 0) {
+            setNewTicketNotificationCount(newlyGenerated.length);
             setShowNewTicketNotification(true);
             setPendingFreshTickets(freshTickets);
-          } else if (ticketsCountRef.current === 0) {
-            ticketsCountRef.current = freshTickets.length;
-            setTickets(freshTickets);
+          } else {
+            if (newTicketNotificationCount === 0) {
+              setShowNewTicketNotification(false);
+            }
           }
         }
       } catch {
         // Silent poll
       }
-    }, 7000);
+    }, 5000);
 
     return () => clearInterval(poller);
-  }, [currentUser]);
+  }, [currentUser, newTicketNotificationCount]);
 
   // Load ticket details when selected
   useEffect(() => {
@@ -445,9 +456,7 @@ export default function App() {
     try {
       const created = await api.createTicket(ticketData);
       setTickets((prev) => [created, ...prev]);
-      ticketsCountRef.current = ticketsCountRef.current + 1;
-      setNewTicketNotificationCount((prev) => prev + 1);
-      setShowNewTicketNotification(true);
+      knownTicketIdsRef.current.add(created.id);
       showToast(`Ticket [${created.id}] successfully created!`);
       loadData();
       return created;
@@ -463,6 +472,7 @@ export default function App() {
     try {
       await api.deleteTicket(ticketId);
       setTickets((prev) => prev.filter((t) => t.id !== ticketId));
+      knownTicketIdsRef.current.delete(ticketId);
       if (selectedTicketId === ticketId) {
         setSelectedTicketId(null);
         setActiveView('tickets');
@@ -1044,48 +1054,6 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {/* Staff Real-Time Ticket Notification Banner with Refresh Button */}
-      {isStaffLoggedIn && showNewTicketNotification && newTicketNotificationCount > 0 && (
-        <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-cyan-700 text-white px-4 py-2 shadow-md flex items-center justify-between gap-3 z-30 animate-in slide-in-from-top-2">
-          <div className="flex items-center gap-2.5 text-xs font-bold">
-            <span className="relative flex h-2.5 w-2.5 shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
-            </span>
-            <Bell className="w-4 h-4 shrink-0" />
-            <span>
-              🔔 {newTicketNotificationCount} new ticket{newTicketNotificationCount > 1 ? 's' : ''} received
-            </span>
-            <span className="hidden md:inline font-normal text-[11px] opacity-90">
-              — Click refresh on right hand side to view new tickets without leaving your screen
-            </span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleRefreshTickets}
-              disabled={isRefreshingTickets}
-              className="px-3 py-1 bg-white text-slate-900 hover:bg-slate-100 rounded-lg text-xs font-black shadow-xs flex items-center gap-1.5 transition-transform hover:scale-105 cursor-pointer disabled:opacity-50"
-              title="Refresh ticket queue with incoming requests"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 text-cyan-700 ${isRefreshingTickets ? 'animate-spin' : ''}`} />
-              <span>{isRefreshingTickets ? 'Refreshing...' : 'Refresh Tickets'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowNewTicketNotification(false);
-                setNewTicketNotificationCount(0);
-              }}
-              className="p-1 text-white/80 hover:text-white rounded hover:bg-white/10 cursor-pointer"
-              title="Dismiss notification"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Layout Area - Static Left Sidebar & Scrollable Main Canvas */}
       <div className="flex-1 flex overflow-hidden min-h-0 relative">
         {/* Sidebar Navigation (Only visible for authenticated IT staff outside portal) */}
@@ -1631,8 +1599,8 @@ export default function App() {
         onOpenEmailSimulator={() => setActiveView('email-channels')}
       />
 
-      {/* Real-time Ticket Generation Notification Popup */}
-      {showNewTicketNotification && (
+      {/* Real-time Ticket Generation Notification Popup - Strictly Admins, Technicians & Staff Portal Only */}
+      {isStaffLoggedIn && activeView !== 'portal' && showNewTicketNotification && newTicketNotificationCount > 0 && (
         <div
           role="alert"
           aria-live="polite"
@@ -1656,19 +1624,17 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={async () => {
-                setShowNewTicketNotification(false);
-                setNewTicketNotificationCount(0);
-                await loadData();
-                showToast('Tickets list refreshed');
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs transition-colors cursor-pointer shadow-md"
+              type="button"
+              onClick={handleRefreshTickets}
+              disabled={isRefreshingTickets}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 active:scale-95 text-slate-950 font-black text-xs transition-colors cursor-pointer shadow-md disabled:opacity-50"
               title="Refresh tickets"
             >
-              <RotateCw className="w-3.5 h-3.5" />
-              <span>Refresh</span>
+              <RotateCw className={`w-3.5 h-3.5 ${isRefreshingTickets ? 'animate-spin' : ''}`} />
+              <span>{isRefreshingTickets ? 'Refreshing...' : 'Refresh'}</span>
             </button>
             <button
+              type="button"
               onClick={() => {
                 setShowNewTicketNotification(false);
                 setNewTicketNotificationCount(0);
