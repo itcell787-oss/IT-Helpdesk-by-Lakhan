@@ -160,26 +160,27 @@ class DatabaseEngine {
     ];
 
     const initialDefaultGateway: DefaultEmailGatewayConfig = {
-      serviceProvider: 'gmail',
+      serviceProvider: 'self_hosted_imap',
       incomingProtocol: 'imap',
-      incomingHost: 'imap.gmail.com',
+      incomingHost: 'imap.confiancebizsol.tech',
       incomingPort: 993,
       incomingSecurity: 'ssl',
-      incomingUsername: 'Confiancebizsol377@gmail.com',
+      incomingUsername: 'it-helpdesk@confiancebizsol.tech',
       outgoingProtocol: 'smtp',
-      outgoingHost: 'smtp.gmail.com',
+      outgoingHost: 'smtp.confiancebizsol.tech',
       outgoingPort: 587,
       outgoingSecurity: 'starttls',
-      outgoingUsername: 'Confiancebizsol377@gmail.com',
-      fromName: 'IT Helpdesk Support (Confiance)',
-      fromEmail: 'Confiancebizsol377@gmail.com',
-      replyToEmail: 'Confiancebizsol377@gmail.com',
+      outgoingUsername: 'it-helpdesk@confiancebizsol.tech',
+      fromName: 'IT Helpdesk Support',
+      fromEmail: 'it-helpdesk@confiancebizsol.tech',
+      replyToEmail: 'it-helpdesk@confiancebizsol.tech',
       subjectPrefix: '[ITL-{{ticketId}}]',
       status: 'connected',
       enableInboundTicketGeneration: true,
       enableOutboundReplyNotification: true,
-      pollingIntervalMinutes: 5,
+      pollingIntervalMinutes: 1,
       lastTestedAt: new Date().toISOString(),
+      lastPolledAt: new Date().toISOString(),
     };
 
     if (fs.existsSync(DB_FILE)) {
@@ -187,7 +188,28 @@ class DatabaseEngine {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
         if (!parsed.adminMailboxes) parsed.adminMailboxes = initialAdminMailboxes;
-        if (!parsed.defaultGatewayConfig) parsed.defaultGatewayConfig = initialDefaultGateway;
+        if (!parsed.defaultGatewayConfig) {
+          parsed.defaultGatewayConfig = initialDefaultGateway;
+        } else {
+          if (parsed.defaultGatewayConfig.fromEmail === 'Confiancebizsol377@gmail.com') {
+            parsed.defaultGatewayConfig.fromEmail = 'it-helpdesk@confiancebizsol.tech';
+            parsed.defaultGatewayConfig.replyToEmail = 'it-helpdesk@confiancebizsol.tech';
+            parsed.defaultGatewayConfig.incomingUsername = 'it-helpdesk@confiancebizsol.tech';
+            parsed.defaultGatewayConfig.outgoingUsername = 'it-helpdesk@confiancebizsol.tech';
+          }
+          if (parsed.defaultGatewayConfig.enableInboundTicketGeneration === undefined) {
+            parsed.defaultGatewayConfig.enableInboundTicketGeneration = true;
+          }
+          if (parsed.defaultGatewayConfig.enableOutboundReplyNotification === undefined) {
+            parsed.defaultGatewayConfig.enableOutboundReplyNotification = true;
+          }
+          if (parsed.defaultGatewayConfig.pollingIntervalMinutes === undefined) {
+            parsed.defaultGatewayConfig.pollingIntervalMinutes = 1;
+          }
+          if (!parsed.defaultGatewayConfig.status) {
+            parsed.defaultGatewayConfig.status = 'connected';
+          }
+        }
         if (!parsed.otpRecords) parsed.otpRecords = [];
         
         // Ensure organizations have systemSettings and preSharedKey

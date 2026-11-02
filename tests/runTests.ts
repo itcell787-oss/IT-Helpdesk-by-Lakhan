@@ -418,6 +418,24 @@ function runTestSuite() {
   const afterRefresh = afterTwoSubmissions.filter((id) => !existingTicketIds.has(id));
   assert('After clicking refresh, notification count resets to 0', afterRefresh.length === 0);
 
+  // -------------------------------------------------------------
+  // Test 21: Helpdesk Default Gateway & Inbound/Outbound Automation
+  // -------------------------------------------------------------
+  console.log('\n--- Email Gateway & Automation Engine ---');
+  const gateway = db.get('defaultGatewayConfig');
+  assert('Default email gateway exists', Boolean(gateway));
+  assert(
+    'Gateway official email defaults to it-helpdesk@confiancebizsol.tech (no test accounts)',
+    gateway.fromEmail === 'it-helpdesk@confiancebizsol.tech'
+  );
+  assert(
+    'Test email Confiancebizsol377@gmail.com is not configured as default',
+    gateway.fromEmail !== 'Confiancebizsol377@gmail.com'
+  );
+  assert('Inbound Email-to-Ticket Generation is enabled', gateway.enableInboundTicketGeneration === true);
+  assert('Outbound Reply Email Notifications are enabled', gateway.enableOutboundReplyNotification === true);
+  assert('Gateway provider presets supported', ['self_hosted_imap', 'gmail', 'office365', 'self_hosted_pop3', 'custom'].includes(gateway.serviceProvider || 'self_hosted_imap'));
+
   console.log(`\n========================================`);
   console.log(`Test Results: ${passed} passed, ${failed} failed.`);
   console.log(`========================================\n`);
@@ -428,3 +446,4 @@ function runTestSuite() {
 }
 
 runTestSuite();
+

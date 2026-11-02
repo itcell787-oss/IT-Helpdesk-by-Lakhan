@@ -1094,6 +1094,7 @@ export default function App() {
           setIsLoginModalOpen(true);
         }}
         onLogout={handleLogout}
+        defaultGatewayConfig={defaultGateway}
       />
 
       {/* Main Layout Area - Static Left Sidebar & Scrollable Main Canvas */}
@@ -1161,6 +1162,7 @@ export default function App() {
                 tickets={tickets}
                 users={availableUsers}
                 auditLogs={auditLogs}
+                defaultGatewayConfig={defaultGateway}
                 onSelectTicket={handleSelectTicket}
                 onNavigate={(v) => {
                   setSelectedTicketId(null);

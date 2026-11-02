@@ -753,5 +753,16 @@ export const api = {
     const jsonContent = typeof backupData === 'string' ? backupData : JSON.stringify(backupData);
     return this.uploadDatabaseJson(jsonContent);
   },
+
+  async getEmailDeliveryLogs(): Promise<any[]> {
+    return request('/api/email/delivery-logs');
+  },
+
+  async sendInboundEmailWebhook(payload: { from: string; subject: string; body: string; cc?: string; managerEmail?: string }): Promise<any> {
+    return request('/api/email/inbound', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
 };
 

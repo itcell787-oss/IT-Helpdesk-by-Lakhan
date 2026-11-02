@@ -1672,7 +1672,7 @@ apiRouter.delete('/tickets/:id', (req: Request, res: Response) => {
 // -------------------------------------------------------------
 // Comments & Timelines (Public Reply vs Private Internal Note)
 // -------------------------------------------------------------
-apiRouter.post('/tickets/:id/comments', (req: Request, res: Response) => {
+apiRouter.post('/tickets/:id/comments', async (req: Request, res: Response) => {
   const { id } = req.params;
   const tickets = db.get('tickets');
   const ticketIdx = tickets.findIndex(t => t.id === id);
@@ -1697,9 +1697,7 @@ apiRouter.post('/tickets/:id/comments', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Comment attachments exceed the 2 MB limit (max 2 MB total).' });
   }
 
-  const currentUserId = db.get('currentUserId');
-  const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = getActor(req);
 
   const comment: TicketComment = {
     id: `cmt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -1712,7 +1710,43 @@ apiRouter.post('/tickets/:id/comments', (req: Request, res: Response) => {
     content,
     createdAt: new Date().toISOString(),
     attachments,
+    emailDispatched: !isInternal,
+    emailRecipient: !isInternal ? tickets[ticketIdx].requesterEmail : undefined,
+    emailDeliveryStatus: !isInternal ? 'simulated_success' : undefined,
   };
+
+  // If public reply, dispatch notification email via Default Gateway SMTP
+  if (!isInternal) {
+    const defaultGateway = db.get('defaultGatewayConfig') || {
+      outgoingHost: 'smtp.confiancebizsol.tech',
+      outgoingPort: 587,
+      outgoingProtocol: 'smtp',
+    };
+    try {
+      const emailResult = await emailService.sendTicketReplyEmail({
+        ticket: tickets[ticketIdx],
+        comment,
+        authorName: actor.name,
+        recipientEmail: tickets[ticketIdx].requesterEmail,
+        ccList: tickets[ticketIdx].ccRecipients,
+      });
+      comment.emailDeliveryStatus = emailResult.status;
+      comment.emailDeliveryError = emailResult.error;
+      comment.emailMessageId = emailResult.messageId;
+    } catch (err: any) {
+      console.warn('Outbound email reply notification failed:', err.message);
+      comment.emailDeliveryStatus = 'failed';
+      comment.emailDeliveryError = err.message;
+    }
+
+    logAudit(
+      actor,
+      'email.outbound_smtp_reply',
+      'ticket',
+      id,
+      `Dispatched reply to ${tickets[ticketIdx].requesterEmail} via Default SMTP (${defaultGateway.outgoingHost}:${defaultGateway.outgoingPort}, protocol: ${defaultGateway.outgoingProtocol?.toUpperCase() || 'SMTP'}) with Subject [${tickets[ticketIdx].id}] Re: ${tickets[ticketIdx].subject}`
+    );
+  }
 
   const comments = db.get('comments');
   db.set('comments', [...comments, comment]);
@@ -1733,28 +1767,8 @@ apiRouter.post('/tickets/:id/comments', (req: Request, res: Response) => {
     id,
     isInternal
       ? `Added confidential internal note on ${id}`
-      : `Sent public reply to requester on ${id}`
+      : `Sent public reply to requester on ${id} (Outbound email notification dispatched to ${ticket.requesterEmail})`
   );
-
-  // If public reply, dispatch notification email via Default Gateway SMTP
-  if (!isInternal) {
-    const defaultGateway = db.get('defaultGatewayConfig');
-    emailService.sendTicketReplyEmail({
-      ticket,
-      comment,
-      authorName: actor.name,
-      recipientEmail: ticket.requesterEmail,
-      ccList: ticket.ccRecipients,
-    }).catch((err) => console.warn('Outbound email reply notification failed:', err.message));
-
-    logAudit(
-      actor,
-      'email.outbound_smtp_reply',
-      'ticket',
-      id,
-      `Dispatched reply to ${ticket.requesterEmail} via Default SMTP (${defaultGateway.outgoingHost}:${defaultGateway.outgoingPort}, protocol: ${defaultGateway.outgoingProtocol.toUpperCase()}) with Subject [${ticket.id}] Re: ${ticket.subject}`
-    );
-  }
 
   res.status(201).json(comment);
 });
@@ -2761,7 +2775,7 @@ apiRouter.post('/admin/mailboxes/test', (req: Request, res: Response) => {
 
 // -------------------------------------------------------------
 // Default Organization Reply & Polling Gateway (POP3 / SMTP / IMAP)
-// Supports Gmail (Confiancebizsol377@gmail.com with App Password), M365, Self-Hosted
+// Supports Gmail (Workspace with App Password), M365, Self-Hosted
 // -------------------------------------------------------------
 apiRouter.get('/email/default-gateway', (req: Request, res: Response) => {
   const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
@@ -2834,12 +2848,7 @@ apiRouter.post('/email/default-gateway/poll', async (req: Request, res: Response
     return res.status(403).json({ error: 'Forbidden: Only IT staff can poll the email gateway.' });
   }
 
-  const gateway = db.get('defaultGatewayConfig');
-  const nowIso = new Date().toISOString();
-  gateway.lastPolledAt = nowIso;
-  db.set('defaultGatewayConfig', gateway);
-
-  // If inbound sample message is provided in body, process it directly
+  // If inbound sample message is provided in body (simulator), process it directly
   if (req.body.from && req.body.subject && req.body.body) {
     const inboundRes = await emailService.processInboundEmail({
       from: req.body.from,
@@ -2852,16 +2861,54 @@ apiRouter.post('/email/default-gateway/poll', async (req: Request, res: Response
       success: true,
       message: `Processed email from ${req.body.from} -> ${inboundRes.mode === 'threaded' ? 'Appended reply to ticket' : 'Created ticket'} ${inboundRes.ticket.id}`,
       result: inboundRes,
-      polledAt: nowIso,
+      polledAt: new Date().toISOString(),
+      processedCount: 1,
     });
   }
 
+  // Real IMAP / POP3 mailbox poll
+  const pollResult = await emailService.pollInboundMailbox();
   res.json({
-    success: true,
-    message: `Mailbox check completed for ${gateway.incomingUsername} (${gateway.incomingHost}:${gateway.incomingPort}). No new unread messages waiting.`,
-    polledAt: nowIso,
-    processedCount: 0,
+    ...pollResult,
+    polledAt: new Date().toISOString(),
   });
+});
+
+// Inbound Mail Relay & Webhook Intake Endpoint (Open for Postfix, Mailgun, SendGrid, or curl)
+apiRouter.post(['/email/inbound', '/email/webhook'], async (req: Request, res: Response) => {
+  const from = req.body.from || req.body.sender || req.body['envelope[from]'];
+  const subject = req.body.subject || req.body.title || 'Support Request via Inbound Email';
+  const body = req.body.body || req.body.text || req.body.html || req.body['stripped-text'] || req.body['body-plain'] || '';
+  const cc = req.body.cc || req.body.ccList;
+  const managerEmail = req.body.managerEmail;
+
+  if (!from || !body) {
+    return res.status(400).json({ error: 'Inbound email must include from and body content.' });
+  }
+
+  try {
+    const result = await emailService.processInboundEmail({
+      from,
+      subject,
+      body,
+      cc,
+      managerEmail,
+      messageId: req.body.messageId || req.body['Message-Id'],
+    });
+
+    res.status(201).json({
+      success: true,
+      mode: result.mode,
+      ticket: result.ticket,
+      comment: result.comment,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed processing inbound email.' });
+  }
+});
+
+apiRouter.get('/email/delivery-logs', (req: Request, res: Response) => {
+  res.json(emailService.getDeliveryLogs());
 });
 
 // -------------------------------------------------------------

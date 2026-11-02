@@ -19,8 +19,15 @@ import {
   Check,
   ChevronRight,
   Filter,
+  Server,
+  Send,
+  Inbox,
+  RefreshCw,
+  Settings as SettingsIcon,
+  CheckCircle,
 } from 'lucide-react';
-import { Ticket, AuditLog, User } from '../types';
+import { Ticket, AuditLog, User, DefaultEmailGatewayConfig } from '../types';
+import { api } from '../services/api';
 
 interface DashboardViewProps {
   metrics: {
@@ -40,6 +47,7 @@ interface DashboardViewProps {
   tickets: Ticket[];
   auditLogs: AuditLog[];
   users?: User[];
+  defaultGatewayConfig?: DefaultEmailGatewayConfig | null;
   onSelectTicket: (ticketId: string) => void;
   onNavigate: (view: string) => void;
   onOpenNewTicket: () => void;
@@ -51,11 +59,48 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   tickets,
   auditLogs,
   users = [],
+  defaultGatewayConfig,
   onSelectTicket,
   onNavigate,
   onOpenNewTicket,
   onOpenEmailSimulator,
 }) => {
+  // Live Email Gateway Interaction State
+  const [gwPolling, setGwPolling] = useState(false);
+  const [gwPollFeedback, setGwPollFeedback] = useState<string | null>(null);
+  const [gwTesting, setGwTesting] = useState(false);
+  const [gwTestFeedback, setGwTestFeedback] = useState<string | null>(null);
+
+  const handleCheckMailbox = async () => {
+    setGwPolling(true);
+    setGwPollFeedback(null);
+    try {
+      const res = await api.pollDefaultGateway();
+      setGwPollFeedback(res.message || 'Mailbox poll complete. No new unread messages.');
+      setTimeout(() => setGwPollFeedback(null), 6000);
+    } catch (err: any) {
+      setGwPollFeedback(err.message || 'Failed checking mailbox');
+      setTimeout(() => setGwPollFeedback(null), 6000);
+    } finally {
+      setGwPolling(false);
+    }
+  };
+
+  const handleTestHandshake = async () => {
+    setGwTesting(true);
+    setGwTestFeedback(null);
+    try {
+      const res = await api.testDefaultGateway();
+      setGwTestFeedback(res.message || (res.success ? 'Handshake successful!' : 'Connection test failed'));
+      setTimeout(() => setGwTestFeedback(null), 7000);
+    } catch (err: any) {
+      setGwTestFeedback(err.message || 'Connection test failed');
+      setTimeout(() => setGwTestFeedback(null), 7000);
+    } finally {
+      setGwTesting(false);
+    }
+  };
+
   // Date Range Filtering (Point 1: x date to x date, last month, all time)
   const [dateFilter, setDateFilter] = useState<'all_time' | 'last_month' | 'this_month' | 'last_7_days' | 'custom'>('all_time');
   const [customStartDate, setCustomStartDate] = useState('');
@@ -526,6 +571,212 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* =========================================================================
+          LIVE CONNECTED HELPDESK EMAIL GATEWAY WIDGET
+          Shows active connected helpdesk email, provider, inbound intake, and outbound replies
+         ========================================================================= */}
+      {(() => {
+        const gw = defaultGatewayConfig;
+        const connectedEmail = gw?.fromEmail || 'it-helpdesk@confiancebizsol.tech';
+        const provider = gw?.serviceProvider || 'self_hosted_imap';
+        const incomingProto = (gw?.incomingProtocol || 'imap').toUpperCase();
+        const outgoingProto = (gw?.outgoingProtocol || 'smtp').toUpperCase();
+        const incomingHost = gw?.incomingHost || 'imap.confiancebizsol.tech';
+        const outgoingHost = gw?.outgoingHost || 'smtp.confiancebizsol.tech';
+        const inboundEnabled = gw?.enableInboundTicketGeneration !== false;
+        const outboundEnabled = gw?.enableOutboundReplyNotification !== false;
+
+        const providerBadge = () => {
+          if (provider === 'gmail' || incomingHost.toLowerCase().includes('gmail')) {
+            return {
+              name: 'Gmail / Google Workspace',
+              code: 'G',
+              badgeClass: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200 dark:border-rose-900',
+              iconColor: 'text-rose-600',
+              details: 'Gmail IMAP (Port 993 SSL) & SMTP (Port 587 STARTTLS)',
+            };
+          }
+          if (provider === 'office365' || incomingHost.toLowerCase().includes('office365')) {
+            return {
+              name: 'Microsoft 365 Exchange',
+              code: 'O',
+              badgeClass: 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-900',
+              iconColor: 'text-blue-600',
+              details: 'outlook.office365.com (Port 993 SSL) & smtp.office365.com',
+            };
+          }
+          if (provider === 'self_hosted_pop3' || incomingProto === 'POP3') {
+            return {
+              name: 'Self-Hosted POP3',
+              code: 'POP3',
+              badgeClass: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-900',
+              iconColor: 'text-amber-600',
+              details: `Custom POP3 (${incomingHost}) & Dovecot/SMTP (${outgoingHost})`,
+            };
+          }
+          return {
+            name: 'Self-Hosted IMAP',
+            code: 'IMAP',
+            badgeClass: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900',
+            iconColor: 'text-emerald-600',
+            details: `Custom IMAP (${incomingHost}) & Postfix/SMTP (${outgoingHost})`,
+          };
+        };
+
+        const prov = providerBadge();
+
+        return (
+          <div className="neu-card p-5 rounded-2xl border border-cyan-500/20 bg-gradient-to-r from-slate-900/[0.03] to-cyan-500/[0.04] dark:from-white/[0.02] dark:to-cyan-500/[0.05] shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-600 dark:text-cyan-400 shrink-0">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                      Current Connected Helpdesk Email
+                    </h3>
+                    <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      {connectedEmail}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium mt-0.5">
+                    Live bidirectional email gateway handling automated ticket intake and staff reply dispatches.
+                  </p>
+                </div>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="flex items-center gap-2 flex-wrap shrink-0">
+                <button
+                  type="button"
+                  disabled={gwPolling}
+                  onClick={handleCheckMailbox}
+                  className="neu-btn px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 rounded-xl cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-2xs"
+                  title="Check mailbox for incoming emails now"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${gwPolling ? 'animate-spin' : ''}`} />
+                  <span>{gwPolling ? 'Checking...' : 'Check Mailbox Now'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={gwTesting}
+                  onClick={handleTestHandshake}
+                  className="neu-btn px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-2xs"
+                  title="Test socket and SMTP handshake"
+                >
+                  <Activity className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>{gwTesting ? 'Testing...' : 'Test Handshake'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onOpenEmailSimulator}
+                  className="neu-btn px-3 py-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-400 hover:text-indigo-800 rounded-xl cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                  title="Test inbound email receipt with 1 click"
+                >
+                  <Mail className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Receive Test Email</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onNavigate('settings')}
+                  className="neu-btn px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 hover:text-slate-900 rounded-xl cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                  title="Configure Email Gateway & App Password in Settings"
+                >
+                  <SettingsIcon className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Configure Gateway</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Poll Feedback or Test Feedback Alert */}
+            {(gwPollFeedback || gwTestFeedback) && (
+              <div className="p-3 rounded-xl bg-cyan-50 dark:bg-cyan-950/60 border border-cyan-300 dark:border-cyan-800 text-cyan-900 dark:text-cyan-200 text-xs font-bold flex items-center gap-2 animate-in fade-in duration-200">
+                <CheckCircle className="w-4 h-4 text-cyan-600 shrink-0" />
+                <span>{gwPollFeedback || gwTestFeedback}</span>
+              </div>
+            )}
+
+            {/* 3 Status Columns */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Box 1: Provider Profile */}
+              <div className="bg-white/80 dark:bg-slate-900/80 p-3.5 rounded-xl border border-slate-200/80 dark:border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Active Connector Preset
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${prov.badgeClass}`}>
+                    {prov.name}
+                  </span>
+                </div>
+                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span className="truncate">{prov.details}</span>
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                  Inbound: {incomingProto}:{gw?.incomingPort || 993} • Outbound: {outgoingProto}:{gw?.outgoingPort || 587}
+                </div>
+              </div>
+
+              {/* Box 2: Inbound Email-to-Ticket Generation */}
+              <div className="bg-white/80 dark:bg-slate-900/80 p-3.5 rounded-xl border border-slate-200/80 dark:border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                    <Inbox className="w-3.5 h-3.5 text-indigo-500" />
+                    Inbound Ticket Intake
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    inboundEnabled
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/60'
+                      : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                  }`}>
+                    {inboundEnabled ? 'ACTIVE & OPERATIONAL' : 'DISABLED'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-800 dark:text-slate-200 font-medium leading-tight">
+                  Automatically convert incoming emails received at <code className="font-mono text-cyan-600 dark:text-cyan-400 font-bold">{connectedEmail}</code> into new support tickets.
+                </p>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                  <span>✓ Auto-category matching</span>
+                  <span>✓ SLA timers</span>
+                  <span>✓ [ITL-XXXXXX] threading</span>
+                </div>
+              </div>
+
+              {/* Box 3: Outbound Reply Email Notifications */}
+              <div className="bg-white/80 dark:bg-slate-900/80 p-3.5 rounded-xl border border-slate-200/80 dark:border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                    <Send className="w-3.5 h-3.5 text-emerald-500" />
+                    Outbound Reply Alerts
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    outboundEnabled
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/60'
+                      : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                  }`}>
+                    {outboundEnabled ? 'ACTIVE & OPERATIONAL' : 'DISABLED'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-800 dark:text-slate-200 font-medium leading-tight">
+                  Automatically dispatch an email to the requester when staff posts a public reply on a ticket.
+                </p>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                  <span>✓ Requester &amp; CC list</span>
+                  <span>✓ Branded HTML layout</span>
+                  <span>✓ Direct reply-to support</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Date Range Filter Bar (Point 1: x date to x date, last month, all time) */}
       <div className="neu-flat p-4 rounded-2xl border border-slate-200/90 dark:border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-3">

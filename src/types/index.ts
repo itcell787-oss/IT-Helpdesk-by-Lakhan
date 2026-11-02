@@ -219,6 +219,10 @@ export interface TicketComment {
     url: string;
   }>;
   emailMessageId?: string;
+  emailDispatched?: boolean;
+  emailRecipient?: string;
+  emailDeliveryStatus?: 'sent' | 'simulated_success' | 'failed';
+  emailDeliveryError?: string;
 }
 
 export interface MailboxConnectionConfig {
@@ -264,6 +268,8 @@ export interface DefaultEmailGatewayConfig {
   status: 'connected' | 'error' | 'configured' | 'disconnected';
   lastTestedAt?: string;
   lastPolledAt?: string;
+  lastPollStatus?: string;
+  lastPollError?: string;
   enableInboundTicketGeneration?: boolean;
   enableOutboundReplyNotification?: boolean;
   pollingIntervalMinutes?: number;

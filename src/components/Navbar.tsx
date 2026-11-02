@@ -17,7 +17,7 @@ import {
   ExternalLink,
   Mail,
 } from 'lucide-react';
-import { User, Organization } from '../types';
+import { User, Organization, DefaultEmailGatewayConfig } from '../types';
 import { ChangePasswordModal } from './ChangePasswordModal';
 
 interface NavbarProps {
@@ -34,6 +34,7 @@ interface NavbarProps {
   onOpenNewTicket: () => void;
   onOpenLogin: (type?: 'user' | 'admin') => void;
   onLogout: () => void;
+  defaultGatewayConfig?: DefaultEmailGatewayConfig | null;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -50,6 +51,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenNewTicket: _onOpenNewTicket,
   onOpenLogin,
   onLogout,
+  defaultGatewayConfig,
 }) => {
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showSignInDropdown, setShowSignInDropdown] = useState(false);
@@ -251,12 +253,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={() => onNavigate('settings')}
               className="hidden lg:flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 bg-slate-100/90 dark:bg-slate-900/90 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-slate-200 dark:border-slate-800 hover:border-cyan-400 dark:hover:border-cyan-700 rounded-xl transition-all cursor-pointer font-medium shadow-2xs group"
-              title="Helpdesk Email Connector (Confiancebizsol377@gmail.com) - Click to manage settings"
+              title={`Connected Email Gateway (${defaultGatewayConfig?.fromEmail || 'it-helpdesk@confiancebizsol.tech'}) - Click to configure`}
             >
               <Mail className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 group-hover:scale-110 transition-transform" />
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span className="font-mono text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                Confiancebizsol377@gmail.com
+                {defaultGatewayConfig?.fromEmail || 'it-helpdesk@confiancebizsol.tech'}
               </span>
             </button>
           )}

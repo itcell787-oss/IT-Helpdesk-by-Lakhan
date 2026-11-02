@@ -825,23 +825,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Default Organization Reply & Polling Gateway State
   // -------------------------------------------------------------
   const [gwServiceProvider, setGwServiceProvider] = useState<'gmail' | 'office365' | 'self_hosted_imap' | 'self_hosted_pop3' | 'custom'>(
-    defaultGateway.serviceProvider || 'gmail'
+    defaultGateway.serviceProvider || 'self_hosted_imap'
   );
   const [gwIncomingProtocol, setGwIncomingProtocol] = useState<'imap' | 'pop3'>(defaultGateway.incomingProtocol || 'imap');
-  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || 'imap.gmail.com');
+  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || 'imap.confiancebizsol.tech');
   const [gwIncomingPort, setGwIncomingPort] = useState(defaultGateway.incomingPort || 993);
   const [gwIncomingSecurity, setGwIncomingSecurity] = useState(defaultGateway.incomingSecurity || 'ssl');
-  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || 'Confiancebizsol377@gmail.com');
+  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || 'it-helpdesk@confiancebizsol.tech');
   const [gwIncomingPassword, setGwIncomingPassword] = useState(defaultGateway.incomingPassword || '');
-  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || 'smtp.gmail.com');
+  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || 'smtp.confiancebizsol.tech');
   const [gwOutgoingPort, setGwOutgoingPort] = useState(defaultGateway.outgoingPort || 587);
   const [gwOutgoingSecurity, setGwOutgoingSecurity] = useState(defaultGateway.outgoingSecurity || 'starttls');
-  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || 'Confiancebizsol377@gmail.com');
+  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || 'it-helpdesk@confiancebizsol.tech');
   const [gwOutgoingPassword, setGwOutgoingPassword] = useState(defaultGateway.outgoingPassword || '');
   const [gwShowPassword, setGwShowPassword] = useState(false);
-  const [gwFromName, setGwFromName] = useState(defaultGateway.fromName || 'IT Helpdesk Support (Confiance)');
-  const [gwFromEmail, setGwFromEmail] = useState(defaultGateway.fromEmail || 'Confiancebizsol377@gmail.com');
-  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || 'Confiancebizsol377@gmail.com');
+  const [gwFromName, setGwFromName] = useState(defaultGateway.fromName || 'IT Helpdesk Support');
+  const [gwFromEmail, setGwFromEmail] = useState(defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
+  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || 'it-helpdesk@confiancebizsol.tech');
   const [gwSubjectPrefix, setGwSubjectPrefix] = useState(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
   const [gwEnableInbound, setGwEnableInbound] = useState(defaultGateway.enableInboundTicketGeneration ?? true);
   const [gwEnableOutbound, setGwEnableOutbound] = useState(defaultGateway.enableOutboundReplyNotification ?? true);
@@ -1051,14 +1051,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setGwIncomingHost('imap.gmail.com');
     setGwIncomingPort(993);
     setGwIncomingSecurity('ssl');
-    setGwIncomingUser('Confiancebizsol377@gmail.com');
     setGwOutgoingHost('smtp.gmail.com');
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
-    setGwOutgoingUser('Confiancebizsol377@gmail.com');
-    setGwFromName('IT Helpdesk Support (Confiance)');
-    setGwFromEmail('Confiancebizsol377@gmail.com');
-    setGwReplyToEmail('Confiancebizsol377@gmail.com');
     setShowAppPasswordGuide(true);
   };
 
@@ -1077,8 +1072,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const applySelfHostedImapPreset = () => {
     setGwServiceProvider('self_hosted_imap');
     setGwIncomingProtocol('imap');
+    setGwIncomingHost('imap.confiancebizsol.tech');
     setGwIncomingPort(993);
     setGwIncomingSecurity('ssl');
+    setGwOutgoingHost('smtp.confiancebizsol.tech');
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
     setShowAppPasswordGuide(false);
@@ -1087,8 +1084,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const applySelfHostedPop3Preset = () => {
     setGwServiceProvider('self_hosted_pop3');
     setGwIncomingProtocol('pop3');
+    setGwIncomingHost('pop.confiancebizsol.tech');
     setGwIncomingPort(995);
     setGwIncomingSecurity('ssl');
+    setGwOutgoingHost('smtp.confiancebizsol.tech');
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
     setShowAppPasswordGuide(false);
@@ -4009,13 +4008,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Default Email Gateway &amp; Mailbox Connector
               </h2>
               <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                Connect your organization's support mailbox (e.g., <code className="text-cyan-600 dark:text-cyan-400 font-mono font-bold">Confiancebizsol377@gmail.com</code> with App Password, Microsoft 365, or Self-Hosted SMTP/IMAP/POP3) for automated ticket creation and public reply notifications.
+                Connect your organization's support mailbox (e.g., <code className="text-cyan-600 dark:text-cyan-400 font-mono font-bold">it-helpdesk@confiancebizsol.tech</code> or Gmail with 16-character App Password, Microsoft 365, or Self-Hosted SMTP/IMAP/POP3) for automated ticket creation and public reply notifications.
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-mono font-bold rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>{gwFromEmail || 'Confiancebizsol377@gmail.com'}</span>
+                <span>{gwFromEmail || 'it-helpdesk@confiancebizsol.tech'}</span>
               </span>
               <button
                 type="button"
@@ -4056,7 +4055,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <span className="text-rose-500 font-black">G</span> Gmail / Workspace
                 </div>
                 <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
-                  Confiancebizsol377@gmail.com
+                  imap.gmail.com:993
                 </div>
               </button>
 
@@ -4113,13 +4112,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          {/* Google App Password Guide Banner for Confiancebizsol377@gmail.com */}
+          {/* Google App Password Guide Banner */}
           {(gwServiceProvider === 'gmail' || gwIncomingHost.includes('gmail')) && (
             <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700/50 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-300">
                   <Key className="w-4 h-4 text-amber-600" />
-                  <span>Google App Password Requirement (Confiancebizsol377@gmail.com)</span>
+                  <span>Google App Password Requirement (16-Character App Password)</span>
                 </div>
                 <button
                   type="button"
@@ -4134,7 +4133,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </p>
               {showAppPasswordGuide && (
                 <ol className="text-xs text-amber-950 dark:text-amber-300 list-decimal list-inside space-y-1 pt-1 bg-white/60 dark:bg-slate-900/60 p-3 rounded-lg border border-amber-200 dark:border-amber-900/40 font-medium">
-                  <li>Log in to your Google Account (<code className="font-mono text-cyan-600 font-bold">Confiancebizsol377@gmail.com</code>).</li>
+                  <li>Log in to your Google Account (e.g., <code className="font-mono text-cyan-600 font-bold">{gwFromEmail}</code>).</li>
                   <li>Navigate to <strong>Security</strong> &gt; <strong>2-Step Verification</strong> (ensure 2-Step Verification is turned ON).</li>
                   <li>Scroll to the bottom of the 2-Step Verification page and select <strong>App Passwords</strong>.</li>
                   <li>Create a new app name (e.g., <em>IT Helpdesk</em>) and click <strong>Create</strong>.</li>

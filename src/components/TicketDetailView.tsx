@@ -700,9 +700,25 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                       <span className="text-slate-400">·</span>
                       <span className="font-mono text-[10px] text-slate-600 dark:text-slate-400 uppercase font-bold">{cmt.authorRole}</span>
 
-                      {cmt.isInternal && (
+                      {cmt.isInternal ? (
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/40">
                           <Lock className="w-2.5 h-2.5" /> Confidential Internal Note
+                        </span>
+                      ) : (
+                        <span
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                            cmt.emailDeliveryStatus === 'sent'
+                              ? 'bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700/60'
+                              : 'bg-cyan-100 text-cyan-900 border-cyan-300 dark:bg-cyan-950/60 dark:text-cyan-300 dark:border-cyan-700/60'
+                          }`}
+                          title={`Email dispatch target: ${cmt.emailRecipient || ticket.requesterEmail}${cmt.emailDeliveryStatus === 'sent' ? ' (Delivered via SMTP)' : ' (Dispatched via Gateway)'}`}
+                        >
+                          <Mail className="w-2.5 h-2.5" />
+                          <span>
+                            {cmt.emailDeliveryStatus === 'sent'
+                              ? `Email Delivered → ${cmt.emailRecipient || ticket.requesterEmail}`
+                              : `Email Dispatched → ${cmt.emailRecipient || ticket.requesterEmail}`}
+                          </span>
                         </span>
                       )}
                     </div>
@@ -815,10 +831,23 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                 </select>
               </div>
 
-              {isInternalNote && (
+              {isInternalNote ? (
                 <div className="text-[11px] font-bold text-amber-900 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/30 p-2.5 rounded-xl border border-amber-300 dark:border-amber-500/20 flex items-center gap-1.5">
                   <Lock className="w-3.5 h-3.5 shrink-0 text-amber-700 dark:text-amber-400" />
                   <span>This note is strictly private to IT technicians and will NOT be emailed to the requester.</span>
+                </div>
+              ) : (
+                <div className="text-[11px] font-bold text-emerald-900 dark:text-emerald-300 bg-emerald-100/80 dark:bg-emerald-950/30 p-2.5 rounded-xl border border-emerald-300 dark:border-emerald-500/20 flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 shrink-0 text-emerald-700 dark:text-emerald-400" />
+                    <span>
+                      Public Reply will automatically dispatch an outbound email to <strong>{ticket.requesterEmail}</strong>
+                      {ticket.ccRecipients && ticket.ccRecipients.length > 0 && ` (and ${ticket.ccRecipients.length} CC)`}.
+                    </span>
+                  </div>
+                  <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-200/90 dark:bg-emerald-900/60 text-emerald-950 dark:text-emerald-200 font-bold shrink-0">
+                    Auto-Email Notification
+                  </span>
                 </div>
               )}
 
