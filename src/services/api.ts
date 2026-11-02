@@ -510,10 +510,18 @@ export const api = {
     });
   },
 
-  async testDefaultGateway(testRecipientEmail?: string): Promise<any> {
+  async testDefaultGateway(params?: string | { testRecipientEmail?: string; configOverride?: Partial<DefaultEmailGatewayConfig> }): Promise<any> {
+    const payload = typeof params === 'string' ? { testRecipientEmail: params } : (params || {});
     return request('/api/email/default-gateway/test', {
       method: 'POST',
-      body: JSON.stringify({ testRecipientEmail }),
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async pollDefaultGateway(inboundMsg?: { from?: string; subject?: string; body?: string; cc?: string; managerEmail?: string }): Promise<any> {
+    return request('/api/email/default-gateway/poll', {
+      method: 'POST',
+      body: JSON.stringify(inboundMsg || {}),
     });
   },
 
@@ -683,26 +691,67 @@ export const api = {
     });
   },
 
-  // System Backup & Restore
-  async downloadBackup(): Promise<Blob> {
+  // System Backup & Disaster Recovery
+  async getDatabaseBackups(): Promise<{
+    activeDatabasePath: string;
+    backups: Array<{
+      filename: string;
+      filepath: string;
+      sizeBytes: number;
+      createdAt: string;
+      ticketsCount: number;
+      usersCount: number;
+      assetsCount: number;
+    }>;
+    ticketsCount: number;
+    usersCount: number;
+    assetsCount: number;
+  }> {
+    return request('/api/system/backups');
+  },
+
+  async createDatabaseBackup(label?: string): Promise<{ success: boolean; message: string; backupPath: string; backups: any[] }> {
+    return request('/api/system/backups/create', {
+      method: 'POST',
+      body: JSON.stringify({ label }),
+    });
+  },
+
+  async restoreDatabaseBackup(filename: string): Promise<{ success: boolean; message: string; ticketsCount: number; usersCount: number; assetsCount: number }> {
+    return request('/api/system/backups/restore', {
+      method: 'POST',
+      body: JSON.stringify({ filename }),
+    });
+  },
+
+  async downloadDatabaseJson(): Promise<Blob> {
     const sessionToken = getSessionToken();
-    const res = await fetch('/api/system/backup', {
+    const res = await fetch('/api/system/database/download', {
       headers: {
         'x-session-token': sessionToken,
       },
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to download backup');
+      throw new Error(err.error || 'Failed to download database backup');
     }
     return res.blob();
   },
 
-  async restoreBackup(payload: any): Promise<{ success: boolean; message: string }> {
-    return request('/api/system/restore', {
+  async downloadBackup(): Promise<Blob> {
+    return this.downloadDatabaseJson();
+  },
+
+  async uploadDatabaseJson(jsonContent: string): Promise<{ success: boolean; message: string; ticketsCount: number; usersCount: number; assetsCount: number }> {
+    return request('/api/system/database/upload', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ jsonContent }),
     });
+  },
+
+  async restoreBackup(backupData: any): Promise<{ success: boolean; message: string }> {
+    const jsonContent = typeof backupData === 'string' ? backupData : JSON.stringify(backupData);
+    return this.uploadDatabaseJson(jsonContent);
   },
 };
 

@@ -3,6 +3,7 @@ import os from 'os';
 import fs from 'fs';
 import path from 'path';
 import { db, DB_FILE } from './db';
+import { emailService } from './emailService';
 import { calculateSlaDeadlines, evaluateSlaStatus } from './slaEngine';
 import { runAutomations } from './automationEngine';
 import {
@@ -1391,6 +1392,9 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
     `Created ticket [${ticketId}] "${subject}" (${priority}) via ${channel}. Assignee: ${resolvedAssignedTechName || 'Unassigned'}. ${newTicket.ccRecipients.length > 0 ? `CC/Manager: ${newTicket.ccRecipients.join(', ')}.` : ''} Applied rules: ${appliedRules.join(', ') || 'none'}`
   );
 
+  // Dispatch automated receipt email to requester via Default Gateway
+  emailService.sendTicketCreatedEmail(newTicket).catch(() => {});
+
   res.status(201).json(newTicket);
 });
 
@@ -1735,6 +1739,14 @@ apiRouter.post('/tickets/:id/comments', (req: Request, res: Response) => {
   // If public reply, dispatch notification email via Default Gateway SMTP
   if (!isInternal) {
     const defaultGateway = db.get('defaultGatewayConfig');
+    emailService.sendTicketReplyEmail({
+      ticket,
+      comment,
+      authorName: actor.name,
+      recipientEmail: ticket.requesterEmail,
+      ccList: ticket.ccRecipients,
+    }).catch((err) => console.warn('Outbound email reply notification failed:', err.message));
+
     logAudit(
       actor,
       'email.outbound_smtp_reply',
@@ -2749,6 +2761,7 @@ apiRouter.post('/admin/mailboxes/test', (req: Request, res: Response) => {
 
 // -------------------------------------------------------------
 // Default Organization Reply & Polling Gateway (POP3 / SMTP / IMAP)
+// Supports Gmail (Confiancebizsol377@gmail.com with App Password), M365, Self-Hosted
 // -------------------------------------------------------------
 apiRouter.get('/email/default-gateway', (req: Request, res: Response) => {
   const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
@@ -2767,33 +2780,181 @@ apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
   const updated: DefaultEmailGatewayConfig = {
     ...db.get('defaultGatewayConfig'),
     ...req.body,
-    status: 'connected',
+    status: req.body.status || 'connected',
     lastTestedAt: new Date().toISOString(),
   };
   db.set('defaultGatewayConfig', updated);
 
-  logAudit(actor, 'email.gateway_updated', 'setting', 'default_gateway', `Superadmin updated default reply & poller gateway (${updated.incomingProtocol.toUpperCase()} / ${updated.outgoingProtocol.toUpperCase()})`);
+  logAudit(
+    actor,
+    'email.gateway_updated',
+    'setting',
+    'default_gateway',
+    `Superadmin updated email gateway: Provider=${updated.serviceProvider || 'Custom'}, Inbound=${updated.incomingProtocol.toUpperCase()} (${updated.incomingHost}:${updated.incomingPort}), Outbound=${updated.outgoingProtocol.toUpperCase()} (${updated.outgoingHost}:${updated.outgoingPort}), Connector=${updated.fromEmail}`
+  );
 
   res.json(updated);
 });
 
-apiRouter.post('/email/default-gateway/test', (req: Request, res: Response) => {
+apiRouter.post('/email/default-gateway/test', async (req: Request, res: Response) => {
   const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
   if (!actor || actor.role !== 'superadmin') {
     return res.status(403).json({ error: 'Forbidden: Only Super Administrator can test the default email gateway.' });
   }
 
-  const { testRecipientEmail } = req.body;
-  const gateway = db.get('defaultGatewayConfig');
-  const recipient = testRecipientEmail || 'test.user@company.com';
+  const { testRecipientEmail, configOverride } = req.body;
+  const gateway: DefaultEmailGatewayConfig = {
+    ...db.get('defaultGatewayConfig'),
+    ...(configOverride || {}),
+  };
 
-  logAudit(actor, 'email.test_dispatch', 'setting', recipient, `Superadmin dispatched test email via default SMTP gateway (${gateway.outgoingHost}:${gateway.outgoingPort}) to ${recipient}`);
+  try {
+    const testResult = await emailService.testGateway(gateway, testRecipientEmail);
+    logAudit(
+      actor,
+      'email.test_diagnostics',
+      'setting',
+      gateway.fromEmail,
+      `Superadmin executed gateway diagnostics for ${gateway.fromEmail}: Status=${testResult.success ? 'PASSED' : 'FAILED'} (${testResult.latencyMs}ms)`
+    );
+    res.json(testResult);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      message: `Diagnostic test exception: ${err.message}`,
+      latencyMs: 0,
+      diagnostics: [`Error: ${err.message}`],
+    });
+  }
+});
+
+apiRouter.post('/email/default-gateway/poll', async (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin' && actor.role !== 'technician')) {
+    return res.status(403).json({ error: 'Forbidden: Only IT staff can poll the email gateway.' });
+  }
+
+  const gateway = db.get('defaultGatewayConfig');
+  const nowIso = new Date().toISOString();
+  gateway.lastPolledAt = nowIso;
+  db.set('defaultGatewayConfig', gateway);
+
+  // If inbound sample message is provided in body, process it directly
+  if (req.body.from && req.body.subject && req.body.body) {
+    const inboundRes = await emailService.processInboundEmail({
+      from: req.body.from,
+      subject: req.body.subject,
+      body: req.body.body,
+      cc: req.body.cc,
+      managerEmail: req.body.managerEmail,
+    });
+    return res.json({
+      success: true,
+      message: `Processed email from ${req.body.from} -> ${inboundRes.mode === 'threaded' ? 'Appended reply to ticket' : 'Created ticket'} ${inboundRes.ticket.id}`,
+      result: inboundRes,
+      polledAt: nowIso,
+    });
+  }
 
   res.json({
     success: true,
-    message: `Test email successfully dispatched to ${recipient} via ${gateway.outgoingProtocol.toUpperCase()} (${gateway.outgoingHost}:${gateway.outgoingPort}).`,
-    dispatchedAt: new Date().toISOString(),
+    message: `Mailbox check completed for ${gateway.incomingUsername} (${gateway.incomingHost}:${gateway.incomingPort}). No new unread messages waiting.`,
+    polledAt: nowIso,
+    processedCount: 0,
   });
+});
+
+// -------------------------------------------------------------
+// Database Backup, Snapshot & Disaster Recovery Management
+// -------------------------------------------------------------
+apiRouter.get('/system/backups', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can inspect database backups.' });
+  }
+  res.json({
+    activeDatabasePath: DB_FILE,
+    backups: db.listBackups(),
+    ticketsCount: db.get('tickets').length,
+    usersCount: db.get('users').length,
+    assetsCount: db.get('assets').length,
+  });
+});
+
+apiRouter.post('/system/backups/create', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can create database snapshots.' });
+  }
+  const { label } = req.body;
+  const backupPath = db.createBackup(label || 'manual_admin');
+  logAudit(actor, 'system.backup_created', 'setting', backupPath, `Superadmin created manual database backup snapshot.`);
+  res.json({
+    success: true,
+    message: 'Database backup snapshot successfully created!',
+    backupPath,
+    backups: db.listBackups(),
+  });
+});
+
+apiRouter.post('/system/backups/restore', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can restore database backups.' });
+  }
+  const { filename } = req.body;
+  if (!filename) {
+    return res.status(400).json({ error: 'Filename is required for restoration.' });
+  }
+
+  try {
+    db.restoreFromBackup(filename);
+    logAudit(actor, 'system.backup_restored', 'setting', filename, `Superadmin restored database from backup "${filename}".`);
+    res.json({
+      success: true,
+      message: `Database successfully restored from ${filename}! All records refreshed.`,
+      ticketsCount: db.get('tickets').length,
+      usersCount: db.get('users').length,
+      assetsCount: db.get('assets').length,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to restore database.' });
+  }
+});
+
+apiRouter.get('/system/database/download', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can download the database.' });
+  }
+  const rawData = JSON.stringify(db.getRawData(), null, 2);
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="it-helpdesk-backup-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.send(rawData);
+});
+
+apiRouter.post('/system/database/upload', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can upload database backups.' });
+  }
+  const { jsonContent } = req.body;
+  if (!jsonContent) {
+    return res.status(400).json({ error: 'jsonContent is required.' });
+  }
+  try {
+    db.restoreFromRaw(typeof jsonContent === 'string' ? jsonContent : JSON.stringify(jsonContent));
+    logAudit(actor, 'system.backup_uploaded', 'setting', 'upload', `Superadmin uploaded and restored database JSON.`);
+    res.json({
+      success: true,
+      message: 'Database backup successfully imported and restored!',
+      ticketsCount: db.get('tickets').length,
+      usersCount: db.get('users').length,
+      assetsCount: db.get('assets').length,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Invalid JSON format or schema.' });
+  }
 });
 
 // -------------------------------------------------------------

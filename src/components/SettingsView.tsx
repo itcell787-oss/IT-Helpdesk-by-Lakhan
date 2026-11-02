@@ -824,22 +824,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // -------------------------------------------------------------
   // Default Organization Reply & Polling Gateway State
   // -------------------------------------------------------------
+  const [gwServiceProvider, setGwServiceProvider] = useState<'gmail' | 'office365' | 'self_hosted_imap' | 'self_hosted_pop3' | 'custom'>(
+    defaultGateway.serviceProvider || 'gmail'
+  );
   const [gwIncomingProtocol, setGwIncomingProtocol] = useState<'imap' | 'pop3'>(defaultGateway.incomingProtocol || 'imap');
-  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || 'imap.lakhanglobal.com');
+  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || 'imap.gmail.com');
   const [gwIncomingPort, setGwIncomingPort] = useState(defaultGateway.incomingPort || 993);
   const [gwIncomingSecurity, setGwIncomingSecurity] = useState(defaultGateway.incomingSecurity || 'ssl');
-  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || 'helpdesk@lakhanglobal.com');
-  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || 'smtp.lakhanglobal.com');
+  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || 'Confiancebizsol377@gmail.com');
+  const [gwIncomingPassword, setGwIncomingPassword] = useState(defaultGateway.incomingPassword || '');
+  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || 'smtp.gmail.com');
   const [gwOutgoingPort, setGwOutgoingPort] = useState(defaultGateway.outgoingPort || 587);
   const [gwOutgoingSecurity, setGwOutgoingSecurity] = useState(defaultGateway.outgoingSecurity || 'starttls');
-  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || 'helpdesk@lakhanglobal.com');
-  const [gwFromName, setGwFromName] = useState(defaultGateway.fromName || 'IT Helpdesk Support');
-  const [gwFromEmail, setGwFromEmail] = useState(defaultGateway.fromEmail || 'helpdesk@lakhanglobal.com');
-  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || 'helpdesk@lakhanglobal.com');
+  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || 'Confiancebizsol377@gmail.com');
+  const [gwOutgoingPassword, setGwOutgoingPassword] = useState(defaultGateway.outgoingPassword || '');
+  const [gwShowPassword, setGwShowPassword] = useState(false);
+  const [gwFromName, setGwFromName] = useState(defaultGateway.fromName || 'IT Helpdesk Support (Confiance)');
+  const [gwFromEmail, setGwFromEmail] = useState(defaultGateway.fromEmail || 'Confiancebizsol377@gmail.com');
+  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || 'Confiancebizsol377@gmail.com');
   const [gwSubjectPrefix, setGwSubjectPrefix] = useState(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
+  const [gwEnableInbound, setGwEnableInbound] = useState(defaultGateway.enableInboundTicketGeneration ?? true);
+  const [gwEnableOutbound, setGwEnableOutbound] = useState(defaultGateway.enableOutboundReplyNotification ?? true);
+  const [gwPollingInterval, setGwPollingInterval] = useState(defaultGateway.pollingIntervalMinutes || 5);
   const [gwTesting, setGwTesting] = useState(false);
   const [gwTestResult, setGwTestResult] = useState<string | null>(null);
+  const [gwDiagnostics, setGwDiagnostics] = useState<any | null>(null);
+  const [gwPolling, setGwPolling] = useState(false);
+  const [gwPollResult, setGwPollResult] = useState<string | null>(null);
   const [gwTestEmailRecipient, setGwTestEmailRecipient] = useState(currentUser.email);
+  const [showAppPasswordGuide, setShowAppPasswordGuide] = useState(false);
+  // Inbound Email Simulator Form State
+  const [showEmailSimulator, setShowEmailSimulator] = useState(false);
+  const [simFrom, setSimFrom] = useState('user.employee@company.com');
+  const [simSubject, setSimSubject] = useState('VPN Client disconnection issue on laptop');
+  const [simBody, setSimBody] = useState('Hello Support,\n\nMy VPN connection keeps dropping every 15 minutes. Please check my network configuration.');
+  const [simCc, setSimCc] = useState('');
+  const [simLoading, setSimLoading] = useState(false);
+  const [simMessage, setSimMessage] = useState<string | null>(null);
 
   // -------------------------------------------------------------
   // Organization Branding State
@@ -1023,27 +1044,83 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  // Preset Helpers
+  const applyGmailPreset = () => {
+    setGwServiceProvider('gmail');
+    setGwIncomingProtocol('imap');
+    setGwIncomingHost('imap.gmail.com');
+    setGwIncomingPort(993);
+    setGwIncomingSecurity('ssl');
+    setGwIncomingUser('Confiancebizsol377@gmail.com');
+    setGwOutgoingHost('smtp.gmail.com');
+    setGwOutgoingPort(587);
+    setGwOutgoingSecurity('starttls');
+    setGwOutgoingUser('Confiancebizsol377@gmail.com');
+    setGwFromName('IT Helpdesk Support (Confiance)');
+    setGwFromEmail('Confiancebizsol377@gmail.com');
+    setGwReplyToEmail('Confiancebizsol377@gmail.com');
+    setShowAppPasswordGuide(true);
+  };
+
+  const applyM365Preset = () => {
+    setGwServiceProvider('office365');
+    setGwIncomingProtocol('imap');
+    setGwIncomingHost('outlook.office365.com');
+    setGwIncomingPort(993);
+    setGwIncomingSecurity('ssl');
+    setGwOutgoingHost('smtp.office365.com');
+    setGwOutgoingPort(587);
+    setGwOutgoingSecurity('starttls');
+    setShowAppPasswordGuide(false);
+  };
+
+  const applySelfHostedImapPreset = () => {
+    setGwServiceProvider('self_hosted_imap');
+    setGwIncomingProtocol('imap');
+    setGwIncomingPort(993);
+    setGwIncomingSecurity('ssl');
+    setGwOutgoingPort(587);
+    setGwOutgoingSecurity('starttls');
+    setShowAppPasswordGuide(false);
+  };
+
+  const applySelfHostedPop3Preset = () => {
+    setGwServiceProvider('self_hosted_pop3');
+    setGwIncomingProtocol('pop3');
+    setGwIncomingPort(995);
+    setGwIncomingSecurity('ssl');
+    setGwOutgoingPort(587);
+    setGwOutgoingSecurity('starttls');
+    setShowAppPasswordGuide(false);
+  };
+
   // Handlers for Default Gateway
   const handleSaveDefaultGateway = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await onSaveDefaultGateway({
+        serviceProvider: gwServiceProvider,
         incomingProtocol: gwIncomingProtocol,
         incomingHost: gwIncomingHost,
         incomingPort: Number(gwIncomingPort),
         incomingSecurity: gwIncomingSecurity,
         incomingUsername: gwIncomingUser,
+        incomingPassword: gwIncomingPassword,
         outgoingProtocol: 'smtp',
         outgoingHost: gwOutgoingHost,
         outgoingPort: Number(gwOutgoingPort),
         outgoingSecurity: gwOutgoingSecurity,
         outgoingUsername: gwOutgoingUser,
+        outgoingPassword: gwOutgoingPassword || gwIncomingPassword, // Auto fallback
         fromName: gwFromName,
         fromEmail: gwFromEmail,
         replyToEmail: gwReplyToEmail,
         subjectPrefix: gwSubjectPrefix,
+        enableInboundTicketGeneration: gwEnableInbound,
+        enableOutboundReplyNotification: gwEnableOutbound,
+        pollingIntervalMinutes: Number(gwPollingInterval),
       });
-      setGwTestResult('✓ Default reply and polling gateway saved successfully!');
+      setGwTestResult('✓ Default email gateway and connector saved successfully!');
       setTimeout(() => setGwTestResult(null), 3500);
     } catch (err: any) {
       setGwTestResult(`Error saving: ${err.message}`);
@@ -1053,13 +1130,73 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleTestDefaultGateway = async () => {
     setGwTesting(true);
     setGwTestResult(null);
+    setGwDiagnostics(null);
     try {
-      const res = await onTestDefaultGateway(gwTestEmailRecipient);
-      setGwTestResult(res.message);
+      const res = await api.testDefaultGateway({
+        testRecipientEmail: gwTestEmailRecipient,
+        configOverride: {
+          serviceProvider: gwServiceProvider,
+          incomingProtocol: gwIncomingProtocol,
+          incomingHost: gwIncomingHost,
+          incomingPort: Number(gwIncomingPort),
+          incomingSecurity: gwIncomingSecurity,
+          incomingUsername: gwIncomingUser,
+          incomingPassword: gwIncomingPassword,
+          outgoingProtocol: 'smtp',
+          outgoingHost: gwOutgoingHost,
+          outgoingPort: Number(gwOutgoingPort),
+          outgoingSecurity: gwOutgoingSecurity,
+          outgoingUsername: gwOutgoingUser,
+          outgoingPassword: gwOutgoingPassword || gwIncomingPassword,
+          fromName: gwFromName,
+          fromEmail: gwFromEmail,
+          replyToEmail: gwReplyToEmail,
+          subjectPrefix: gwSubjectPrefix,
+        },
+      });
+      setGwDiagnostics(res);
+      if (res.success) {
+        setGwTestResult(`✓ Handshake verified (${res.latencyMs}ms)! ${res.incomingCheck?.status || 'Connected'} & ${res.outgoingCheck?.status || 'Authenticated'}`);
+      } else {
+        setGwTestResult(`✕ Diagnostics reported issues: ${res.message}`);
+      }
     } catch (err: any) {
       setGwTestResult(`Error: ${err.message}`);
     } finally {
       setGwTesting(false);
+    }
+  };
+
+  const handlePollMailboxNow = async () => {
+    setGwPolling(true);
+    setGwPollResult(null);
+    try {
+      const res = await api.pollDefaultGateway();
+      setGwPollResult(res.message || 'Mailbox poll complete');
+      setTimeout(() => setGwPollResult(null), 4000);
+    } catch (err: any) {
+      setGwPollResult(`Poll error: ${err.message}`);
+    } finally {
+      setGwPolling(false);
+    }
+  };
+
+  const handleSimulateInboundEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSimLoading(true);
+    setSimMessage(null);
+    try {
+      const res = await api.pollDefaultGateway({
+        from: simFrom,
+        subject: simSubject,
+        body: simBody,
+        cc: simCc || undefined,
+      });
+      setSimMessage(`✓ ${res.message}`);
+    } catch (err: any) {
+      setSimMessage(`✕ Error: ${err.message}`);
+    } finally {
+      setSimLoading(false);
     }
   };
 
@@ -3861,43 +3998,210 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* ============================================================= */}
-      {/* TAB 3: Default Organization Reply & Polling Gateway */}
+      {/* TAB 3: Default Organization Reply & Polling Gateway           */}
       {/* ============================================================= */}
       {activeTab === 'default-gateway' && (
         <div className="neu-flat p-6 rounded-2xl border border-slate-200 dark:border-white/10 space-y-6 max-w-full overflow-x-hidden">
-          <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Zap className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-              Default Reply &amp; Inbound Ticket Gateway Configuration
-            </h2>
-            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-              Configure the central POP3 / SMTP / IMAP parameters used by default to email ticket responses to users and poll incoming emails.
-            </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-white/10">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Mail className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+                Default Email Gateway &amp; Mailbox Connector
+              </h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                Connect your organization's support mailbox (e.g., <code className="text-cyan-600 dark:text-cyan-400 font-mono font-bold">Confiancebizsol377@gmail.com</code> with App Password, Microsoft 365, or Self-Hosted SMTP/IMAP/POP3) for automated ticket creation and public reply notifications.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-mono font-bold rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>{gwFromEmail || 'Confiancebizsol377@gmail.com'}</span>
+              </span>
+              <button
+                type="button"
+                disabled={gwPolling}
+                onClick={handlePollMailboxNow}
+                className="neu-btn px-3 py-1 text-xs font-bold rounded-xl text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Poll unread emails from mailbox right now"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${gwPolling ? 'animate-spin' : ''}`} />
+                <span>{gwPolling ? 'Checking...' : 'Check Mailbox Now'}</span>
+              </button>
+            </div>
           </div>
 
-          {gwTestResult && (
-            <div
-              className={`p-3.5 rounded-xl text-xs font-bold border ${
-                gwTestResult.startsWith('✓') || gwTestResult.startsWith('Test')
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
-                  : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300'
-              }`}
-            >
-              {gwTestResult}
+          {gwPollResult && (
+            <div className="p-3 rounded-xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-300 dark:border-cyan-800 text-cyan-900 dark:text-cyan-300 text-xs font-bold flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-cyan-600" />
+              <span>{gwPollResult}</span>
             </div>
           )}
+
+          {/* Quick-Select Provider Presets */}
+          <div className="space-y-2">
+            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+              1-Click Email Connector Presets:
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <button
+                type="button"
+                onClick={applyGmailPreset}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  gwServiceProvider === 'gmail'
+                    ? 'border-cyan-500 bg-cyan-50/80 dark:bg-cyan-950/50 shadow-sm'
+                    : 'border-slate-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 bg-white/60 dark:bg-slate-900/60'
+                }`}
+              >
+                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <span className="text-rose-500 font-black">G</span> Gmail / Workspace
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
+                  Confiancebizsol377@gmail.com
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={applyM365Preset}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  gwServiceProvider === 'office365'
+                    ? 'border-cyan-500 bg-cyan-50/80 dark:bg-cyan-950/50 shadow-sm'
+                    : 'border-slate-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 bg-white/60 dark:bg-slate-900/60'
+                }`}
+              >
+                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <span className="text-blue-500 font-black">O</span> Microsoft 365
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
+                  outlook.office365.com
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={applySelfHostedImapPreset}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  gwServiceProvider === 'self_hosted_imap'
+                    ? 'border-cyan-500 bg-cyan-50/80 dark:bg-cyan-950/50 shadow-sm'
+                    : 'border-slate-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 bg-white/60 dark:bg-slate-900/60'
+                }`}
+              >
+                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-emerald-500" /> Self-Hosted IMAP
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
+                  Custom IMAP / SMTP (Postfix)
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={applySelfHostedPop3Preset}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  gwServiceProvider === 'self_hosted_pop3'
+                    ? 'border-cyan-500 bg-cyan-50/80 dark:bg-cyan-950/50 shadow-sm'
+                    : 'border-slate-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20 bg-white/60 dark:bg-slate-900/60'
+                }`}
+              >
+                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-amber-500" /> Self-Hosted POP3
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
+                  Custom POP3 / SMTP (Dovecot)
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* Google App Password Guide Banner for Confiancebizsol377@gmail.com */}
+          {(gwServiceProvider === 'gmail' || gwIncomingHost.includes('gmail')) && (
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700/50 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-300">
+                  <Key className="w-4 h-4 text-amber-600" />
+                  <span>Google App Password Requirement (Confiancebizsol377@gmail.com)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAppPasswordGuide(!showAppPasswordGuide)}
+                  className="text-[11px] font-bold text-amber-800 dark:text-amber-400 underline cursor-pointer"
+                >
+                  {showAppPasswordGuide ? 'Hide Instructions ▲' : 'How to generate 16-char App Password ▼'}
+                </button>
+              </div>
+              <p className="text-xs text-amber-900/80 dark:text-amber-200 font-medium">
+                Google requires a dedicated 16-character <strong>App Password</strong> instead of your regular Gmail login password to connect IMAP and SMTP securely.
+              </p>
+              {showAppPasswordGuide && (
+                <ol className="text-xs text-amber-950 dark:text-amber-300 list-decimal list-inside space-y-1 pt-1 bg-white/60 dark:bg-slate-900/60 p-3 rounded-lg border border-amber-200 dark:border-amber-900/40 font-medium">
+                  <li>Log in to your Google Account (<code className="font-mono text-cyan-600 font-bold">Confiancebizsol377@gmail.com</code>).</li>
+                  <li>Navigate to <strong>Security</strong> &gt; <strong>2-Step Verification</strong> (ensure 2-Step Verification is turned ON).</li>
+                  <li>Scroll to the bottom of the 2-Step Verification page and select <strong>App Passwords</strong>.</li>
+                  <li>Create a new app name (e.g., <em>IT Helpdesk</em>) and click <strong>Create</strong>.</li>
+                  <li>Copy the 16-character generated code (e.g., <code className="font-mono bg-amber-100 dark:bg-amber-950 px-1.5 py-0.5 rounded font-bold">abcd efgh ijkl mnop</code>) and paste it into the <strong>Password / App Password</strong> field below.</li>
+                </ol>
+              )}
+            </div>
+          )}
+
+          {/* Automated Ticket Intake & Reply Toggles */}
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+              Automated Gateway Behaviors
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={gwEnableInbound}
+                  onChange={(e) => setGwEnableInbound(e.target.checked)}
+                  className="mt-0.5 rounded text-cyan-600 focus:ring-cyan-500"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-slate-900 dark:text-white block">
+                    Inbound Email-to-Ticket Generation
+                  </span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                    Automatically convert incoming emails received at {gwFromEmail} into new support tickets.
+                  </span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={gwEnableOutbound}
+                  onChange={(e) => setGwEnableOutbound(e.target.checked)}
+                  className="mt-0.5 rounded text-cyan-600 focus:ring-cyan-500"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-slate-900 dark:text-white block">
+                    Outbound Reply Email Notifications
+                  </span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                    Automatically dispatch an email to the requester when staff posts a public reply on a ticket.
+                  </span>
+                </div>
+              </label>
+            </div>
+          </div>
 
           <form onSubmit={handleSaveDefaultGateway} className="space-y-6">
             {/* Outgoing Mailer for Public Replies */}
             <div className="neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
-              <div className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
-                <Send className="w-4 h-4" />
-                Default Outbound Mailer for Public Replies (SMTP)
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
+                  <Send className="w-4 h-4" />
+                  Outbound SMTP Connector (Dispatches Staff Replies to Users)
+                </div>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
+                  SMTP Port {gwOutgoingPort} ({gwOutgoingSecurity.toUpperCase()})
+                </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">SMTP Server Hostname *</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">SMTP Server Host *</label>
                   <input
                     type="text"
                     required
@@ -3920,28 +4224,53 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Security</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Security Encryption</label>
                   <select
                     value={gwOutgoingSecurity}
                     onChange={(e) => setGwOutgoingSecurity(e.target.value as any)}
                     className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
                   >
-                    <option value="starttls">STARTTLS</option>
-                    <option value="ssl">SSL / TLS</option>
-                    <option value="none">None</option>
+                    <option value="starttls">STARTTLS (Port 587)</option>
+                    <option value="ssl">SSL / TLS (Port 465)</option>
+                    <option value="none">None (Port 25)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">SMTP Username</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">SMTP Username / Email *</label>
                   <input
                     type="text"
+                    required
                     value={gwOutgoingUser}
                     onChange={(e) => setGwOutgoingUser(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">From Name</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    SMTP Password / App Password *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={gwShowPassword ? 'text' : 'password'}
+                      placeholder="16-char App Password"
+                      value={gwOutgoingPassword}
+                      onChange={(e) => setGwOutgoingPassword(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium pr-14"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setGwShowPassword(!gwShowPassword)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-cyan-600 dark:text-cyan-400 cursor-pointer"
+                    >
+                      {gwShowPassword ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">From Sender Name</label>
                   <input
                     type="text"
                     value={gwFromName}
@@ -3949,11 +4278,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Sender From Email</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">From Email Address</label>
                   <input
                     type="email"
                     value={gwFromEmail}
@@ -3981,16 +4307,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
                 />
                 <span className="text-[10px] text-slate-600 dark:text-slate-400 font-medium mt-0.5 block">
-                  Must include <code className="text-cyan-700 dark:text-cyan-400 font-mono font-bold">[ITL-&#123;&#123;ticketId&#125;&#125;]</code> to automatically thread incoming replies back to the ticket.
+                  Must include <code className="text-cyan-700 dark:text-cyan-400 font-mono font-bold">[ITL-&#123;&#123;ticketId&#125;&#125;]</code> so that when a user replies to an email notification, the system automatically appends the response to the existing ticket.
                 </span>
               </div>
             </div>
 
-            {/* Inbound Polling Server */}
+            {/* Inbound Polling Server (IMAP or POP3) */}
             <div className="neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
-              <div className="text-xs font-bold uppercase tracking-wider text-cyan-700 dark:text-cyan-400 flex items-center gap-2">
-                <Server className="w-4 h-4" />
-                Default Inbound Poller (IMAP or POP3)
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold uppercase tracking-wider text-cyan-700 dark:text-cyan-400 flex items-center gap-2">
+                  <Server className="w-4 h-4" />
+                  Inbound Mailbox Poller (IMAP or POP3 - Polls Mailbox for Incoming Tickets)
+                </div>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300">
+                  {gwIncomingProtocol.toUpperCase()} Port {gwIncomingPort} ({gwIncomingSecurity.toUpperCase()})
+                </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -4001,12 +4332,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onChange={(e) => setGwIncomingProtocol(e.target.value as any)}
                     className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
                   >
-                    <option value="imap">IMAP</option>
+                    <option value="imap">IMAP (Recommended)</option>
                     <option value="pop3">POP3</option>
                   </select>
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Inbound Server Host</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Inbound Server Host *</label>
                   <input
                     type="text"
                     value={gwIncomingHost}
@@ -4015,7 +4346,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Port</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Port *</label>
                   <input
                     type="number"
                     value={gwIncomingPort}
@@ -4024,24 +4355,115 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   />
                 </div>
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Security Encryption</label>
+                  <select
+                    value={gwIncomingSecurity}
+                    onChange={(e) => setGwIncomingSecurity(e.target.value as any)}
+                    className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="ssl">SSL / TLS (Port 993 / 995)</option>
+                    <option value="starttls">STARTTLS (Port 143 / 110)</option>
+                    <option value="none">Plain / None</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Inbound Username / Email</label>
+                  <input
+                    type="text"
+                    value={gwIncomingUser}
+                    onChange={(e) => setGwIncomingUser(e.target.value)}
+                    className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Inbound Password / App Password
+                  </label>
+                  <input
+                    type={gwShowPassword ? 'text' : 'password'}
+                    placeholder="Same as SMTP or App Password"
+                    value={gwIncomingPassword}
+                    onChange={(e) => setGwIncomingPassword(e.target.value)}
+                    className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
+                  />
+                </div>
+              </div>
             </div>
 
+            {/* Diagnostics Handshake Results */}
+            {gwDiagnostics && (
+              <div className="p-4 rounded-xl bg-slate-900 text-slate-100 border border-slate-800 font-mono text-xs space-y-2">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <span className="text-cyan-400 font-bold flex items-center gap-2">
+                    <Terminal className="w-4 h-4" /> Live Diagnostics Handshake Report
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${gwDiagnostics.success ? 'bg-emerald-950 text-emerald-300 border border-emerald-700' : 'bg-rose-950 text-rose-300 border border-rose-700'}`}>
+                    {gwDiagnostics.success ? 'ALL CHECKS PASSED' : 'CHECK FAILED'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 block font-bold">Inbound ({gwDiagnostics.incomingCheck?.protocol}):</span>
+                    <span className="text-emerald-400">{gwDiagnostics.incomingCheck?.status}</span>
+                    {gwDiagnostics.incomingCheck?.banner && (
+                      <span className="text-slate-400 text-[10px] block mt-0.5 truncate">Greeting: {gwDiagnostics.incomingCheck?.banner}</span>
+                    )}
+                  </div>
+                  <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800">
+                    <span className="text-slate-400 block font-bold">Outbound (SMTP):</span>
+                    <span className="text-emerald-400">{gwDiagnostics.outgoingCheck?.status}</span>
+                  </div>
+                </div>
+                {gwDiagnostics.diagnostics && (
+                  <div className="pt-1 text-[10px] text-slate-400 space-y-0.5 max-h-32 overflow-y-auto custom-scrollbar">
+                    {gwDiagnostics.diagnostics.map((d: string, idx: number) => (
+                      <div key={idx} className="leading-relaxed font-mono">{d}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Test Email & Action Controls */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-4 border-t border-slate-200 dark:border-white/10">
               <div className="flex items-center gap-2 flex-wrap">
-                <input
-                  type="email"
-                  placeholder="recipient@example.com"
-                  value={gwTestEmailRecipient}
-                  onChange={(e) => setGwTestEmailRecipient(e.target.value)}
-                  className="px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 w-52"
-                />
                 <button
                   type="button"
                   disabled={gwTesting}
                   onClick={handleTestDefaultGateway}
-                  className="neu-btn px-3.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-lg cursor-pointer disabled:opacity-50"
+                  className="neu-btn px-3.5 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 rounded-lg cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  {gwTesting ? 'Sending Test...' : 'Send Live Test Email'}
+                  <RefreshCw className={`w-3.5 h-3.5 ${gwTesting ? 'animate-spin' : ''}`} />
+                  <span>{gwTesting ? 'Testing Handshake...' : 'Test Connection Handshake'}</span>
+                </button>
+
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="email"
+                    placeholder="test.user@company.com"
+                    value={gwTestEmailRecipient}
+                    onChange={(e) => setGwTestEmailRecipient(e.target.value)}
+                    className="px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 w-48"
+                  />
+                  <button
+                    type="button"
+                    disabled={gwTesting}
+                    onClick={handleTestDefaultGateway}
+                    className="neu-btn px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-lg cursor-pointer disabled:opacity-50"
+                  >
+                    Send Probe Email
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowEmailSimulator(!showEmailSimulator)}
+                  className="text-xs font-bold text-indigo-600 dark:text-indigo-400 underline hover:no-underline px-2 cursor-pointer"
+                >
+                  {showEmailSimulator ? 'Close Simulator' : 'Inbound Email Simulator'}
                 </button>
               </div>
 
@@ -4049,10 +4471,92 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 type="submit"
                 className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
               >
-                Save Default Gateway
+                Save Gateway Configuration
               </button>
             </div>
           </form>
+
+          {/* Inbound Email-to-Ticket Simulator Drawer */}
+          {showEmailSimulator && (
+            <div className="neu-card p-5 rounded-2xl border border-indigo-400/40 bg-indigo-950/10 space-y-4 animate-in fade-in duration-200">
+              <div className="flex items-center justify-between pb-2 border-b border-indigo-200 dark:border-indigo-900/40">
+                <div className="flex items-center gap-2">
+                  <Mail className="w-4 h-4 text-indigo-500" />
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                    Inbound Email-to-Ticket Simulator
+                  </h4>
+                </div>
+                <span className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 font-bold">
+                  Simulates incoming email sent to {gwFromEmail}
+                </span>
+              </div>
+
+              {simMessage && (
+                <div className={`p-3 rounded-xl text-xs font-bold ${simMessage.startsWith('✓') ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300'}`}>
+                  {simMessage}
+                </div>
+              )}
+
+              <form onSubmit={handleSimulateInboundEmail} className="space-y-3 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1">From Email (Requester)</label>
+                    <input
+                      type="email"
+                      required
+                      value={simFrom}
+                      onChange={(e) => setSimFrom(e.target.value)}
+                      className="w-full p-2 neu-input bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1">CC Recipients (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="manager@company.com, tech@company.com"
+                      value={simCc}
+                      onChange={(e) => setSimCc(e.target.value)}
+                      className="w-full p-2 neu-input bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-slate-100 font-mono text-[11px]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Subject Line (Include <code className="text-cyan-600 dark:text-cyan-400">[ITL-XXXXXX]</code> to thread into existing ticket, or omit to create new ticket)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={simSubject}
+                    onChange={(e) => setSimSubject(e.target.value)}
+                    className="w-full p-2 neu-input bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-800 dark:text-slate-200 mb-1">Email Body Content</label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={simBody}
+                    onChange={(e) => setSimBody(e.target.value)}
+                    className="w-full p-2 neu-input bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
+                  />
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="submit"
+                    disabled={simLoading}
+                    className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer disabled:opacity-50"
+                  >
+                    {simLoading ? 'Processing Email...' : 'Trigger Inbound Email Simulation'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       )}
 

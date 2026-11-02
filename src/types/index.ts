@@ -244,6 +244,7 @@ export interface MailboxConnectionConfig {
 }
 
 export interface DefaultEmailGatewayConfig {
+  serviceProvider?: 'gmail' | 'office365' | 'self_hosted_imap' | 'self_hosted_pop3' | 'custom';
   incomingProtocol: 'imap' | 'pop3';
   incomingHost: string;
   incomingPort: number;
@@ -260,8 +261,13 @@ export interface DefaultEmailGatewayConfig {
   fromEmail: string;
   replyToEmail: string;
   subjectPrefix: string;
-  status: 'connected' | 'error' | 'configured';
+  status: 'connected' | 'error' | 'configured' | 'disconnected';
   lastTestedAt?: string;
+  lastPolledAt?: string;
+  enableInboundTicketGeneration?: boolean;
+  enableOutboundReplyNotification?: boolean;
+  pollingIntervalMinutes?: number;
+  diagnosticLogs?: string[];
 }
 
 export interface OtpVerificationRecord {

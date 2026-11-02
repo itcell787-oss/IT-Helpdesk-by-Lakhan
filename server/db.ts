@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   Organization,
   User,
@@ -74,9 +75,24 @@ export interface DatabaseSchema {
   nextTicketSequence: number;
 }
 
-export const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(process.cwd(), 'data');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export const APP_ROOT = path.resolve(__dirname, '..');
+export const BACKUP_DIR = path.join(APP_ROOT, 'backups');
+export const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(APP_ROOT, 'data');
 export const DB_FILE = process.env.DB_FILE ? path.resolve(process.env.DB_FILE) : path.join(DATA_DIR, 'database.json');
-export const DB_SEED_FILE = path.join(path.resolve(process.cwd(), 'data'), 'database.seed.json');
+export const DB_SEED_FILE = path.join(DATA_DIR, 'database.seed.json');
+
+export interface BackupMetadata {
+  filename: string;
+  filepath: string;
+  sizeBytes: number;
+  createdAt: string;
+  ticketsCount: number;
+  usersCount: number;
+  assetsCount: number;
+}
 
 class DatabaseEngine {
   private data: DatabaseSchema;
@@ -90,8 +106,30 @@ class DatabaseEngine {
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
     }
+    if (!fs.existsSync(BACKUP_DIR)) {
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    }
 
-    // If destination DB does not exist, seed from database.seed.json if present
+    // Candidate search: If destination DB does not exist in targetDir, check fallback paths
+    if (!fs.existsSync(DB_FILE)) {
+      const fallbackPaths = [
+        path.join(APP_ROOT, 'data', 'database.json'),
+        '/opt/it-helpdesk/data/database.json',
+        path.join(BACKUP_DIR, 'latest_active_db.json'),
+        '/tmp/it_helpdesk_emergency_backup.json',
+      ];
+      for (const fb of fallbackPaths) {
+        if (fs.existsSync(fb) && fs.statSync(fb).size > 1000) {
+          try {
+            console.log(`[Database Engine] Discovered existing live database at ${fb}. Restoring to ${DB_FILE}`);
+            fs.copyFileSync(fb, DB_FILE);
+            break;
+          } catch {}
+        }
+      }
+    }
+
+    // If destination DB still does not exist, seed from database.seed.json if present
     if (!fs.existsSync(DB_FILE) && fs.existsSync(DB_SEED_FILE)) {
       try {
         fs.copyFileSync(DB_SEED_FILE, DB_FILE);
@@ -122,22 +160,26 @@ class DatabaseEngine {
     ];
 
     const initialDefaultGateway: DefaultEmailGatewayConfig = {
+      serviceProvider: 'gmail',
       incomingProtocol: 'imap',
-      incomingHost: 'imap.lakhanglobal.com',
+      incomingHost: 'imap.gmail.com',
       incomingPort: 993,
       incomingSecurity: 'ssl',
-      incomingUsername: 'helpdesk@lakhanglobal.com',
+      incomingUsername: 'Confiancebizsol377@gmail.com',
       outgoingProtocol: 'smtp',
-      outgoingHost: 'smtp.lakhanglobal.com',
+      outgoingHost: 'smtp.gmail.com',
       outgoingPort: 587,
       outgoingSecurity: 'starttls',
-      outgoingUsername: 'helpdesk@lakhanglobal.com',
-      fromName: 'IT Helpdesk Support',
-      fromEmail: 'helpdesk@lakhanglobal.com',
-      replyToEmail: 'helpdesk@lakhanglobal.com',
+      outgoingUsername: 'Confiancebizsol377@gmail.com',
+      fromName: 'IT Helpdesk Support (Confiance)',
+      fromEmail: 'Confiancebizsol377@gmail.com',
+      replyToEmail: 'Confiancebizsol377@gmail.com',
       subjectPrefix: '[ITL-{{ticketId}}]',
       status: 'connected',
-      lastTestedAt: '2026-10-03T19:00:00Z',
+      enableInboundTicketGeneration: true,
+      enableOutboundReplyNotification: true,
+      pollingIntervalMinutes: 5,
+      lastTestedAt: new Date().toISOString(),
     };
 
     if (fs.existsSync(DB_FILE)) {
@@ -356,6 +398,14 @@ class DatabaseEngine {
 
       // 3. Atomically rename temp file over destination (atomic on POSIX)
       fs.renameSync(tmpFile, DB_FILE);
+
+      // 4. Keep persistent rolling backup in BACKUP_DIR
+      try {
+        if (!fs.existsSync(BACKUP_DIR)) {
+          fs.mkdirSync(BACKUP_DIR, { recursive: true });
+        }
+        fs.copyFileSync(DB_FILE, path.join(BACKUP_DIR, 'latest_active_db.json'));
+      } catch {}
     } catch (err) {
       console.error('Error persisting database:', err);
     }
@@ -385,6 +435,80 @@ class DatabaseEngine {
     const seq = this.data.nextTicketSequence++;
     this.save();
     return `ITL-${seq.toString().padStart(6, '0')}`;
+  }
+
+  public createBackup(label?: string): string {
+    if (!fs.existsSync(BACKUP_DIR)) {
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const safeLabel = label ? `_${label.replace(/[^a-zA-Z0-9_-]/g, '')}` : '';
+    const dest = path.join(BACKUP_DIR, `database_backup_${timestamp}${safeLabel}.json`);
+    fs.copyFileSync(DB_FILE, dest);
+    return dest;
+  }
+
+  public listBackups(): BackupMetadata[] {
+    if (!fs.existsSync(BACKUP_DIR)) return [];
+    try {
+      const files = fs.readdirSync(BACKUP_DIR);
+      const results: BackupMetadata[] = [];
+      for (const f of files) {
+        if (f.endsWith('.json')) {
+          const fullPath = path.join(BACKUP_DIR, f);
+          try {
+            const stat = fs.statSync(fullPath);
+            const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
+            results.push({
+              filename: f,
+              filepath: fullPath,
+              sizeBytes: stat.size,
+              createdAt: stat.mtime.toISOString(),
+              ticketsCount: Array.isArray(content.tickets) ? content.tickets.length : 0,
+              usersCount: Array.isArray(content.users) ? content.users.length : 0,
+              assetsCount: Array.isArray(content.assets) ? content.assets.length : 0,
+            });
+          } catch {}
+        }
+      }
+      return results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } catch {
+      return [];
+    }
+  }
+
+  public restoreFromBackup(filenameOrPath: string): boolean {
+    const targetPath = path.isAbsolute(filenameOrPath)
+      ? filenameOrPath
+      : path.join(BACKUP_DIR, filenameOrPath);
+
+    if (!fs.existsSync(targetPath)) {
+      throw new Error(`Backup file not found at: ${targetPath}`);
+    }
+
+    const raw = fs.readFileSync(targetPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.users) || !Array.isArray(parsed.tickets)) {
+      throw new Error('Invalid database backup structure: missing users or tickets collection.');
+    }
+
+    // Save previous state to safety backup before overwriting
+    this.createBackup('pre_restore_safety');
+
+    this.data = parsed;
+    this.save();
+    return true;
+  }
+
+  public restoreFromRaw(jsonString: string): boolean {
+    const parsed = JSON.parse(jsonString);
+    if (!parsed || !Array.isArray(parsed.users) || !Array.isArray(parsed.tickets)) {
+      throw new Error('Invalid JSON structure. Ensure it is a valid IT Helpdesk database export.');
+    }
+    this.createBackup('pre_restore_safety');
+    this.data = parsed;
+    this.save();
+    return true;
   }
 }
 

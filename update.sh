@@ -46,10 +46,19 @@ git checkout "$CURRENT_BRANCH" 2>/dev/null || true
 git pull origin "$CURRENT_BRANCH" || git pull origin main || true
 
 # 4. Guarantee production database is restored intact
-if [ -f "$BACKUP_DIR/latest_active_db.json" ] && [ -s "$BACKUP_DIR/latest_active_db.json" ]; then
-    echo "♻️  Ensuring your persistent production database is in place..."
+# First, look for the richest / largest backup on the system
+LATEST_RICH_BACKUP=""
+for candidate in "$BACKUP_DIR/latest_active_db.json" $(ls -t "$BACKUP_DIR"/database_*.json "$BACKUP_DIR"/install_preserve_*.json /tmp/it_helpdesk_*.json 2>/dev/null); do
+    if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+        LATEST_RICH_BACKUP="$candidate"
+        break
+    fi
+done
+
+if [ -n "$LATEST_RICH_BACKUP" ]; then
+    echo "♻️  Ensuring your persistent production database is in place from: $LATEST_RICH_BACKUP"
     mkdir -p "$APP_DIR/data"
-    cp -f "$BACKUP_DIR/latest_active_db.json" "$APP_DIR/data/database.json"
+    cp -f "$LATEST_RICH_BACKUP" "$APP_DIR/data/database.json"
     echo "   ✓ Production database verified intact! All tickets, users, and assets are preserved."
 elif [ ! -f "$APP_DIR/data/database.json" ] && [ -f "$APP_DIR/data/database.seed.json" ]; then
     echo "📂 Initializing database from seed..."
@@ -76,9 +85,9 @@ if command -v pm2 &> /dev/null && pm2 list | grep -q "it-helpdesk"; then
 elif command -v pm2 &> /dev/null; then
     echo "   Starting PM2 process 'it-helpdesk'..."
     if [ -f "$APP_DIR/node_modules/.bin/tsx" ]; then
-      pm2 start "$APP_DIR/node_modules/.bin/tsx" --name "it-helpdesk" -- server.ts
+      pm2 start "$APP_DIR/node_modules/.bin/tsx" --name "it-helpdesk" --cwd "$APP_DIR" -- server.ts
     else
-      pm2 start npm --name "it-helpdesk" -- run start
+      pm2 start npm --name "it-helpdesk" --cwd "$APP_DIR" -- run start
     fi
     pm2 save
 elif systemctl is-active --quiet it-helpdesk 2>/dev/null; then

@@ -15,6 +15,7 @@ import {
   Boxes,
   BookOpen,
   ExternalLink,
+  Mail,
 } from 'lucide-react';
 import { User, Organization } from '../types';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -245,6 +246,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             ZONE 3: RIGHT SECTION (Search... ⌘K, Theme, Profile / Lakhan Prajapati CBPL2045)
            ========================================================================= */}
         <div className="flex items-center gap-2.5 shrink-0">
+          {/* Helpdesk Email Connector quick badge for Superadmin & Admin */}
+          {currentUser && (currentUser.role === 'superadmin' || currentUser.role === 'admin') && (
+            <button
+              onClick={() => onNavigate('settings')}
+              className="hidden lg:flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 bg-slate-100/90 dark:bg-slate-900/90 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-slate-200 dark:border-slate-800 hover:border-cyan-400 dark:hover:border-cyan-700 rounded-xl transition-all cursor-pointer font-medium shadow-2xs group"
+              title="Helpdesk Email Connector (Confiancebizsol377@gmail.com) - Click to manage settings"
+            >
+              <Mail className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 group-hover:scale-110 transition-transform" />
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="font-mono text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                Confiancebizsol377@gmail.com
+              </span>
+            </button>
+          )}
+
           {/* Quick Search Bar */}
           <button
             onClick={onOpenCommandPalette}

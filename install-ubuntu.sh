@@ -81,11 +81,11 @@ pm2 delete it-helpdesk 2>/dev/null || true
 
 # Determine tsx runner path
 if [ -f "$APP_DIR/node_modules/.bin/tsx" ]; then
-  pm2 start "$APP_DIR/node_modules/.bin/tsx" --name "it-helpdesk" -- server.ts
+  pm2 start "$APP_DIR/node_modules/.bin/tsx" --name "it-helpdesk" --cwd "$APP_DIR" -- server.ts
 elif command -v tsx &> /dev/null; then
-  pm2 start tsx --name "it-helpdesk" -- server.ts
+  pm2 start tsx --name "it-helpdesk" --cwd "$APP_DIR" -- server.ts
 else
-  pm2 start npm --name "it-helpdesk" -- run start
+  pm2 start npm --name "it-helpdesk" --cwd "$APP_DIR" -- run start
 fi
 
 pm2 save
