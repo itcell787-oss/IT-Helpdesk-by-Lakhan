@@ -99,8 +99,14 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
   const [bulkAddManufacturer, setBulkAddManufacturer] = useState('Lenovo');
   const [bulkAddModel, setBulkAddModel] = useState('Gen 4 Core i7 16GB');
   const [bulkAddCost, setBulkAddCost] = useState('1200');
-  const [bulkAddCostCurrency, setBulkAddCostCurrency] = useState<'$' | '₹' | string>(defaultCurrency || '₹');
+  const [bulkAddCostCurrency, setBulkAddCostCurrency] = useState<string>(defaultCurrency || '₹');
   const [bulkAddWarrantyPeriod, setBulkAddWarrantyPeriod] = useState<'6Months' | '1 year' | '2 year' | '3 year'>('1 year');
+
+  React.useEffect(() => {
+    if (defaultCurrency) {
+      setBulkAddCostCurrency(defaultCurrency);
+    }
+  }, [defaultCurrency]);
 
   // Single Modals & Statistics Panel
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -428,7 +434,7 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
       `"${a.warrantyExpiry || ''}"`,
       `"${a.warrantyPeriod || '1 year'}"`,
       `"${a.purchaseCost || 0}"`,
-      `"${a.costCurrency && a.costCurrency !== '$' ? a.costCurrency : (defaultCurrency || '₹')}"`,
+      `"${defaultCurrency || a.costCurrency || '₹'}"`,
     ]);
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
@@ -801,11 +807,13 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
                   <div className="flex items-center gap-1">
                     <select
                       value={bulkAddCostCurrency}
-                      onChange={(e) => setBulkAddCostCurrency(e.target.value as '$' | '₹')}
-                      className="w-14 px-2 py-2 text-xs font-bold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                      onChange={(e) => setBulkAddCostCurrency(e.target.value)}
+                      className="w-16 px-2 py-2 text-xs font-bold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
                     >
-                      <option value="$">$</option>
                       <option value="₹">₹</option>
+                      <option value="$">$</option>
+                      <option value="€">€</option>
+                      <option value="£">£</option>
                     </select>
                     <input
                       type="number"
@@ -1509,7 +1517,7 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
                         <td className="py-3 px-3 font-mono font-bold text-slate-900 dark:text-slate-100">
                           {a.purchaseCost !== undefined ? (
                             <span>
-                              {(a.costCurrency && a.costCurrency !== '$' ? a.costCurrency : (defaultCurrency || '₹'))}
+                              {defaultCurrency || a.costCurrency || '₹'}
                               {Number(a.purchaseCost).toLocaleString()}
                             </span>
                           ) : (

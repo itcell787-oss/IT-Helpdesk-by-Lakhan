@@ -71,6 +71,8 @@ interface SuperadminViewProps {
   onCreateCatalogItem?: (data: Partial<ServiceCatalogItem>) => void;
   onUpdateCatalogItem?: (id: string, data: Partial<ServiceCatalogItem>) => void;
   onDeleteCatalogItem?: (id: string) => void;
+  systemSettings?: any;
+  onUpdateSystemSettings?: (settings: any) => void;
 }
 
 export const SuperadminView: React.FC<SuperadminViewProps> = ({
@@ -91,6 +93,8 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   onCreateCatalogItem,
   onUpdateCatalogItem,
   onDeleteCatalogItem,
+  systemSettings,
+  onUpdateSystemSettings,
 }) => {
   const [activeTab, setActiveTab] = useState<'tenants' | 'agents' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway'>('policies');
   const [searchAudit, setSearchAudit] = useState('');
@@ -186,6 +190,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
     requireOtpForTicketSubmission: boolean;
     enableTicketRating: boolean;
     enableCategoryAutoAssign: boolean;
+    enableInboundTicketGeneration?: boolean;
     allowRequesterAssetSelfService?: boolean;
     defaultCurrency?: string;
     categoryAutoAssignRules: Record<string, { technicianId: string; technicianName: string }>;
@@ -193,6 +198,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
     requireOtpForTicketSubmission: false,
     enableTicketRating: true,
     enableCategoryAutoAssign: true,
+    enableInboundTicketGeneration: true,
     allowRequesterAssetSelfService: true,
     defaultCurrency: '₹',
     categoryAutoAssignRules: {
@@ -202,6 +208,12 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       'Security & Access': { technicianId: 'usr-lakhan-super', technicianName: 'Lakhan Verma' },
     },
   });
+
+  useEffect(() => {
+    if (systemSettings) {
+      setSystemSettingsState((prev) => ({ ...prev, ...systemSettings }));
+    }
+  }, [systemSettings]);
 
   const [surveys, setSurveys] = useState<SatisfactionSurvey[]>([]);
   const [surveyToDelete, setSurveyToDelete] = useState<SatisfactionSurvey | null>(null);
@@ -382,6 +394,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       requireOtpForTicketSubmission: !systemSettingsState.requireOtpForTicketSubmission,
     };
     setSystemSettingsState(updated);
+    onUpdateSystemSettings?.({ requireOtpForTicketSubmission: updated.requireOtpForTicketSubmission });
     await api.updateSystemSettings({ requireOtpForTicketSubmission: updated.requireOtpForTicketSubmission });
     setSettingsSuccess(`Ticket OTP verification is now ${updated.requireOtpForTicketSubmission ? 'ENABLED (Mandatory OTP)' : 'DISABLED (Direct / No OTP)'}`);
     setTimeout(() => setSettingsSuccess(null), 3000);
@@ -393,9 +406,28 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       enableTicketRating: !systemSettingsState.enableTicketRating,
     };
     setSystemSettingsState(updated);
+    onUpdateSystemSettings?.({ enableTicketRating: updated.enableTicketRating });
     await api.updateSystemSettings({ enableTicketRating: updated.enableTicketRating });
     setSettingsSuccess(`Ticket Satisfaction Rating is now ${updated.enableTicketRating ? 'ENABLED' : 'DISABLED'}`);
     setTimeout(() => setSettingsSuccess(null), 3000);
+  };
+
+  const handleToggleEmailTickets = async () => {
+    const nextVal = systemSettingsState.enableInboundTicketGeneration === false ? true : false;
+    const updated = {
+      ...systemSettingsState,
+      enableInboundTicketGeneration: nextVal,
+    };
+    setSystemSettingsState(updated);
+    onUpdateSystemSettings?.({ enableInboundTicketGeneration: nextVal });
+    try {
+      await api.updateSystemSettings({ enableInboundTicketGeneration: nextVal });
+      setSettingsSuccess(`Inbound Ticket Creation via Email is now ${nextVal ? 'ENABLED (ACTIVE)' : 'DISABLED BY SUPER ADMIN'}`);
+      setTimeout(() => setSettingsSuccess(null), 3000);
+    } catch (err: any) {
+      setSettingsSuccess(`Error: ${err.message || 'Failed to update system settings'}`);
+      setTimeout(() => setSettingsSuccess(null), 4000);
+    }
   };
 
   const handleToggleAutoAssign = async () => {
@@ -404,6 +436,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       enableCategoryAutoAssign: !systemSettingsState.enableCategoryAutoAssign,
     };
     setSystemSettingsState(updated);
+    onUpdateSystemSettings?.({ enableCategoryAutoAssign: updated.enableCategoryAutoAssign });
     await api.updateSystemSettings({ enableCategoryAutoAssign: updated.enableCategoryAutoAssign });
     setSettingsSuccess(`Category Auto-Assignment is now ${updated.enableCategoryAutoAssign ? 'ENABLED' : 'DISABLED'}`);
     setTimeout(() => setSettingsSuccess(null), 3000);
@@ -416,6 +449,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       allowRequesterAssetSelfService: nextVal,
     };
     setSystemSettingsState(updated);
+    onUpdateSystemSettings?.({ allowRequesterAssetSelfService: nextVal });
     try {
       await api.updateSystemSettings({ allowRequesterAssetSelfService: nextVal });
       setSettingsSuccess(`Requester Asset Self-Service (Add/Remove) is now ${nextVal ? 'ENABLED' : 'DISABLED'}`);
@@ -435,6 +469,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
     };
     const updated = { ...systemSettingsState, categoryAutoAssignRules: newRules };
     setSystemSettingsState(updated);
+    onUpdateSystemSettings?.({ categoryAutoAssignRules: newRules });
     await api.updateSystemSettings({ categoryAutoAssignRules: newRules });
     setSettingsSuccess(`Auto-assign rule for "${cat}" set to ${tech.name}`);
     setTimeout(() => setSettingsSuccess(null), 3000);
@@ -446,6 +481,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       defaultCurrency: newCurrency,
     };
     setSystemSettingsState(updated);
+    onUpdateSystemSettings?.({ defaultCurrency: newCurrency });
     try {
       await api.updateSystemSettings({ defaultCurrency: newCurrency });
       setSettingsSuccess(`Default currency updated to ${newCurrency}! Automatically applied across all IT Assets & CMDB.`);
@@ -1050,7 +1086,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {/* Toggle Card 1: Ticket Submission OTP Verification */}
             <div className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
               <div className="flex items-start justify-between gap-3">
@@ -1153,6 +1189,59 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                   {systemSettingsState.enableTicketRating
                     ? 'CSAT RATINGS ENABLED (ON)'
                     : 'RATINGS DISABLED (OFF)'}
+                </span>
+              </div>
+            </div>
+
+            {/* Toggle Card 3: Inbound Ticket Creation via Email (Super Admin Toggle) */}
+            <div className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Inbound Ticket Creation via Email
+                    </h3>
+                    <span className="text-[10px] text-slate-500 font-medium">Automated Mail Intake &amp; Webhook Relay</span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleToggleEmailTickets}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    systemSettingsState.enableInboundTicketGeneration !== false ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-700'
+                  }`}
+                  role="switch"
+                  aria-checked={systemSettingsState.enableInboundTicketGeneration !== false}
+                  title="Toggle Inbound Ticket Creation via Email"
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      systemSettingsState.enableInboundTicketGeneration !== false ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-700 dark:text-slate-300 font-medium leading-relaxed">
+                Automatically convert incoming emails received at <strong className="text-slate-900 dark:text-white font-mono">it-helpdesk@confiancebizsol.tech</strong> into new support tickets. When disabled, inbound email ingestion is paused and no new tickets will be generated from incoming emails.
+              </p>
+
+              <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 flex items-center justify-between text-xs font-mono">
+                <span className="text-slate-600 dark:text-slate-400">Current Status:</span>
+                <span
+                  className={`font-bold px-2 py-0.5 rounded text-[11px] ${
+                    systemSettingsState.enableInboundTicketGeneration !== false
+                      ? 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300 border border-violet-300'
+                      : 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300'
+                  }`}
+                >
+                  {systemSettingsState.enableInboundTicketGeneration !== false
+                    ? 'TICKETS VIA EMAIL: ACTIVE (ON)'
+                    : 'DISABLED BY SUPER ADMIN (OFF)'}
                 </span>
               </div>
             </div>

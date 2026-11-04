@@ -25,6 +25,8 @@ export interface SystemSettings {
   allowRequesterAssetSelfService?: boolean; // Requesters can view and add/remove assigned assets from portal
   requesterAssetOptions?: string[]; // Customizable dropdown options for requesters: CPU, Keyboard, Mouse, Display, Laptop, Headphone, Webcam
   ticketCategories?: string[]; // Customizable ticket categories (Hardware & Workstations, Software & Cloud Apps, etc.)
+  enableInboundTicketGeneration?: boolean; // Superadmin toggle to enable/disable ticket creation via email
+  enableOutboundReplyNotification?: boolean; // Superadmin toggle for outbound reply emails
 }
 
 export interface User {
@@ -274,6 +276,9 @@ export interface DefaultEmailGatewayConfig {
   enableOutboundReplyNotification?: boolean;
   pollingIntervalMinutes?: number;
   diagnosticLogs?: string[];
+  processedMessageIds?: string[];
+  processedUids?: string[];
+  processedFingerprints?: Array<{ hash: string; timestamp: number; ticketId: string }>;
 }
 
 export interface OtpVerificationRecord {

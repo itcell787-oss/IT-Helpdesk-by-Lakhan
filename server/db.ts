@@ -162,12 +162,12 @@ class DatabaseEngine {
     const initialDefaultGateway: DefaultEmailGatewayConfig = {
       serviceProvider: 'self_hosted_imap',
       incomingProtocol: 'imap',
-      incomingHost: 'imap.confiancebizsol.tech',
+      incomingHost: 'mail.confiancebizsol.tech',
       incomingPort: 993,
       incomingSecurity: 'ssl',
       incomingUsername: 'it-helpdesk@confiancebizsol.tech',
       outgoingProtocol: 'smtp',
-      outgoingHost: 'smtp.confiancebizsol.tech',
+      outgoingHost: 'mail.confiancebizsol.tech',
       outgoingPort: 587,
       outgoingSecurity: 'starttls',
       outgoingUsername: 'it-helpdesk@confiancebizsol.tech',
@@ -181,6 +181,9 @@ class DatabaseEngine {
       pollingIntervalMinutes: 1,
       lastTestedAt: new Date().toISOString(),
       lastPolledAt: new Date().toISOString(),
+      processedMessageIds: [],
+      processedUids: [],
+      processedFingerprints: [],
     };
 
     if (fs.existsSync(DB_FILE)) {
@@ -197,6 +200,12 @@ class DatabaseEngine {
             parsed.defaultGatewayConfig.incomingUsername = 'it-helpdesk@confiancebizsol.tech';
             parsed.defaultGatewayConfig.outgoingUsername = 'it-helpdesk@confiancebizsol.tech';
           }
+          if (parsed.defaultGatewayConfig.incomingHost === 'imap.confiancebizsol.tech' || !parsed.defaultGatewayConfig.incomingHost) {
+            parsed.defaultGatewayConfig.incomingHost = 'mail.confiancebizsol.tech';
+          }
+          if (parsed.defaultGatewayConfig.outgoingHost === 'smtp.confiancebizsol.tech' || !parsed.defaultGatewayConfig.outgoingHost) {
+            parsed.defaultGatewayConfig.outgoingHost = 'mail.confiancebizsol.tech';
+          }
           if (parsed.defaultGatewayConfig.enableInboundTicketGeneration === undefined) {
             parsed.defaultGatewayConfig.enableInboundTicketGeneration = true;
           }
@@ -208,6 +217,15 @@ class DatabaseEngine {
           }
           if (!parsed.defaultGatewayConfig.status) {
             parsed.defaultGatewayConfig.status = 'connected';
+          }
+          if (!parsed.defaultGatewayConfig.processedMessageIds) {
+            parsed.defaultGatewayConfig.processedMessageIds = [];
+          }
+          if (!parsed.defaultGatewayConfig.processedUids) {
+            parsed.defaultGatewayConfig.processedUids = [];
+          }
+          if (!parsed.defaultGatewayConfig.processedFingerprints) {
+            parsed.defaultGatewayConfig.processedFingerprints = [];
           }
         }
         if (!parsed.otpRecords) parsed.otpRecords = [];

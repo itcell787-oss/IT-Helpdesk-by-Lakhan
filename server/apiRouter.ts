@@ -384,11 +384,15 @@ apiRouter.post('/session/switch', (req: Request, res: Response) => {
 apiRouter.get('/system-settings', (req: Request, res: Response) => {
   const organizations = db.get('organizations');
   const org = organizations[0];
-  const settings = org?.systemSettings || {};
+  const settings = (org?.systemSettings || {}) as Record<string, any>;
+  const gwConfig = db.get('defaultGatewayConfig');
+  const isEmailInboundEnabled = gwConfig?.enableInboundTicketGeneration !== false && settings.enableInboundTicketGeneration !== false;
   res.json({
     requireOtpForTicketSubmission: false,
     enableTicketRating: true,
     enableCategoryAutoAssign: true,
+    enableInboundTicketGeneration: isEmailInboundEnabled,
+    enableOutboundReplyNotification: gwConfig?.enableOutboundReplyNotification !== false,
     categoryAutoAssignRules: {},
     preSharedKey: 'Sports@9433',
     defaultCurrency: '₹',
@@ -413,12 +417,21 @@ apiRouter.patch('/system-settings', (req: Request, res: Response) => {
   };
   db.set('organizations', organizations);
 
+  // Synchronize defaultGatewayConfig.enableInboundTicketGeneration
+  if (req.body.enableInboundTicketGeneration !== undefined) {
+    const gw = db.get('defaultGatewayConfig');
+    if (gw) {
+      gw.enableInboundTicketGeneration = Boolean(req.body.enableInboundTicketGeneration);
+      db.set('defaultGatewayConfig', gw);
+    }
+  }
+
   logAudit(
     actor,
     'setting.updated',
     'setting',
     'systemSettings',
-    `Updated system settings: OTP=${org.systemSettings?.requireOtpForTicketSubmission}, Ratings=${org.systemSettings?.enableTicketRating}, CategoryAutoAssign=${org.systemSettings?.enableCategoryAutoAssign}`
+    `Updated system settings: OTP=${org.systemSettings?.requireOtpForTicketSubmission}, Ratings=${org.systemSettings?.enableTicketRating}, CategoryAutoAssign=${org.systemSettings?.enableCategoryAutoAssign}, EmailTickets=${org.systemSettings?.enableInboundTicketGeneration}`
   );
 
   res.json(org.systemSettings || {});
@@ -1253,8 +1266,9 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
   const requireOtp = currentOrg?.systemSettings?.requireOtpForTicketSubmission === true;
 
   // Require OTP verification ONLY if requireOtp is enabled in system settings
+  const isStaffActor = actor && (actor.role === 'superadmin' || actor.role === 'admin' || actor.role === 'technician' || actor.role === 'manager');
   const targetEmail = requesterEmail || (actor ? actor.email : '');
-  if (requireOtp && targetEmail) {
+  if (requireOtp && targetEmail && !isStaffActor) {
     const otpRecords = db.get('otpRecords') || [];
     const isConfirmed =
       req.body.otpVerified === true ||
@@ -1398,7 +1412,7 @@ apiRouter.post('/tickets', (req: Request, res: Response) => {
   res.status(201).json(newTicket);
 });
 
-apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
+apiRouter.patch('/tickets/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const tickets = db.get('tickets');
   const idx = tickets.findIndex(t => t.id === id);
@@ -1608,6 +1622,29 @@ apiRouter.patch('/tickets/:id', (req: Request, res: Response) => {
       });
     }
     db.set('surveys', surveys);
+  }
+
+  const statusChanged = oldTicket.status !== updatedTicket.status;
+  const techAssigned =
+    (!oldTicket.assignedTechnicianId && Boolean(updatedTicket.assignedTechnicianId)) ||
+    (Boolean(oldTicket.assignedTechnicianId) &&
+      Boolean(updatedTicket.assignedTechnicianId) &&
+      oldTicket.assignedTechnicianId !== updatedTicket.assignedTechnicianId);
+
+  if (statusChanged || techAssigned) {
+    try {
+      await emailService.sendTicketStatusUpdateEmail({
+        ticket: updatedTicket,
+        oldStatus: oldTicket.status,
+        newStatus: updatedTicket.status,
+        actorName: actor?.name || 'Support Staff',
+        actorRole: actor?.role,
+        resolutionSummary: updatedTicket.resolutionSummary,
+        assignedTechName: updatedTicket.assignedTechnicianName,
+      });
+    } catch (err: any) {
+      console.warn('Outbound status update notification failed:', err.message);
+    }
   }
 
   logAudit(
@@ -1866,17 +1903,40 @@ apiRouter.post('/tickets/bulk', (req: Request, res: Response) => {
       count++;
       t.updatedAt = new Date().toISOString();
       switch (action) {
-        case 'set_status':
+        case 'set_status': {
+          const oldStatus = t.status;
           t.status = value;
+          if (oldStatus !== value) {
+            emailService
+              .sendTicketStatusUpdateEmail({
+                ticket: t,
+                oldStatus,
+                newStatus: value,
+                actorName: actor?.name || 'Support Staff',
+                actorRole: actor?.role,
+              })
+              .catch((err: any) => console.warn('Bulk status update email dispatch error:', err.message));
+          }
           break;
+        }
         case 'set_priority':
           t.priority = value;
           break;
-        case 'assign_tech':
+        case 'assign_tech': {
           t.assignedTechnicianId = value;
           const tech = users.find(u => u.id === value);
           t.assignedTechnicianName = tech?.name;
+          emailService
+            .sendTicketStatusUpdateEmail({
+              ticket: t,
+              newStatus: t.status,
+              actorName: actor?.name || 'Support Staff',
+              actorRole: actor?.role,
+              assignedTechName: tech?.name,
+            })
+            .catch((err: any) => console.warn('Bulk assign tech email dispatch error:', err.message));
           break;
+        }
         case 'add_tag':
           if (!t.tags.includes(value)) t.tags.push(value);
           break;
@@ -2594,7 +2654,7 @@ apiRouter.post('/approvals/:id/decide', (req: Request, res: Response) => {
 // -------------------------------------------------------------
 // OTP Email Confirmation for Ticket Submission
 // -------------------------------------------------------------
-apiRouter.post('/auth/otp/send', (req: Request, res: Response) => {
+apiRouter.post('/auth/otp/send', async (req: Request, res: Response) => {
   const { email } = req.body;
   if (!email || !email.includes('@')) {
     return res.status(400).json({ error: 'Valid email address is required.' });
@@ -2616,16 +2676,28 @@ apiRouter.post('/auth/otp/send', (req: Request, res: Response) => {
   otpRecords.push(newRecord);
   db.set('otpRecords', otpRecords);
 
+  // Dispatch OTP email to user inbox via configured email gateway
+  const emailRes = await emailService.sendOtpEmail(normalizedEmail, code);
+
   const currentUserId = db.get('currentUserId');
   const users = db.get('users');
   const actor = users.find((u) => u.id === currentUserId) || users[0];
-  logAudit(actor, 'auth.otp_dispatched', 'auth', normalizedEmail, `Generated 6-digit confirmation OTP for ${normalizedEmail}`);
+  logAudit(
+    actor,
+    'auth.otp_dispatched',
+    'auth',
+    normalizedEmail,
+    `Generated 6-digit confirmation OTP for ${normalizedEmail} (Dispatched via SMTP: ${emailRes.emailSent ? 'Delivered' : 'Simulation Recorded'})`
+  );
 
   res.json({
     success: true,
-    message: `Verification code sent to ${normalizedEmail}.`,
-    previewCode: code, // Provided for instant demo and local testing
+    message: emailRes.emailSent
+      ? `A 6-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox.`
+      : `Verification code generated for ${normalizedEmail}.`,
+    previewCode: code, // Provided for instant demo & testing fallback
     expiresInSeconds: 600,
+    emailSent: emailRes.emailSent,
   });
 });
 
@@ -2856,13 +2928,21 @@ apiRouter.post('/email/default-gateway/poll', async (req: Request, res: Response
       body: req.body.body,
       cc: req.body.cc,
       managerEmail: req.body.managerEmail,
+      messageId: req.body.messageId,
     });
+    const actionMsg =
+      inboundRes.mode === 'threaded'
+        ? `Appended reply to ticket ${inboundRes.ticket.id}`
+        : inboundRes.mode === 'ignored_duplicate'
+        ? `Duplicate skipped: email was already processed on ticket ${inboundRes.ticket.id}`
+        : `Created ticket ${inboundRes.ticket.id}`;
+
     return res.json({
       success: true,
-      message: `Processed email from ${req.body.from} -> ${inboundRes.mode === 'threaded' ? 'Appended reply to ticket' : 'Created ticket'} ${inboundRes.ticket.id}`,
+      message: `Processed email from ${req.body.from} -> ${actionMsg}`,
       result: inboundRes,
       polledAt: new Date().toISOString(),
-      processedCount: 1,
+      processedCount: inboundRes.mode === 'created' ? 1 : 0,
     });
   }
 
@@ -2886,6 +2966,37 @@ apiRouter.post(['/email/inbound', '/email/webhook'], async (req: Request, res: R
     return res.status(400).json({ error: 'Inbound email must include from and body content.' });
   }
 
+  // Acknowledge and ignore test probe emails or mailer-daemon bounces without creating tickets
+  const isProbe =
+    String(subject).toLowerCase().includes('gateway probe') ||
+    String(subject).toLowerCase().includes('[itl-test-') ||
+    String(subject).toLowerCase().includes('connection probe') ||
+    String(from).toLowerCase().includes('mailer-daemon') ||
+    String(from).toLowerCase().includes('postmaster');
+
+  if (isProbe) {
+    return res.status(200).json({
+      success: true,
+      mode: 'ignored_probe',
+      message: 'Automated test probe email acknowledged without ticket generation.'
+    });
+  }
+
+  // Superadmin Email-to-Ticket Generation Toggle Enforcement
+  const gwConfig = db.get('defaultGatewayConfig');
+  const orgs = db.get('organizations') || [];
+  const orgSettings = (orgs[0]?.systemSettings || {}) as Record<string, any>;
+  const isEmailTicketEnabled = gwConfig?.enableInboundTicketGeneration !== false && orgSettings.enableInboundTicketGeneration !== false;
+
+  const isThreadedReply = Boolean(String(subject).match(/\[(ITL-\d+)\]/i));
+
+  if (!isEmailTicketEnabled && !isThreadedReply) {
+    return res.status(403).json({
+      success: false,
+      error: 'Inbound email-to-ticket generation has been disabled by Super Administrator.',
+    });
+  }
+
   try {
     const result = await emailService.processInboundEmail({
       from,
@@ -2896,15 +3007,38 @@ apiRouter.post(['/email/inbound', '/email/webhook'], async (req: Request, res: R
       messageId: req.body.messageId || req.body['Message-Id'],
     });
 
-    res.status(201).json({
+    res.status(result.mode === 'created' ? 201 : 200).json({
       success: true,
       mode: result.mode,
       ticket: result.ticket,
       comment: result.comment,
+      isDuplicate: result.isDuplicate || false,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed processing inbound email.' });
   }
+});
+
+apiRouter.post('/email/deduplicate', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin')) {
+    return res.status(403).json({ error: 'Forbidden: Only administrators can trigger ticket deduplication.' });
+  }
+
+  const result = emailService.deduplicateExistingTickets();
+  logAudit(
+    actor,
+    'ticket.deduplicated',
+    'ticket',
+    'system',
+    `Administrator triggered ticket deduplication: removed ${result.removedCount} duplicate(s), ${result.remainingCount} ticket(s) active.`
+  );
+
+  res.json({
+    success: true,
+    ...result,
+    tickets: db.get('tickets'),
+  });
 });
 
 apiRouter.get('/email/delivery-logs', (req: Request, res: Response) => {

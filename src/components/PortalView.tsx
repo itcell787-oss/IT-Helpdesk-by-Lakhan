@@ -93,8 +93,8 @@ export const PortalView: React.FC<PortalViewProps> = ({
   defaultGateway,
   onSimulateInboundEmail,
 }) => {
-  const requireOtp = systemSettings?.requireOtpForTicketSubmission === true;
-  const isRatingEnabled = systemSettings?.enableTicketRating !== false;
+  const requireOtp = (systemSettings?.requireOtpForTicketSubmission ?? organization?.systemSettings?.requireOtpForTicketSubmission) === true;
+  const isRatingEnabled = (systemSettings?.enableTicketRating ?? organization?.systemSettings?.enableTicketRating) !== false;
 
   const allOrganizations = organizations && organizations.length > 0 ? organizations : (organization ? [organization] : []);
   const urlOrgId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('orgId') : null;
@@ -363,10 +363,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
   useEffect(() => {
     if (!requireOtp) {
       setIsOtpVerified(true);
-    } else if (currentUser?.email) {
-      const verified = sessionStorage.getItem(`otp_verified_${currentUser.email}`);
-      if (verified === 'true') {
-        setIsOtpVerified(true);
+    } else {
+      const emailToCheck = (currentUser?.email || submitEmail || '').trim().toLowerCase();
+      if (emailToCheck && emailToCheck.includes('@')) {
+        const verified = sessionStorage.getItem(`otp_verified_${emailToCheck}`);
+        setIsOtpVerified(verified === 'true');
+      } else {
+        setIsOtpVerified(false);
       }
     }
     if (typeof window !== 'undefined') {
@@ -382,7 +385,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
         setActiveTab(tabParam as any);
       }
     }
-  }, [currentUser, requireOtp]);
+  }, [currentUser, requireOtp, submitEmail]);
 
   const handleSendRegOtp = async () => {
     if (!regEmail || !regEmail.includes('@')) {
@@ -1058,8 +1061,15 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   placeholder="e.g. david.miller@company.com"
                   value={submitEmail}
                   onChange={(e) => {
-                    setSubmitEmail(e.target.value);
-                    if (requireOtp) setOtpSent(false);
+                    const newEmail = e.target.value;
+                    setSubmitEmail(newEmail);
+                    if (requireOtp) {
+                      setOtpSent(false);
+                      setOtpCode('');
+                      setOtpMessage(null);
+                      const isStillVerified = sessionStorage.getItem(`otp_verified_${newEmail.trim().toLowerCase()}`) === 'true';
+                      setIsOtpVerified(isStillVerified);
+                    }
                   }}
                   className="w-full px-3.5 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
                 />

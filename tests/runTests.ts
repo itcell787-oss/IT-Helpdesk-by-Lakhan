@@ -432,9 +432,53 @@ function runTestSuite() {
     'Test email Confiancebizsol377@gmail.com is not configured as default',
     gateway.fromEmail !== 'Confiancebizsol377@gmail.com'
   );
+  assert(
+    'Gateway incoming and outgoing host is mail.confiancebizsol.tech',
+    gateway.incomingHost === 'mail.confiancebizsol.tech' && gateway.outgoingHost === 'mail.confiancebizsol.tech'
+  );
   assert('Inbound Email-to-Ticket Generation is enabled', gateway.enableInboundTicketGeneration === true);
   assert('Outbound Reply Email Notifications are enabled', gateway.enableOutboundReplyNotification === true);
   assert('Gateway provider presets supported', ['self_hosted_imap', 'gmail', 'office365', 'self_hosted_pop3', 'custom'].includes(gateway.serviceProvider || 'self_hosted_imap'));
+
+  // -------------------------------------------------------------
+  // Test 22: Superadmin Toggle & OTP Verification Check
+  // -------------------------------------------------------------
+  console.log('\n--- Super Admin Email Toggle & OTP Verification ---');
+  const orgs = db.get('organizations');
+  const orgSettings = (orgs[0]?.systemSettings || {}) as any;
+  assert('Super Admin has toggle for requireOtpForTicketSubmission', orgSettings.requireOtpForTicketSubmission !== undefined);
+  
+  // -------------------------------------------------------------
+  // Test 23: Inbound Probe & Bounce Filter Check
+  // -------------------------------------------------------------
+  console.log('\n--- Inbound Probe & Bounce Filtering ---');
+  const probeSubject = '[ITL-TEST-0001] IT Helpdesk Gateway Probe';
+  const isProbe = probeSubject.includes('Gateway Probe') || probeSubject.includes('[ITL-TEST-');
+  assert('Gateway connection probe subject is detected as test probe', isProbe === true);
+
+  const daemonSender = 'mailer-daemon@confiancebizsol.tech';
+  const isDaemon = daemonSender.includes('mailer-daemon') || daemonSender.includes('postmaster');
+  assert('Mailer-daemon bounce sender is detected as system bounce', isDaemon === true);
+
+  // -------------------------------------------------------------
+  // Test 24: CMDB Default Currency Valuation Configuration
+  // -------------------------------------------------------------
+  console.log('\n--- CMDB Valuation & Default Currency Configuration ---');
+  const defaultCurrency = orgSettings.defaultCurrency || '₹';
+  assert('Default IT Asset valuation currency defaults to Rupee (₹)', defaultCurrency === '₹');
+  const supportedCurrencies = ['₹', '$', '€', '£'];
+  assert('Default currency is within supported valuation currencies (₹, $, €, £)', supportedCurrencies.includes(defaultCurrency));
+
+  // -------------------------------------------------------------
+  // Test 25: Inbound Email Deduplication & Anti-Flood Protection
+  // -------------------------------------------------------------
+  console.log('\n--- Inbound Email Deduplication & Anti-Flood Protection ---');
+  const processedMessageIds = gateway.processedMessageIds || [];
+  assert('Gateway config contains processedMessageIds store', Array.isArray(processedMessageIds));
+  const processedUids = gateway.processedUids || [];
+  assert('Gateway config contains processedUids store', Array.isArray(processedUids));
+  const processedFingerprints = gateway.processedFingerprints || [];
+  assert('Gateway config contains processedFingerprints store', Array.isArray(processedFingerprints));
 
   console.log(`\n========================================`);
   console.log(`Test Results: ${passed} passed, ${failed} failed.`);

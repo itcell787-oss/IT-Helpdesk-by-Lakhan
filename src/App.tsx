@@ -95,6 +95,7 @@ export default function App() {
   const [metrics, setMetrics] = useState<any>(null);
   const [superadminStats, setSuperadminStats] = useState<any>(null);
   const [systemSettings, setSystemSettings] = useState<any>(null);
+  const defaultCurrency = systemSettings?.defaultCurrency || organization?.systemSettings?.defaultCurrency || '₹';
 
   // Active View Navigation - Persisted in sessionStorage and localStorage so browser refresh never kicks staff to portal
   const [activeView, setActiveViewState] = useState<string>(() => {
@@ -1345,6 +1346,7 @@ export default function App() {
                 customFields={customFields}
                 organization={organization}
                 organizations={organizations}
+                systemSettings={systemSettings || organization?.systemSettings}
                 assets={assets}
                 initialTab={portalInitialTab}
                 allowRequesterAssetSelfService={systemSettings?.allowRequesterAssetSelfService ?? organization?.systemSettings?.allowRequesterAssetSelfService ?? true}
@@ -1375,7 +1377,7 @@ export default function App() {
                 onBulkDeleteAssets={handleBulkDeleteAssets}
                 onBulkCreateAssets={handleBulkCreateAssets}
                 currentUserRole={currentUser.role}
-                defaultCurrency={organization?.systemSettings?.defaultCurrency || '₹'}
+                defaultCurrency={defaultCurrency}
                 allowRequesterAssetSelfService={systemSettings?.allowRequesterAssetSelfService ?? organization?.systemSettings?.allowRequesterAssetSelfService ?? true}
                 onToggleRequesterAssetSelfService={async () => {
                   const currentVal = systemSettings?.allowRequesterAssetSelfService ?? organization?.systemSettings?.allowRequesterAssetSelfService ?? true;
@@ -1457,6 +1459,7 @@ export default function App() {
                 adminMailboxes={adminMailboxes}
                 defaultGateway={defaultGateway || fallbackGateway}
                 assets={assets}
+                defaultCurrency={defaultCurrency}
                 onCreateAsset={handleCreateAsset}
                 onUpdateAsset={handleUpdateAsset}
                 onDeleteAsset={handleDeleteAsset}
@@ -1516,9 +1519,25 @@ export default function App() {
                 users={availableUsers}
                 catalogItems={serviceCatalog}
                 stats={superadminStats}
+                systemSettings={systemSettings || organization?.systemSettings}
                 defaultGateway={defaultGateway || fallbackGateway}
                 onSaveDefaultGateway={handleSaveDefaultGateway}
                 onTestDefaultGateway={handleTestDefaultGateway}
+                onUpdateSystemSettings={(updatedSettings) => {
+                  setSystemSettings((prev: any) => ({ ...(prev || {}), ...updatedSettings }));
+                  if (organization) {
+                    setOrganization((prev: any) => ({
+                      ...prev,
+                      systemSettings: { ...(prev?.systemSettings || {}), ...updatedSettings },
+                    }));
+                  }
+                  setOrganizations((prev) =>
+                    prev.map((o) => ({
+                      ...o,
+                      systemSettings: { ...(o.systemSettings || {}), ...updatedSettings },
+                    }))
+                  );
+                }}
                 onCreateOrganization={handleCreateOrganization}
                 onUpdateOrganization={handleUpdateOrganization}
                 onDeleteOrganization={handleDeleteOrganization}
@@ -1544,7 +1563,7 @@ export default function App() {
         users={availableUsers}
         assets={assets}
         currentUser={currentUser}
-        requireOtp={systemSettings?.ticketSubmissionOtpEnabled ?? false}
+        requireOtp={Boolean(systemSettings?.requireOtpForTicketSubmission ?? organization?.systemSettings?.requireOtpForTicketSubmission)}
         ticketCategories={organization?.systemSettings?.ticketCategories}
       />
 

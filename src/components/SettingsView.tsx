@@ -97,6 +97,7 @@ interface SettingsViewProps {
   onBulkDeleteAssets?: (ids: string[]) => void;
   onBulkCreateAssets?: (assets: Partial<Asset>[]) => void;
   initialTab?: string;
+  defaultCurrency?: string;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -110,6 +111,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   adminMailboxes,
   defaultGateway,
   assets = [],
+  defaultCurrency,
   onUpdateOrganization,
   onCreateCustomField,
   onUpdateCustomField,
@@ -720,10 +722,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [markedSettingsAssetIds, setMarkedSettingsAssetIds] = useState<string[]>([]);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
 
+  const activeCurrency = defaultCurrency || systemSettings?.defaultCurrency || organization?.systemSettings?.defaultCurrency || '₹';
+
   // Quick Add Asset Form State (Point 4)
   const [quickAssetName, setQuickAssetName] = useState('');
   const [quickAssetCost, setQuickAssetCost] = useState('');
-  const [quickAssetCostCurrency, setQuickAssetCostCurrency] = useState<'$' | '₹'>('$');
+  const [quickAssetCostCurrency, setQuickAssetCostCurrency] = useState<string>(activeCurrency);
+
+  useEffect(() => {
+    setQuickAssetCostCurrency(activeCurrency);
+  }, [activeCurrency]);
   const [quickAssetType, setQuickAssetType] = useState<Asset['type']>('laptop');
   const [quickAssetManufacturer, setQuickAssetManufacturer] = useState('Apple');
   const [quickAssetModel, setQuickAssetModel] = useState('');
@@ -828,12 +836,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     defaultGateway.serviceProvider || 'self_hosted_imap'
   );
   const [gwIncomingProtocol, setGwIncomingProtocol] = useState<'imap' | 'pop3'>(defaultGateway.incomingProtocol || 'imap');
-  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || 'imap.confiancebizsol.tech');
+  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || 'mail.confiancebizsol.tech');
   const [gwIncomingPort, setGwIncomingPort] = useState(defaultGateway.incomingPort || 993);
   const [gwIncomingSecurity, setGwIncomingSecurity] = useState(defaultGateway.incomingSecurity || 'ssl');
   const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || 'it-helpdesk@confiancebizsol.tech');
   const [gwIncomingPassword, setGwIncomingPassword] = useState(defaultGateway.incomingPassword || '');
-  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || 'smtp.confiancebizsol.tech');
+  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || 'mail.confiancebizsol.tech');
   const [gwOutgoingPort, setGwOutgoingPort] = useState(defaultGateway.outgoingPort || 587);
   const [gwOutgoingSecurity, setGwOutgoingSecurity] = useState(defaultGateway.outgoingSecurity || 'starttls');
   const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || 'it-helpdesk@confiancebizsol.tech');
@@ -1072,10 +1080,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const applySelfHostedImapPreset = () => {
     setGwServiceProvider('self_hosted_imap');
     setGwIncomingProtocol('imap');
-    setGwIncomingHost('imap.confiancebizsol.tech');
+    setGwIncomingHost('mail.confiancebizsol.tech');
     setGwIncomingPort(993);
     setGwIncomingSecurity('ssl');
-    setGwOutgoingHost('smtp.confiancebizsol.tech');
+    setGwOutgoingHost('mail.confiancebizsol.tech');
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
     setShowAppPasswordGuide(false);
@@ -1084,10 +1092,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const applySelfHostedPop3Preset = () => {
     setGwServiceProvider('self_hosted_pop3');
     setGwIncomingProtocol('pop3');
-    setGwIncomingHost('pop.confiancebizsol.tech');
+    setGwIncomingHost('mail.confiancebizsol.tech');
     setGwIncomingPort(995);
     setGwIncomingSecurity('ssl');
-    setGwOutgoingHost('smtp.confiancebizsol.tech');
+    setGwOutgoingHost('mail.confiancebizsol.tech');
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
     setShowAppPasswordGuide(false);
@@ -2900,16 +2908,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    Cost (Optional) in $, ₹
+                    Cost (Optional)
                   </label>
                   <div className="flex items-center gap-1">
                     <select
                       value={quickAssetCostCurrency}
-                      onChange={(e) => setQuickAssetCostCurrency(e.target.value as '$' | '₹')}
-                      className="w-16 px-2 py-2 text-xs font-bold neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                      onChange={(e) => setQuickAssetCostCurrency(e.target.value)}
+                      className="w-20 px-2 py-2 text-xs font-bold neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
                     >
-                      <option value="$">$ (USD)</option>
                       <option value="₹">₹ (INR)</option>
+                      <option value="$">$ (USD)</option>
+                      <option value="€">€ (EUR)</option>
+                      <option value="£">£ (GBP)</option>
                     </select>
                     <input
                       type="number"
@@ -3287,7 +3297,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             )}
                           </td>
                           <td className="py-2.5 px-3 font-mono font-semibold">
-                            {a.purchaseCost !== undefined ? `${(a.costCurrency && a.costCurrency !== '$' ? a.costCurrency : (organization.systemSettings?.defaultCurrency || '₹'))}${Number(a.purchaseCost).toLocaleString()}` : '—'}
+                            {a.purchaseCost !== undefined ? `${activeCurrency}${Number(a.purchaseCost).toLocaleString()}` : '—'}
                           </td>
                           <td className="py-2.5 px-3">
                             <span
@@ -7152,7 +7162,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           }}
           initialData={settingsAssetToEdit}
           users={availableUsers}
-          defaultCurrency={organization.systemSettings?.defaultCurrency || '₹'}
+          defaultCurrency={activeCurrency}
           title={settingsAssetToEdit ? `Edit Asset: ${settingsAssetToEdit.name}` : 'Register New Hardware Asset'}
           onSubmit={async (assetData) => {
             try {

@@ -255,11 +255,13 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
               <div className="flex items-center gap-1">
                 <select
                   value={costCurrency}
-                  onChange={(e) => setCostCurrency(e.target.value as '$' | '₹')}
-                  className="w-16 px-2 py-2 text-xs font-bold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
+                  onChange={(e) => setCostCurrency(e.target.value)}
+                  className="w-20 px-2 py-2 text-xs font-bold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/15 rounded-xl text-slate-900 dark:text-slate-100 cursor-pointer"
                 >
-                  <option value="$">$ (USD)</option>
                   <option value="₹">₹ (INR)</option>
+                  <option value="$">$ (USD)</option>
+                  <option value="€">€ (EUR)</option>
+                  <option value="£">£ (GBP)</option>
                 </select>
                 <input
                   type="number"
