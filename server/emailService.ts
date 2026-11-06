@@ -1338,7 +1338,7 @@ class EmailGatewayService {
     }
 
     const nowIso = new Date().toISOString();
-    const cleanPassword = this.sanitizePassword(config.incomingPassword);
+    const cleanPassword = this.sanitizePassword(config.incomingPassword || config.outgoingPassword);
 
     if (!config.incomingHost || !config.incomingUsername) {
       config.lastPolledAt = nowIso;
@@ -1349,7 +1349,7 @@ class EmailGatewayService {
 
     if (!cleanPassword) {
       config.lastPolledAt = nowIso;
-      config.lastPollStatus = `Pending Credentials: 16-char App Password is required to check ${config.incomingUsername}.`;
+      config.lastPollStatus = `Pending Credentials: Mailbox password or App Password is required to check ${config.incomingUsername}.`;
       config.lastPollError = 'Missing incoming password';
       db.set('defaultGatewayConfig', config);
       return {
@@ -1392,7 +1392,7 @@ class EmailGatewayService {
           if (Array.isArray(unseenResult) && unseenResult.length > 0) {
             uidsToFetch = unseenResult.slice(-25); // Process up to 25 recent unseen messages
           } else {
-            const allResult = await client.search({ seq: '1:*' });
+            const allResult = await client.search({ all: true });
             if (Array.isArray(allResult) && allResult.length > 0) {
               const recent = allResult.slice(-15);
               uidsToFetch = recent.filter((uid) => !this.isMessageAlreadyProcessed(undefined, `${config.incomingHost}:${uid}`));
@@ -1563,7 +1563,7 @@ class EmailGatewayService {
           db.set('defaultGatewayConfig', config);
         }
       } catch {}
-    }, 12000);
+    }, 10000);
   }
 }
 

@@ -415,6 +415,19 @@ apiRouter.patch('/system-settings', (req: Request, res: Response) => {
     ...org.systemSettings,
     ...req.body,
   };
+
+  if (req.body.defaultCurrency) {
+    organizations.forEach((o: any) => {
+      if (!o.systemSettings) o.systemSettings = {};
+      o.systemSettings.defaultCurrency = req.body.defaultCurrency;
+    });
+    const assets = db.get('assets') || [];
+    assets.forEach((a: any) => {
+      a.costCurrency = req.body.defaultCurrency;
+    });
+    db.set('assets', assets);
+  }
+
   db.set('organizations', organizations);
 
   // Synchronize defaultGatewayConfig.enableInboundTicketGeneration
@@ -2869,9 +2882,39 @@ apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
   }
 
   const currentGw = db.get('defaultGatewayConfig') || ({} as any);
+
+  // Preserve existing passwords if empty string or undefined was submitted
+  const incomingPassword =
+    (req.body.incomingPassword && req.body.incomingPassword.trim()) ||
+    (req.body.password && req.body.password.trim()) ||
+    currentGw.incomingPassword ||
+    currentGw.outgoingPassword ||
+    '';
+
+  const outgoingPassword =
+    (req.body.outgoingPassword && req.body.outgoingPassword.trim()) ||
+    (req.body.password && req.body.password.trim()) ||
+    currentGw.outgoingPassword ||
+    currentGw.incomingPassword ||
+    '';
+
+  const fromEmail = (req.body.fromEmail ? req.body.fromEmail.trim() : currentGw.fromEmail) || 'it-helpdesk@confiancebizsol.tech';
+  const replyToEmail = (req.body.replyToEmail ? req.body.replyToEmail.trim() : (req.body.fromEmail ? req.body.fromEmail.trim() : currentGw.replyToEmail)) || fromEmail;
+  const fromName = req.body.fromName ? req.body.fromName.trim() : (currentGw.fromName || 'IT Helpdesk Support');
+  const incomingUser = (req.body.incomingUsername ? req.body.incomingUsername.trim() : (currentGw.incomingUsername || fromEmail));
+  const outgoingUser = (req.body.outgoingUsername ? req.body.outgoingUsername.trim() : (currentGw.outgoingUsername || fromEmail));
+
   const updated: DefaultEmailGatewayConfig = {
     ...currentGw,
     ...req.body,
+    fromEmail,
+    replyToEmail,
+    fromName,
+    incomingUsername: incomingUser,
+    outgoingUsername: outgoingUser,
+    incomingPassword,
+    outgoingPassword,
+    aliasAddresses: req.body.aliasAddresses !== undefined ? req.body.aliasAddresses.trim() : (currentGw.aliasAddresses || ''),
     status: req.body.status || 'connected',
     lastTestedAt: new Date().toISOString(),
   };
@@ -2892,7 +2935,7 @@ apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
     'email.gateway_updated',
     'setting',
     'default_gateway',
-    `Administrator updated email gateway: Provider=${updated.serviceProvider || 'Custom'}, Inbound=${updated.incomingProtocol.toUpperCase()} (${updated.incomingHost}:${updated.incomingPort}), Outbound=${updated.outgoingProtocol.toUpperCase()} (${updated.outgoingHost}:${updated.outgoingPort}), Connector=${updated.fromEmail}`
+    `Administrator updated email gateway: Provider=${updated.serviceProvider || 'Custom'}, Inbound=${(updated.incomingProtocol || 'imap').toUpperCase()} (${updated.incomingHost}:${updated.incomingPort}), Outbound=${(updated.outgoingProtocol || 'smtp').toUpperCase()} (${updated.outgoingHost}:${updated.outgoingPort}), Connector=${updated.fromEmail}`
   );
 
   res.json(updated);
@@ -2905,9 +2948,22 @@ apiRouter.post('/email/default-gateway/test', async (req: Request, res: Response
   }
 
   const { testRecipientEmail, configOverride } = req.body;
+  const currentGw = db.get('defaultGatewayConfig') || ({} as any);
+  const override = configOverride || {};
+
   const gateway: DefaultEmailGatewayConfig = {
-    ...db.get('defaultGatewayConfig'),
-    ...(configOverride || {}),
+    ...currentGw,
+    ...override,
+    incomingPassword:
+      (override.incomingPassword && override.incomingPassword.trim()) ||
+      (override.password && override.password.trim()) ||
+      currentGw.incomingPassword ||
+      currentGw.outgoingPassword,
+    outgoingPassword:
+      (override.outgoingPassword && override.outgoingPassword.trim()) ||
+      (override.password && override.password.trim()) ||
+      currentGw.outgoingPassword ||
+      currentGw.incomingPassword,
   };
 
   try {
@@ -3003,8 +3059,13 @@ apiRouter.post(['/email/inbound', '/email/webhook'], async (req: Request, res: R
   const orgs = db.get('organizations') || [];
   const orgSettings = (orgs[0]?.systemSettings || {}) as Record<string, any>;
   const isEmailTicketEnabled = gwConfig?.enableInboundTicketGeneration !== false && orgSettings.enableInboundTicketGeneration !== false;
-
-  const isThreadedReply = Boolean(String(subject).match(/\[(ITL-\d+)\]/i));
+  const isThreadedReply = Boolean(
+    String(subject).match(/(?:\[|\b)(ITL-\d+)(?:\]|\b)/i) ||
+    req.body.inReplyTo ||
+    req.body['In-Reply-To'] ||
+    req.body.references ||
+    req.body['References']
+  );
 
   if (!isEmailTicketEnabled && !isThreadedReply) {
     return res.status(403).json({

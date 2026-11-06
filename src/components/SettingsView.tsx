@@ -98,6 +98,7 @@ interface SettingsViewProps {
   onBulkCreateAssets?: (assets: Partial<Asset>[]) => void;
   initialTab?: string;
   defaultCurrency?: string;
+  onUpdateSystemSettings?: (settings: any) => Promise<any> | void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -136,17 +137,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onBulkDeleteAssets,
   onBulkCreateAssets,
   initialTab,
+  onUpdateSystemSettings,
 }) => {
   const allOrganizations = organizations && organizations.length > 0 ? organizations : [organization];
 
   const [activeTab, setActiveTabState] = useState<
-    'profile' | 'users' | 'assets' | 'fields' | 'admin-mailbox' | 'default-gateway' | 'sla' | 'automations' | 'branding' | 'linux-host'
+    'profile' | 'users' | 'assets' | 'fields' | 'default-gateway' | 'sla' | 'automations' | 'branding' | 'linux-host'
   >(() => {
     try {
       const saved = sessionStorage.getItem('settings_active_tab');
+      if (saved === 'admin-mailbox') return 'default-gateway';
       if (saved) return saved as any;
     } catch {}
     if (initialTab === 'branding' && currentUser.role !== 'superadmin') return 'profile';
+    if (initialTab === 'admin-mailbox') return 'default-gateway';
     return (initialTab as any) || 'profile';
   });
   const setActiveTab = (tab: any) => {
@@ -1809,9 +1813,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             { id: 'profile', label: 'My Profile & Role', icon: UserIcon, roles: ['superadmin', 'admin', 'manager', 'technician', 'requester', 'auditor', 'inventory_manager'] },
             { id: 'users', label: 'User Directory & Registration', icon: Users, roles: ['superadmin', 'admin'] },
             { id: 'assets', label: 'Hardware Assets & CMDB', icon: HardDrive, roles: ['superadmin', 'admin', 'inventory_manager'] },
-            { id: 'fields', label: 'Custom Fields & Form Builder', icon: Sliders, roles: ['superadmin', 'admin'] },
-            { id: 'admin-mailbox', label: 'Staff Mailboxes (IMAP/POP3/SMTP)', icon: Mail, roles: ['superadmin', 'admin'] },
-            { id: 'default-gateway', label: 'Default Reply & Polling Gateway', icon: Server, roles: ['superadmin', 'admin'] },
+            { id: 'default-gateway', label: 'Helpdesk Email Gateway', icon: Mail, roles: ['superadmin', 'admin'] },
             { id: 'sla', label: 'SLA Target Matrix', icon: Clock, roles: ['superadmin', 'admin'] },
             { id: 'automations', label: 'Automation Rules', icon: Zap, roles: ['superadmin', 'admin'] },
             { id: 'branding', label: 'Branding & Identity', icon: Palette, roles: ['superadmin'] },
@@ -2735,6 +2737,62 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <Plus className="w-3.5 h-3.5" />
                 Add Asset (Modal Form)
               </button>
+            </div>
+          </div>
+
+          {/* Default IT Asset Currency (CMDB Valuation) Card */}
+          <div className="neu-flat p-4 rounded-2xl border border-cyan-500/30 bg-cyan-50/20 dark:bg-cyan-950/20 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20 flex items-center justify-center min-w-[36px] h-9">
+                  <span className="font-mono text-lg font-extrabold">{activeCurrency}</span>
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    Default IT Asset Currency (CMDB Valuation)
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 font-bold border border-cyan-300">
+                      Active: {activeCurrency === '₹' ? 'Rupee (₹ INR - Default)' : activeCurrency === '$' ? 'Dollar ($ USD)' : activeCurrency === '€' ? 'Euro (€ EUR)' : 'Pound (£ GBP)'}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                    Configure the default valuation currency across Hardware &amp; IT Assets CMDB, asset purchase costing, and KPI decks.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {[
+                { symbol: '₹', label: 'Rupee (₹ INR - Default)', desc: 'Indian Rupee' },
+                { symbol: '$', label: 'Dollar ($ USD)', desc: 'US Dollar' },
+                { symbol: '€', label: 'Euro (€ EUR)', desc: 'European Euro' },
+                { symbol: '£', label: 'Pound (£ GBP)', desc: 'British Pound' },
+              ].map((cur) => {
+                const isSelected = activeCurrency === cur.symbol;
+                return (
+                  <button
+                    key={cur.symbol}
+                    type="button"
+                    onClick={() => {
+                      if (onUpdateSystemSettings) {
+                        onUpdateSystemSettings({ defaultCurrency: cur.symbol });
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      isSelected
+                        ? 'border-cyan-500 ring-2 ring-cyan-500/20 neu-pressed bg-cyan-50 dark:bg-cyan-950/40'
+                        : 'border-slate-200 dark:border-white/10 hover:border-cyan-400/50 neu-btn'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-base font-extrabold font-mono text-cyan-700 dark:text-cyan-300">{cur.symbol}</span>
+                      {isSelected && <CheckCircle className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />}
+                    </div>
+                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5">{cur.desc}</div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400">{cur.label}</div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -3790,272 +3848,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* ============================================================= */}
-      {/* TAB 2: Admin & Super Admin Mailboxes (IMAP / POP3 / SMTP) */}
-      {/* ============================================================= */}
-      {activeTab === 'admin-mailbox' && (
-        <div className="space-y-6">
-          <div className="neu-flat p-6 rounded-2xl border border-slate-200 dark:border-white/10 space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200 dark:border-white/10">
-              <div>
-                <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Mail className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-                  Staff &amp; Admin Mailbox Connector
-                </h2>
-                <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                  Administrator setup for staff mailboxes (Technician, Inventory Manager, Auditor, Administrators) for automated email handling and ticketing.
-                </p>
-              </div>
-
-              {/* User Selector for Staff (Technician, Inventory Manager, Auditor, Administrators) */}
-              {(currentUser.role === 'superadmin' || currentUser.role === 'admin') && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Configure for Staff:</span>
-                  <select
-                    value={selectedAdminId}
-                    onChange={(e) => setSelectedAdminId(e.target.value)}
-                    className="px-3 py-1.5 text-xs font-bold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                  >
-                    {staffUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.role.replace('_', ' ').toUpperCase()})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-
-            {mailboxSaveStatus && (
-              <div
-                className={`p-3.5 rounded-xl text-xs font-bold border ${
-                  mailboxSaveStatus.startsWith('✓')
-                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
-                    : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300'
-                }`}
-              >
-                {mailboxSaveStatus}
-              </div>
-            )}
-
-            <form onSubmit={handleSaveAdminMailbox} className="space-y-6">
-              {/* Section 1: Inbound Mail Server (IMAP / POP3) */}
-              <div className="neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
-                <div className="text-xs font-bold uppercase tracking-wider text-cyan-700 dark:text-cyan-400 flex items-center gap-2">
-                  <Server className="w-4 h-4" />
-                  1. Incoming Mail Server (IMAP or POP3)
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Inbound Protocol *</label>
-                    <select
-                      value={mailboxIncomingProtocol}
-                      onChange={(e) => {
-                        const proto = e.target.value as 'imap' | 'pop3';
-                        setMailboxIncomingProtocol(proto);
-                        setMailboxIncomingPort(proto === 'pop3' ? 995 : 993);
-                      }}
-                      className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="imap">IMAP (Recommended)</option>
-                      <option value="pop3">POP3</option>
-                    </select>
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Server Hostname / IP *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. imap.company.com or pop.mail.com"
-                      value={mailboxIncomingHost}
-                      onChange={(e) => setMailboxIncomingHost(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Port *</label>
-                    <input
-                      type="number"
-                      required
-                      value={mailboxIncomingPort}
-                      onChange={(e) => setMailboxIncomingPort(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Security / Encryption</label>
-                    <select
-                      value={mailboxIncomingSecurity}
-                      onChange={(e) => setMailboxIncomingSecurity(e.target.value as any)}
-                      className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="ssl">SSL / TLS (Encrypted)</option>
-                      <option value="starttls">STARTTLS</option>
-                      <option value="none">None (Plaintext)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Username / Mailbox</label>
-                    <input
-                      type="text"
-                      required
-                      value={mailboxIncomingUser}
-                      onChange={(e) => setMailboxIncomingUser(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Password / App Key</label>
-                    <input
-                      type="password"
-                      value={mailboxIncomingPass}
-                      onChange={(e) => setMailboxIncomingPass(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 2: Outbound Mail Server (SMTP) */}
-              <div className="neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
-                <div className="text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 flex items-center gap-2">
-                  <Send className="w-4 h-4" />
-                  2. Outgoing Mail Server (SMTP)
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Protocol</label>
-                    <input
-                      type="text"
-                      disabled
-                      value="SMTP"
-                      className="w-full px-3 py-1.5 text-xs neu-inset bg-slate-100 dark:bg-slate-900/50 border border-slate-300 dark:border-white/10 rounded-lg text-slate-700 dark:text-slate-300 font-bold"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">SMTP Hostname *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. smtp.company.com or smtp.office365.com"
-                      value={mailboxOutgoingHost}
-                      onChange={(e) => setMailboxOutgoingHost(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">SMTP Port *</label>
-                    <input
-                      type="number"
-                      required
-                      value={mailboxOutgoingPort}
-                      onChange={(e) => setMailboxOutgoingPort(Number(e.target.value))}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Encryption</label>
-                    <select
-                      value={mailboxOutgoingSecurity}
-                      onChange={(e) => setMailboxOutgoingSecurity(e.target.value as any)}
-                      className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="starttls">STARTTLS (Port 587)</option>
-                      <option value="ssl">SSL / TLS (Port 465)</option>
-                      <option value="none">None (Port 25)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">SMTP Username</label>
-                    <input
-                      type="text"
-                      value={mailboxOutgoingUser}
-                      onChange={(e) => setMailboxOutgoingUser(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Sender Display Name</label>
-                    <input
-                      type="text"
-                      value={mailboxFromName}
-                      onChange={(e) => setMailboxFromName(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">From Email Address</label>
-                    <input
-                      type="email"
-                      value={mailboxFromEmail}
-                      onChange={(e) => setMailboxFromEmail(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Test Handshake Results */}
-              {mailboxTestResult && (
-                <div
-                  className={`p-4 rounded-xl text-xs space-y-2 border ${
-                    mailboxTestResult.success
-                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
-                      : 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300'
-                  }`}
-                >
-                  <div className="font-bold flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    Mailbox Handshake Test Passed (Latency: {mailboxTestResult.latencyMs}ms)
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-[11px] font-mono font-medium">
-                    <div>• Inbound: {mailboxTestResult.incomingCheck?.status}</div>
-                    <div>• Outbound: {mailboxTestResult.outgoingCheck?.status}</div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-4 border-t border-slate-200 dark:border-white/10">
-                <button
-                  type="button"
-                  disabled={mailboxTesting}
-                  onClick={handleTestAdminMailbox}
-                  className="neu-btn flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-800 dark:text-slate-200 rounded-xl cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${mailboxTesting ? 'animate-spin' : ''}`} />
-                  {mailboxTesting ? 'Testing Handshake...' : 'Test Connection Handshake'}
-                </button>
-
-                <button
-                  type="submit"
-                  className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
-                >
-                  Save Mailbox Connection
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================= */}
-      {/* TAB 3: Default Organization Reply & Polling Gateway           */}
+      {/* TAB: Default Organization Reply & Polling Gateway             */}
       {/* ============================================================= */}
       {activeTab === 'default-gateway' && (
         <div className="neu-flat p-6 rounded-2xl border border-slate-200 dark:border-white/10 space-y-6 max-w-full overflow-x-hidden">
@@ -4084,6 +3877,51 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <RefreshCw className={`w-3.5 h-3.5 ${gwPolling ? 'animate-spin' : ''}`} />
                 <span>{gwPolling ? 'Checking...' : 'Check Mailbox Now'}</span>
               </button>
+            </div>
+          </div>
+
+          {/* Save / Test Operation Feedback Banner */}
+          {gwTestResult && (
+            <div
+              className={`p-3.5 rounded-xl text-xs font-bold border flex items-center gap-2 ${
+                gwTestResult.startsWith('✓')
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
+                  : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-300'
+              }`}
+            >
+              <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span>{gwTestResult}</span>
+            </div>
+          )}
+
+          {/* Active Helpdesk Support Email & Single Active Gateway Notice */}
+          <div className="p-4 rounded-xl bg-gradient-to-r from-cyan-500/10 via-emerald-500/10 to-transparent border border-cyan-500/30 dark:border-cyan-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+                <Mail className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                    Active Support Email:
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded font-mono text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    {gwFromEmail || 'it-helpdesk@confiancebizsol.tech'}
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950/50 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800/40 font-bold">
+                    Single Active Gateway Mode
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 font-medium">
+                  <strong>Only one support email is active at a time.</strong> All emails sent to <code className="font-mono text-cyan-600 font-bold">{gwFromEmail}</code> automatically create tickets or thread into the Activity &amp; Communications Stream.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                Poll Interval: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">Every 10s</strong>
+              </span>
             </div>
           </div>
 
@@ -4304,14 +4142,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    SMTP Password / App Password *
+                    Mailbox Password / App Password (SMTP &amp; IMAP) *
                   </label>
                   <div className="relative">
                     <input
                       type={gwShowPassword ? 'text' : 'password'}
-                      placeholder="16-char App Password"
+                      placeholder="16-char App Password or Mailbox Password"
                       value={gwOutgoingPassword}
-                      onChange={(e) => setGwOutgoingPassword(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setGwOutgoingPassword(val);
+                        setGwIncomingPassword(val);
+                      }}
                       className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium pr-14"
                     />
                     <button
@@ -4322,6 +4164,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       {gwShowPassword ? 'Hide' : 'Show'}
                     </button>
                   </div>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 block">
+                    Automatically applies to Outbound SMTP and Inbound IMAP polling
+                  </span>
                 </div>
               </div>
 
@@ -4542,15 +4387,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    Inbound Password / App Password
+                    Inbound Password (Synced with Mailbox Password)
                   </label>
                   <input
                     type={gwShowPassword ? 'text' : 'password'}
-                    placeholder="Same as SMTP or App Password"
+                    placeholder="Synced with Mailbox Password above"
                     value={gwIncomingPassword}
                     onChange={(e) => setGwIncomingPassword(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
                   />
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 block">
+                    Leave as-is to use primary Mailbox Password, or enter separate IMAP password
+                  </span>
                 </div>
               </div>
             </div>
@@ -4629,12 +4477,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
               </div>
 
-              <button
-                type="submit"
-                className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
-              >
-                Save Gateway Configuration
-              </button>
+              <div className="flex items-center gap-3">
+                {gwTestResult && (
+                  <span className={`text-xs font-bold ${gwTestResult.startsWith('✓') ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {gwTestResult}
+                  </span>
+                )}
+                <button
+                  type="submit"
+                  className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
+                >
+                  Save Gateway Configuration
+                </button>
+              </div>
             </div>
           </form>
 

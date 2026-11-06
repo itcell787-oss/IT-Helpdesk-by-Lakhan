@@ -737,6 +737,30 @@ export default function App() {
     }
   };
 
+  const handleUpdateSystemSettings = async (updatedSettings: any) => {
+    setSystemSettings((prev: any) => ({ ...(prev || {}), ...updatedSettings }));
+    if (updatedSettings.defaultCurrency) {
+      setAssets((prev) => prev.map((a) => ({ ...a, costCurrency: updatedSettings.defaultCurrency })));
+    }
+    if (organization) {
+      setOrganization((prev: any) => ({
+        ...prev,
+        systemSettings: { ...(prev?.systemSettings || {}), ...updatedSettings },
+      }));
+    }
+    setOrganizations((prev) =>
+      prev.map((o) => ({
+        ...o,
+        systemSettings: { ...(o.systemSettings || {}), ...updatedSettings },
+      }))
+    );
+    try {
+      await api.updateSystemSettings(updatedSettings);
+    } catch (err: any) {
+      console.error('Failed syncing system settings to backend:', err);
+    }
+  };
+
   const handleCreateAgent = async (data: Partial<User>) => {
     return handleCreateUser(data);
   };
@@ -962,7 +986,27 @@ export default function App() {
   const handleSaveDefaultGateway = async (data: Partial<DefaultEmailGatewayConfig>) => {
     const saved = await api.saveDefaultGatewayConfig(data);
     setDefaultGateway(saved);
-    showToast('Default reply and polling gateway updated!');
+    if (saved && saved.fromEmail) {
+      setOrganization((prev) =>
+        prev
+          ? {
+              ...prev,
+              branding: {
+                ...prev.branding,
+                supportEmail: saved.fromEmail,
+              },
+            }
+          : prev
+      );
+      setOrganizations((prev) =>
+        prev.map((o) =>
+          o.id === organization?.id
+            ? { ...o, branding: { ...o.branding, supportEmail: saved.fromEmail } }
+            : o
+        )
+      );
+    }
+    showToast(`Helpdesk active support email updated: ${saved.fromEmail}`);
     return saved;
   };
 
@@ -1528,6 +1572,7 @@ export default function App() {
                 onDeleteUser={handleDeleteUser}
                 onUpdateSlaPolicy={handleUpdateSlaPolicy}
                 systemSettings={systemSettings}
+                onUpdateSystemSettings={handleUpdateSystemSettings}
                 initialTab={settingsInitialTab}
               />
             )}
@@ -1563,21 +1608,7 @@ export default function App() {
                 defaultGateway={defaultGateway || fallbackGateway}
                 onSaveDefaultGateway={handleSaveDefaultGateway}
                 onTestDefaultGateway={handleTestDefaultGateway}
-                onUpdateSystemSettings={(updatedSettings) => {
-                  setSystemSettings((prev: any) => ({ ...(prev || {}), ...updatedSettings }));
-                  if (organization) {
-                    setOrganization((prev: any) => ({
-                      ...prev,
-                      systemSettings: { ...(prev?.systemSettings || {}), ...updatedSettings },
-                    }));
-                  }
-                  setOrganizations((prev) =>
-                    prev.map((o) => ({
-                      ...o,
-                      systemSettings: { ...(o.systemSettings || {}), ...updatedSettings },
-                    }))
-                  );
-                }}
+                onUpdateSystemSettings={handleUpdateSystemSettings}
                 onCreateOrganization={handleCreateOrganization}
                 onUpdateOrganization={handleUpdateOrganization}
                 onDeleteOrganization={handleDeleteOrganization}

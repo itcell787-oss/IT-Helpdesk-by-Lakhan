@@ -2412,11 +2412,6 @@ export const PortalView: React.FC<PortalViewProps> = ({
                       {regOtpLoading ? 'Checking...' : 'Verify OTP'}
                     </button>
                   </div>
-                  {regOtpPreview && (
-                    <div className="text-[11px] font-mono text-cyan-800 dark:text-cyan-300 bg-cyan-100/70 dark:bg-cyan-950/60 p-2 rounded-lg border border-cyan-300 dark:border-cyan-800/40">
-                      OTP Code for testing: <strong>{regOtpPreview}</strong>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
