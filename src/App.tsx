@@ -347,6 +347,45 @@ export default function App() {
     }
   }, [selectedTicketId]);
 
+  // Live polling for active ticket detail so inbound email replies and updates appear immediately
+  useEffect(() => {
+    if (!selectedTicketId || activeView !== 'ticket-detail') return;
+    const liveTimer = setInterval(async () => {
+      try {
+        const fresh = await api.getTicket(selectedTicketId);
+        if (fresh && fresh.ticket) {
+          setTicketDetailData((prev) => {
+            if (!prev) return fresh;
+            if (
+              prev.comments.length !== fresh.comments.length ||
+              prev.ticket.status !== fresh.ticket.status ||
+              prev.ticket.updatedAt !== fresh.ticket.updatedAt ||
+              prev.tasks.length !== fresh.tasks.length ||
+              prev.workLogs.length !== fresh.workLogs.length
+            ) {
+              return fresh;
+            }
+            return prev;
+          });
+        }
+      } catch {
+        // Silent poll
+      }
+    }, 4000);
+
+    return () => clearInterval(liveTimer);
+  }, [selectedTicketId, activeView]);
+
+  const handleRefreshCurrentTicket = async () => {
+    if (!selectedTicketId) return;
+    try {
+      const fresh = await api.getTicket(selectedTicketId);
+      if (fresh) setTicketDetailData(fresh);
+    } catch (err) {
+      console.error('Failed manual ticket refresh:', err);
+    }
+  };
+
   // Handlers
   const handleSwitchUser = async (userId: string) => {
     try {
@@ -1333,6 +1372,7 @@ export default function App() {
                 onAddTask={handleAddTask}
                 onToggleTask={handleToggleTask}
                 onAddWorkLog={handleAddWorkLog}
+                onRefreshTicket={handleRefreshCurrentTicket}
               />
             )}
 

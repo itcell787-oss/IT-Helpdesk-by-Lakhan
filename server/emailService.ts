@@ -218,15 +218,18 @@ class EmailGatewayService {
       config.serviceProvider === 'gmail' ||
       (config.outgoingHost && config.outgoingHost.toLowerCase().includes('gmail'));
 
-    const cleanPassword = this.sanitizePassword(config.outgoingPassword);
+    const cleanPassword = this.sanitizePassword(config.outgoingPassword || config.incomingPassword);
+    const username = (config.outgoingUsername || config.fromEmail || '').trim();
 
     if (isGmail) {
       return nodemailer.createTransport({
         service: 'gmail',
-        auth: {
-          user: config.outgoingUsername || config.fromEmail,
-          pass: cleanPassword,
-        },
+        auth: (username && cleanPassword)
+          ? {
+              user: username,
+              pass: cleanPassword,
+            }
+          : undefined,
         tls: {
           rejectUnauthorized: false,
         },
@@ -237,12 +240,12 @@ class EmailGatewayService {
     const isSecure = config.outgoingSecurity === 'ssl' || port === 465;
 
     return nodemailer.createTransport({
-      host: config.outgoingHost || 'smtp.gmail.com',
+      host: config.outgoingHost || 'mail.confiancebizsol.tech',
       port,
       secure: isSecure,
-      auth: config.outgoingUsername
+      auth: (username && cleanPassword)
         ? {
-            user: config.outgoingUsername,
+            user: username,
             pass: cleanPassword,
           }
         : undefined,
@@ -883,8 +886,24 @@ class EmailGatewayService {
       </div>
     `;
 
+    const cleanPassword = this.sanitizePassword(config?.outgoingPassword || config?.incomingPassword);
+    if (!config || !config.outgoingHost) {
+      return {
+        success: false,
+        emailSent: false,
+        error: 'Email Gateway is not configured. Please configure Outbound SMTP in Settings > Email Gateway.',
+      };
+    }
+
+    if (!cleanPassword && config.outgoingSecurity !== 'none') {
+      return {
+        success: false,
+        emailSent: false,
+        error: 'Outbound SMTP Password is required. Please configure your email password in Settings > Email Gateway.',
+      };
+    }
+
     try {
-      if (!config) throw new Error('Default gateway not configured');
       const transporter = this.createTransporter(config);
       const info = await transporter.sendMail({
         from: `"${config.fromName || 'IT Helpdesk Support'}" <${config.fromEmail || 'it-helpdesk@confiancebizsol.tech'}>`,
@@ -906,19 +925,19 @@ class EmailGatewayService {
 
       return { success: true, emailSent: true };
     } catch (err: any) {
-      console.warn('OTP dispatch live SMTP exception (recording simulation delivery):', err.message);
-      const simId = `sim-otp-${Date.now()}`;
+      console.warn('OTP dispatch live SMTP exception:', err.message);
+      const failId = `failed-otp-${Date.now()}`;
       this.recordDelivery({
-        id: simId,
+        id: failId,
         type: 'test_probe',
         recipient: to,
         subject,
         sentAt: new Date().toISOString(),
-        status: 'simulated_success',
+        status: 'failed',
         error: err.message,
-        messageId: simId,
+        messageId: failId,
       });
-      return { success: true, emailSent: false, error: err.message };
+      return { success: false, emailSent: false, error: `Live SMTP dispatch failed (${err.message}). Verify Outbound SMTP credentials in Settings > Email Gateway.` };
     }
   }
 
@@ -1018,6 +1037,15 @@ class EmailGatewayService {
       if (matchedComment) {
         detectedTicketId = matchedComment.ticketId;
       }
+
+      if (!detectedTicketId) {
+        const matchedDelivery = this.deliveryLogs.find(
+          (d) => d.messageId && cleanRefs.includes(d.messageId.replace(/[<>]/g, '').trim().toLowerCase())
+        );
+        if (matchedDelivery && matchedDelivery.ticketId) {
+          detectedTicketId = matchedDelivery.ticketId;
+        }
+      }
     }
 
     // (c) Check quoted text in body if subject didn't explicitly have the ticket ID
@@ -1039,10 +1067,12 @@ class EmailGatewayService {
     if (detectedTicketId) {
       const existing = tickets.find((t) => t.id === detectedTicketId);
       if (existing) {
+        const cleanReplyContent = this.cleanEmailReplyBody(body);
+
         // Check if this identical comment was already added to this ticket
         const comments = db.get('comments') || [];
         const isDuplicateComment = comments.some(
-          (c) => c.ticketId === existing.id && c.content.trim().toLowerCase() === body.trim().toLowerCase()
+          (c) => c.ticketId === existing.id && c.content.trim().toLowerCase() === cleanReplyContent.toLowerCase()
         );
 
         if (isDuplicateComment) {
@@ -1058,21 +1088,34 @@ class EmailGatewayService {
           }
         }
 
+        let authorId = 'usr-email-sender';
+        let authorName = from.split('@')[0];
+        let authorRole: 'requester' | 'technician' | 'admin' | 'superadmin' | 'manager' = 'requester';
+
         const senderUser = users.find((u) => u.email.toLowerCase() === from.toLowerCase());
+        if (senderUser) {
+          authorId = senderUser.id;
+          authorName = senderUser.name;
+          authorRole = senderUser.role as any;
+        } else if (existing.requesterEmail && existing.requesterEmail.toLowerCase() === from.toLowerCase()) {
+          authorId = existing.requesterId;
+          authorName = existing.requesterName;
+          authorRole = 'requester';
+        }
 
         const comment: TicketComment = {
           id: `cmt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           ticketId: existing.id,
-          authorId: senderUser ? senderUser.id : 'usr-email-sender',
-          authorName: senderUser ? senderUser.name : from.split('@')[0],
+          authorId,
+          authorName,
           authorEmail: from,
-          authorRole: senderUser ? senderUser.role : 'requester',
+          authorRole,
           isInternal: false,
-          content: body,
+          content: cleanReplyContent,
           createdAt: new Date().toISOString(),
           emailMessageId: payload.messageId,
-          emailDispatched: true,
-          emailRecipient: existing.requesterEmail,
+          emailDispatched: false,
+          emailRecipient: undefined,
         };
 
         db.set('comments', [...comments, comment]);
@@ -1082,6 +1125,21 @@ class EmailGatewayService {
           existing.status = 'in_progress'; // Automatically resume ticket upon requester response
         }
         db.set('tickets', tickets);
+
+        // Record audit trail entry
+        const auditLogs = db.get('auditLogs') || [];
+        auditLogs.unshift({
+          id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: new Date().toISOString(),
+          actorId: authorId,
+          actorName: authorName,
+          actorRole: authorRole as any,
+          action: 'ticket.email_reply_received',
+          entityType: 'ticket',
+          entityId: existing.id,
+          details: `Inbound email reply received from ${from} and appended to ticket [${existing.id}]`,
+        });
+        db.set('auditLogs', auditLogs);
 
         this.recordProcessedMessage(rawMsgId, uidKey, fingerprint, existing.id);
         return { mode: 'threaded', ticket: existing, comment };
@@ -1328,10 +1386,20 @@ class EmailGatewayService {
         await client.connect();
         const lock = await client.getMailboxLock('INBOX');
         try {
-          // Search unread messages
-          const searchResult = await client.search({ seen: false });
-          if (Array.isArray(searchResult) && searchResult.length > 0) {
-            const uidsToFetch = searchResult.slice(-25); // Process up to 25 recent unseen messages
+          // Search unread messages, or inspect recent inbox items in case webmail already marked them seen
+          let uidsToFetch: number[] = [];
+          const unseenResult = await client.search({ seen: false });
+          if (Array.isArray(unseenResult) && unseenResult.length > 0) {
+            uidsToFetch = unseenResult.slice(-25); // Process up to 25 recent unseen messages
+          } else {
+            const allResult = await client.search({ seq: '1:*' });
+            if (Array.isArray(allResult) && allResult.length > 0) {
+              const recent = allResult.slice(-15);
+              uidsToFetch = recent.filter((uid) => !this.isMessageAlreadyProcessed(undefined, `${config.incomingHost}:${uid}`));
+            }
+          }
+
+          if (uidsToFetch.length > 0) {
             for await (const message of client.fetch(uidsToFetch, { envelope: true, source: true, flags: true, uid: true })) {
               const uidKey = `${config.incomingHost}:${message.uid}`;
               let rawMsgId = `msg-${message.uid}`;
@@ -1353,7 +1421,14 @@ class EmailGatewayService {
                 rawMsgId = messageId.replace(/[<>]/g, '').trim().toLowerCase();
 
                 // Skip processing emails sent by the gateway itself to avoid endless loops
-                if (fromAddress && fromAddress.toLowerCase() === config.fromEmail.toLowerCase()) {
+                const gatewayIdentities = [
+                  config.fromEmail?.toLowerCase().trim(),
+                  config.replyToEmail?.toLowerCase().trim(),
+                  config.outgoingUsername?.toLowerCase().trim(),
+                  ...(config.aliasAddresses ? config.aliasAddresses.split(/[,;\s]+/).map((a: string) => a.toLowerCase().trim()) : []),
+                ].filter(Boolean);
+
+                if (fromAddress && gatewayIdentities.includes(fromAddress.toLowerCase().trim())) {
                   this.recordProcessedMessage(rawMsgId, uidKey);
                   continue;
                 }
@@ -1479,15 +1554,16 @@ class EmailGatewayService {
       try {
         const config = db.get('defaultGatewayConfig');
         if (!config || config.enableInboundTicketGeneration === false) return;
+        const cleanPass = this.sanitizePassword(config.incomingPassword || config.outgoingPassword);
         // Only run actual socket connect if password is provided
-        if (config.incomingPassword && config.incomingPassword.trim()) {
+        if (cleanPass) {
           await this.pollInboundMailbox();
         } else {
           config.lastPolledAt = new Date().toISOString();
           db.set('defaultGatewayConfig', config);
         }
       } catch {}
-    }, 45000);
+    }, 12000);
   }
 }
 

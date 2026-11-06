@@ -850,6 +850,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [gwFromName, setGwFromName] = useState(defaultGateway.fromName || 'IT Helpdesk Support');
   const [gwFromEmail, setGwFromEmail] = useState(defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
   const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || 'it-helpdesk@confiancebizsol.tech');
+  const [gwAliasAddresses, setGwAliasAddresses] = useState(defaultGateway.aliasAddresses || '');
+  const [showAliasGuide, setShowAliasGuide] = useState(true);
   const [gwSubjectPrefix, setGwSubjectPrefix] = useState(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
   const [gwEnableInbound, setGwEnableInbound] = useState(defaultGateway.enableInboundTicketGeneration ?? true);
   const [gwEnableOutbound, setGwEnableOutbound] = useState(defaultGateway.enableOutboundReplyNotification ?? true);
@@ -861,6 +863,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [gwPollResult, setGwPollResult] = useState<string | null>(null);
   const [gwTestEmailRecipient, setGwTestEmailRecipient] = useState(currentUser.email);
   const [showAppPasswordGuide, setShowAppPasswordGuide] = useState(false);
+
+  // Synchronize gateway state whenever defaultGateway prop changes or is saved
+  useEffect(() => {
+    if (!defaultGateway) return;
+    setGwServiceProvider(defaultGateway.serviceProvider || 'self_hosted_imap');
+    setGwIncomingProtocol(defaultGateway.incomingProtocol || 'imap');
+    setGwIncomingHost(defaultGateway.incomingHost || 'mail.confiancebizsol.tech');
+    setGwIncomingPort(defaultGateway.incomingPort || 993);
+    setGwIncomingSecurity(defaultGateway.incomingSecurity || 'ssl');
+    setGwIncomingUser(defaultGateway.incomingUsername || 'it-helpdesk@confiancebizsol.tech');
+    if (defaultGateway.incomingPassword !== undefined) {
+      setGwIncomingPassword(defaultGateway.incomingPassword || '');
+    }
+    setGwOutgoingHost(defaultGateway.outgoingHost || 'mail.confiancebizsol.tech');
+    setGwOutgoingPort(defaultGateway.outgoingPort || 587);
+    setGwOutgoingSecurity(defaultGateway.outgoingSecurity || 'starttls');
+    setGwOutgoingUser(defaultGateway.outgoingUsername || 'it-helpdesk@confiancebizsol.tech');
+    if (defaultGateway.outgoingPassword !== undefined) {
+      setGwOutgoingPassword(defaultGateway.outgoingPassword || '');
+    }
+    setGwFromName(defaultGateway.fromName || 'IT Helpdesk Support');
+    setGwFromEmail(defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
+    setGwReplyToEmail(defaultGateway.replyToEmail || 'it-helpdesk@confiancebizsol.tech');
+    setGwAliasAddresses(defaultGateway.aliasAddresses || '');
+    setGwSubjectPrefix(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
+    setGwEnableInbound(defaultGateway.enableInboundTicketGeneration ?? true);
+    setGwEnableOutbound(defaultGateway.enableOutboundReplyNotification ?? true);
+    setGwPollingInterval(defaultGateway.pollingIntervalMinutes || 5);
+  }, [defaultGateway]);
   // Inbound Email Simulator Form State
   const [showEmailSimulator, setShowEmailSimulator] = useState(false);
   const [simFrom, setSimFrom] = useState('user.employee@company.com');
@@ -1080,10 +1111,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const applySelfHostedImapPreset = () => {
     setGwServiceProvider('self_hosted_imap');
     setGwIncomingProtocol('imap');
-    setGwIncomingHost('mail.confiancebizsol.tech');
+    if (!gwIncomingHost || gwIncomingHost.includes('gmail') || gwIncomingHost.includes('office365')) {
+      setGwIncomingHost('mail.confiancebizsol.tech');
+    }
     setGwIncomingPort(993);
     setGwIncomingSecurity('ssl');
-    setGwOutgoingHost('mail.confiancebizsol.tech');
+    if (!gwOutgoingHost || gwOutgoingHost.includes('gmail') || gwOutgoingHost.includes('office365')) {
+      setGwOutgoingHost('mail.confiancebizsol.tech');
+    }
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
     setShowAppPasswordGuide(false);
@@ -1092,10 +1127,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const applySelfHostedPop3Preset = () => {
     setGwServiceProvider('self_hosted_pop3');
     setGwIncomingProtocol('pop3');
-    setGwIncomingHost('mail.confiancebizsol.tech');
+    if (!gwIncomingHost || gwIncomingHost.includes('gmail') || gwIncomingHost.includes('office365')) {
+      setGwIncomingHost('mail.confiancebizsol.tech');
+    }
     setGwIncomingPort(995);
     setGwIncomingSecurity('ssl');
-    setGwOutgoingHost('mail.confiancebizsol.tech');
+    if (!gwOutgoingHost || gwOutgoingHost.includes('gmail') || gwOutgoingHost.includes('office365')) {
+      setGwOutgoingHost('mail.confiancebizsol.tech');
+    }
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
     setShowAppPasswordGuide(false);
@@ -1105,7 +1144,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleSaveDefaultGateway = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await onSaveDefaultGateway({
+      const saved = await onSaveDefaultGateway({
         serviceProvider: gwServiceProvider,
         incomingProtocol: gwIncomingProtocol,
         incomingHost: gwIncomingHost,
@@ -1122,11 +1161,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         fromName: gwFromName,
         fromEmail: gwFromEmail,
         replyToEmail: gwReplyToEmail,
+        aliasAddresses: gwAliasAddresses,
         subjectPrefix: gwSubjectPrefix,
         enableInboundTicketGeneration: gwEnableInbound,
         enableOutboundReplyNotification: gwEnableOutbound,
         pollingIntervalMinutes: Number(gwPollingInterval),
       });
+      if (saved) {
+        setGwFromEmail(saved.fromEmail || gwFromEmail);
+        setGwReplyToEmail(saved.replyToEmail || gwReplyToEmail);
+        setGwAliasAddresses(saved.aliasAddresses || gwAliasAddresses);
+        setGwIncomingHost(saved.incomingHost || gwIncomingHost);
+        setGwOutgoingHost(saved.outgoingHost || gwOutgoingHost);
+      }
       setGwTestResult('✓ Default email gateway and connector saved successfully!');
       setTimeout(() => setGwTestResult(null), 3500);
     } catch (err: any) {
@@ -1158,6 +1205,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           fromName: gwFromName,
           fromEmail: gwFromEmail,
           replyToEmail: gwReplyToEmail,
+          aliasAddresses: gwAliasAddresses,
           subjectPrefix: gwSubjectPrefix,
         },
       });
@@ -4286,25 +4334,130 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onChange={(e) => setGwFromName(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
                   />
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 block">
+                    Display name in recipient email client (e.g. <em>IT Helpdesk Support</em>)
+                  </span>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">From Email Address</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                    Primary Helpdesk Email (From Address) *
+                  </label>
                   <input
                     type="email"
+                    required
                     value={gwFromEmail}
-                    onChange={(e) => setGwFromEmail(e.target.value)}
+                    onChange={(e) => {
+                      const newFrom = e.target.value;
+                      if (!gwReplyToEmail || gwReplyToEmail === gwFromEmail) {
+                        setGwReplyToEmail(newFrom);
+                      }
+                      setGwFromEmail(newFrom);
+                    }}
                     className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
                   />
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 block">
+                    Public address on all outgoing ticket confirmations &amp; staff replies
+                  </span>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Reply-To Address</label>
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Reply-To Address *</label>
                   <input
                     type="email"
+                    required
                     value={gwReplyToEmail}
                     onChange={(e) => setGwReplyToEmail(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
                   />
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 block">
+                    Where user replies go when they click &ldquo;Reply&rdquo; in their email app
+                  </span>
                 </div>
+              </div>
+
+              {/* Helpdesk Email Aliases & Forwarding Addresses */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Additional Helpdesk Email Aliases &amp; Forwarders (Comma-separated)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowAliasGuide(!showAliasGuide)}
+                    className="text-[11px] font-bold text-cyan-600 dark:text-cyan-400 hover:text-cyan-700 underline cursor-pointer"
+                  >
+                    {showAliasGuide ? 'Hide Setup Guidance ▲' : 'Show Helpdesk Email Setup & Alias Guide ▼'}
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  placeholder="e.g. support@confiancebizsol.tech, help@confiancebizsol.tech, it-service@confiancebizsol.tech"
+                  value={gwAliasAddresses}
+                  onChange={(e) => setGwAliasAddresses(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
+                />
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-normal">
+                  List any alternate email aliases that forward to your main helpdesk inbox. The system registers these identities to prevent auto-responder email loops and accurately route requester tickets.
+                </span>
+
+                {/* Field-by-Field Description & How to Setup Email for Helpdesk */}
+                {showAliasGuide && (
+                  <div className="mt-3 pt-3 border-t border-slate-200 dark:border-white/10 space-y-3 text-xs">
+                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 text-xs">
+                      <HelpCircle className="w-3.5 h-3.5 text-cyan-500" />
+                      <span>How to Setup Email &amp; Aliases for IT Helpdesk</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] leading-relaxed">
+                      <div className="p-3 rounded-lg bg-white/70 dark:bg-slate-950/40 border border-slate-200/80 dark:border-white/5 space-y-1.5">
+                        <strong className="text-cyan-700 dark:text-cyan-400 block font-bold text-xs">
+                          1. Primary From Email Address
+                        </strong>
+                        <p className="text-slate-600 dark:text-slate-300">
+                          This is the official email address (e.g. <code className="font-mono font-bold text-cyan-600">{gwFromEmail}</code>) sent in all ticket creation acknowledgments, technician replies, OTP verification codes, and SLA alerts.
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-white/70 dark:bg-slate-950/40 border border-slate-200/80 dark:border-white/5 space-y-1.5">
+                        <strong className="text-cyan-700 dark:text-cyan-400 block font-bold text-xs">
+                          2. Reply-To Email Address
+                        </strong>
+                        <p className="text-slate-600 dark:text-slate-300">
+                          When a requester clicks &ldquo;Reply&rdquo; in their email app (Outlook, Gmail, Apple Mail), their message is directed to this address. It must deliver to your inbound mailbox so ticket replies are captured.
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-white/70 dark:bg-slate-950/40 border border-slate-200/80 dark:border-white/5 space-y-1.5">
+                        <strong className="text-cyan-700 dark:text-cyan-400 block font-bold text-xs">
+                          3. Outbound SMTP Connector
+                        </strong>
+                        <p className="text-slate-600 dark:text-slate-300">
+                          The mail relay server used to send emails. For self-hosted Postfix, use host <code className="font-mono text-cyan-600 font-bold">{gwOutgoingHost}</code> with port 587 (STARTTLS) or port 465 (SSL/TLS).
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-white/70 dark:bg-slate-950/40 border border-slate-200/80 dark:border-white/5 space-y-1.5">
+                        <strong className="text-cyan-700 dark:text-cyan-400 block font-bold text-xs">
+                          4. Inbound Mailbox Poller (IMAP or POP3)
+                        </strong>
+                        <p className="text-slate-600 dark:text-slate-300">
+                          The helpdesk server connects every few seconds to poll unread incoming emails and convert them into tickets immediately. IMAP on port 993 (SSL) is recommended over POP3.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-lg bg-cyan-50/70 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/40 text-[11px] space-y-1">
+                      <strong className="text-cyan-900 dark:text-cyan-300 block font-bold">
+                        Configuring Aliases &amp; Forwarders on your Email Server:
+                      </strong>
+                      <ul className="list-disc list-inside text-slate-700 dark:text-slate-300 space-y-1">
+                        <li><strong>cPanel / Plesk:</strong> Go to <em>Email &gt; Forwarders &gt; Add Forwarder</em>. Set Address to Forward: <code className="font-mono">support@yourdomain.com</code> &rarr; Forward to: <code className="font-mono font-bold text-cyan-600">{gwFromEmail}</code>.</li>
+                        <li><strong>Linux Postfix / Dovecot:</strong> Add <code className="font-mono">support: {gwFromEmail.split('@')[0]}</code> in <code className="font-mono">/etc/aliases</code> and run <code className="font-mono">sudo newaliases</code>.</li>
+                        <li><strong>Google Workspace:</strong> Admin Console &gt; Directory &gt; Users &gt; select your user &gt; <em>Add alternate email (alias)</em>.</li>
+                        <li><strong>Microsoft 365:</strong> Admin Center &gt; Users &gt; Active users &gt; select user &gt; <em>Manage username and email &gt; Add alias</em>.</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>

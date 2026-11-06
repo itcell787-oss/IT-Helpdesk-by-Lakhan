@@ -358,11 +358,6 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
             {otpMessage && (
               <div className="p-2.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 text-xs space-y-1">
                 <div className="font-medium">{otpMessage}</div>
-                {otpPreview && (
-                  <div className="font-mono font-bold text-amber-800 dark:text-amber-300 text-xs">
-                    [Demo / Test OTP Code: {otpPreview}]
-                  </div>
-                )}
               </div>
             )}
 

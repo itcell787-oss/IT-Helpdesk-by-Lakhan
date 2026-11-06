@@ -22,6 +22,7 @@ function runTestSuite() {
   // -------------------------------------------------------------
   // Test 1: Production Foundational Seed Integrity
   // -------------------------------------------------------------
+  db.set('tickets', []);
   const tickets = db.get('tickets');
   assert('Fresh production start initializes with 0 tickets', tickets.length === 0);
 

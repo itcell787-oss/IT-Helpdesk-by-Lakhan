@@ -266,6 +266,7 @@ export interface DefaultEmailGatewayConfig {
   fromName: string;
   fromEmail: string;
   replyToEmail: string;
+  aliasAddresses?: string;
   subjectPrefix: string;
   status: 'connected' | 'error' | 'configured' | 'disconnected';
   lastTestedAt?: string;

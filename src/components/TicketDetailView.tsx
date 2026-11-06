@@ -30,6 +30,7 @@ import {
   Forward,
   Mail,
   Users,
+  RefreshCw,
 } from 'lucide-react';
 import { Ticket, TicketComment, TaskItem, WorkLog, AuditLog, User as UserType, formatUserBadge } from '../types';
 import { SlaCountdownBadge } from './SlaCountdownBadge';
@@ -50,6 +51,7 @@ interface TicketDetailViewProps {
   onToggleTask: (ticketId: string, taskId: string, completed: boolean) => void;
   onAddWorkLog: (ticketId: string, minutes: number, notes: string, billable: boolean) => void;
   onDeleteTicket?: (ticketId: string) => void;
+  onRefreshTicket?: () => Promise<void> | void;
 }
 
 export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
@@ -66,7 +68,9 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
   onToggleTask,
   onAddWorkLog,
   onDeleteTicket,
+  onRefreshTicket,
 }) => {
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [isInternalNote, setIsInternalNote] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -448,6 +452,25 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {onRefreshTicket && (
+            <button
+              type="button"
+              onClick={async () => {
+                setIsManualRefreshing(true);
+                try {
+                  await onRefreshTicket();
+                } finally {
+                  setTimeout(() => setIsManualRefreshing(false), 500);
+                }
+              }}
+              className="neu-btn flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200 rounded-lg cursor-pointer whitespace-nowrap hover:bg-slate-100 dark:hover:bg-white/5 transition-all"
+              title="Refresh ticket comments & activity stream"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 ${isManualRefreshing ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          )}
+
           {ticket.status !== 'resolved' && ticket.status !== 'closed' ? (
             <button
               onClick={() => setShowResolveModal(true)}
@@ -674,9 +697,29 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
 
           {/* Conversation Timeline */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-              Activity &amp; Communications Stream ({comments.length})
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Activity &amp; Communications Stream ({comments.length})
+              </h3>
+              {onRefreshTicket && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsManualRefreshing(true);
+                    try {
+                      await onRefreshTicket();
+                    } finally {
+                      setTimeout(() => setIsManualRefreshing(false), 500);
+                    }
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/40 hover:bg-cyan-100 dark:hover:bg-cyan-900/50 rounded-lg border border-cyan-200 dark:border-cyan-800/40 cursor-pointer transition-colors"
+                  title="Check for new requester replies or email updates"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isManualRefreshing ? 'animate-spin' : ''}`} />
+                  <span>Refresh Activity</span>
+                </button>
+              )}
+            </div>
 
             <div className="space-y-4">
               {comments.map((cmt) => (
@@ -703,6 +746,14 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                       {cmt.isInternal ? (
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/40">
                           <Lock className="w-2.5 h-2.5" /> Confidential Internal Note
+                        </span>
+                      ) : cmt.authorRole === 'requester' ? (
+                        <span
+                          className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-100 text-blue-900 border border-blue-300 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-700/60"
+                          title="Requester response received via email reply / user portal"
+                        >
+                          <Mail className="w-2.5 h-2.5 text-blue-600 dark:text-blue-400" />
+                          <span>Requester Reply via Email</span>
                         </span>
                       ) : (
                         <span

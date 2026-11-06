@@ -2690,14 +2690,19 @@ apiRouter.post('/auth/otp/send', async (req: Request, res: Response) => {
     `Generated 6-digit confirmation OTP for ${normalizedEmail} (Dispatched via SMTP: ${emailRes.emailSent ? 'Delivered' : 'Simulation Recorded'})`
   );
 
+  if (!emailRes.emailSent) {
+    return res.status(502).json({
+      success: false,
+      emailSent: false,
+      error: emailRes.error || `Could not deliver OTP email to ${normalizedEmail}. Please verify Outbound SMTP credentials in Settings > Email Gateway.`,
+    });
+  }
+
   res.json({
     success: true,
-    message: emailRes.emailSent
-      ? `A 6-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox.`
-      : `Verification code generated for ${normalizedEmail}.`,
-    previewCode: code, // Provided for instant demo & testing fallback
+    message: `A 6-digit verification code has been dispatched to ${normalizedEmail}. Please check your inbox.`,
     expiresInSeconds: 600,
-    emailSent: emailRes.emailSent,
+    emailSent: true,
   });
 });
 
@@ -2851,32 +2856,43 @@ apiRouter.post('/admin/mailboxes/test', (req: Request, res: Response) => {
 // -------------------------------------------------------------
 apiRouter.get('/email/default-gateway', (req: Request, res: Response) => {
   const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
-  if (!actor || actor.role !== 'superadmin') {
-    return res.status(403).json({ error: 'Forbidden: Default email gateway configuration is only visible to the Super Administrator.' });
+  if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin')) {
+    return res.status(403).json({ error: 'Forbidden: Default email gateway configuration is only visible to Administrators.' });
   }
   res.json(db.get('defaultGatewayConfig'));
 });
 
 apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
   const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
-  if (!actor || actor.role !== 'superadmin') {
-    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can configure the default email gateway.' });
+  if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin')) {
+    return res.status(403).json({ error: 'Forbidden: Only Administrators can configure the default email gateway.' });
   }
 
+  const currentGw = db.get('defaultGatewayConfig') || ({} as any);
   const updated: DefaultEmailGatewayConfig = {
-    ...db.get('defaultGatewayConfig'),
+    ...currentGw,
     ...req.body,
     status: req.body.status || 'connected',
     lastTestedAt: new Date().toISOString(),
   };
   db.set('defaultGatewayConfig', updated);
 
+  // Sync with organization's default support email if fromEmail is changed
+  if (updated.fromEmail) {
+    const orgs = db.get('organizations') || [];
+    if (orgs.length > 0) {
+      if (!orgs[0].branding) orgs[0].branding = {} as any;
+      orgs[0].branding.supportEmail = updated.fromEmail;
+      db.set('organizations', orgs);
+    }
+  }
+
   logAudit(
     actor,
     'email.gateway_updated',
     'setting',
     'default_gateway',
-    `Superadmin updated email gateway: Provider=${updated.serviceProvider || 'Custom'}, Inbound=${updated.incomingProtocol.toUpperCase()} (${updated.incomingHost}:${updated.incomingPort}), Outbound=${updated.outgoingProtocol.toUpperCase()} (${updated.outgoingHost}:${updated.outgoingPort}), Connector=${updated.fromEmail}`
+    `Administrator updated email gateway: Provider=${updated.serviceProvider || 'Custom'}, Inbound=${updated.incomingProtocol.toUpperCase()} (${updated.incomingHost}:${updated.incomingPort}), Outbound=${updated.outgoingProtocol.toUpperCase()} (${updated.outgoingHost}:${updated.outgoingPort}), Connector=${updated.fromEmail}`
   );
 
   res.json(updated);
@@ -2884,8 +2900,8 @@ apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
 
 apiRouter.post('/email/default-gateway/test', async (req: Request, res: Response) => {
   const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
-  if (!actor || actor.role !== 'superadmin') {
-    return res.status(403).json({ error: 'Forbidden: Only Super Administrator can test the default email gateway.' });
+  if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin')) {
+    return res.status(403).json({ error: 'Forbidden: Only Administrators can test the default email gateway.' });
   }
 
   const { testRecipientEmail, configOverride } = req.body;
@@ -3004,7 +3020,9 @@ apiRouter.post(['/email/inbound', '/email/webhook'], async (req: Request, res: R
       body,
       cc,
       managerEmail,
-      messageId: req.body.messageId || req.body['Message-Id'],
+      messageId: req.body.messageId || req.body['Message-Id'] || req.body['message-id'],
+      inReplyTo: req.body.inReplyTo || req.body['In-Reply-To'] || req.body['in-reply-to'],
+      references: req.body.references || req.body['References'] || req.body['references'],
     });
 
     res.status(result.mode === 'created' ? 201 : 200).json({
