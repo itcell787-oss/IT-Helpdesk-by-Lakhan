@@ -137,6 +137,9 @@ export interface Ticket {
   impact: 'low' | 'medium' | 'high' | 'critical';
   urgency: 'low' | 'medium' | 'high' | 'critical';
   channel: 'portal' | 'email' | 'agent' | 'service_catalog' | 'api';
+  hasRequesterReply?: boolean;
+  lastReplyBy?: 'requester' | 'technician' | 'system';
+  lastReplyAt?: string;
   
   requesterId: string;
   requesterName: string;
@@ -268,7 +271,7 @@ export interface DefaultEmailGatewayConfig {
   replyToEmail: string;
   aliasAddresses?: string;
   subjectPrefix: string;
-  status: 'connected' | 'error' | 'configured' | 'disconnected';
+  status: 'connected' | 'error' | 'configured' | 'disconnected' | 'not_configured';
   lastTestedAt?: string;
   lastPolledAt?: string;
   lastPollStatus?: string;

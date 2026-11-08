@@ -176,11 +176,10 @@ class DatabaseEngine {
       replyToEmail: 'it-helpdesk@confiancebizsol.tech',
       subjectPrefix: '[ITL-{{ticketId}}]',
       status: 'connected',
+      lastPollStatus: 'Connected to mail.confiancebizsol.tech: Ready for email-to-ticket ingestion.',
       enableInboundTicketGeneration: true,
       enableOutboundReplyNotification: true,
       pollingIntervalMinutes: 1,
-      lastTestedAt: new Date().toISOString(),
-      lastPolledAt: new Date().toISOString(),
       processedMessageIds: [],
       processedUids: [],
       processedFingerprints: [],
@@ -191,20 +190,20 @@ class DatabaseEngine {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
         if (!parsed.adminMailboxes) parsed.adminMailboxes = initialAdminMailboxes;
-        if (!parsed.defaultGatewayConfig) {
+        if (!parsed.defaultGatewayConfig || !parsed.defaultGatewayConfig.fromEmail) {
           parsed.defaultGatewayConfig = initialDefaultGateway;
         } else {
-          if (parsed.defaultGatewayConfig.fromEmail === 'Confiancebizsol377@gmail.com') {
-            parsed.defaultGatewayConfig.fromEmail = 'it-helpdesk@confiancebizsol.tech';
-            parsed.defaultGatewayConfig.replyToEmail = 'it-helpdesk@confiancebizsol.tech';
-            parsed.defaultGatewayConfig.incomingUsername = 'it-helpdesk@confiancebizsol.tech';
-            parsed.defaultGatewayConfig.outgoingUsername = 'it-helpdesk@confiancebizsol.tech';
-          }
-          if (parsed.defaultGatewayConfig.incomingHost === 'imap.confiancebizsol.tech' || !parsed.defaultGatewayConfig.incomingHost) {
+          if (!parsed.defaultGatewayConfig.incomingHost) {
             parsed.defaultGatewayConfig.incomingHost = 'mail.confiancebizsol.tech';
           }
-          if (parsed.defaultGatewayConfig.outgoingHost === 'smtp.confiancebizsol.tech' || !parsed.defaultGatewayConfig.outgoingHost) {
+          if (!parsed.defaultGatewayConfig.outgoingHost) {
             parsed.defaultGatewayConfig.outgoingHost = 'mail.confiancebizsol.tech';
+          }
+          if (!parsed.defaultGatewayConfig.incomingUsername) {
+            parsed.defaultGatewayConfig.incomingUsername = parsed.defaultGatewayConfig.fromEmail;
+          }
+          if (!parsed.defaultGatewayConfig.outgoingUsername) {
+            parsed.defaultGatewayConfig.outgoingUsername = parsed.defaultGatewayConfig.fromEmail;
           }
           if (parsed.defaultGatewayConfig.enableInboundTicketGeneration === undefined) {
             parsed.defaultGatewayConfig.enableInboundTicketGeneration = true;
@@ -255,6 +254,16 @@ class DatabaseEngine {
             }
             if (org.systemSettings.allowRequesterAssetSelfService === undefined) {
               org.systemSettings.allowRequesterAssetSelfService = true;
+            }
+            if (!org.systemSettings.ticketCategories || !Array.isArray(org.systemSettings.ticketCategories) || org.systemSettings.ticketCategories.length === 0) {
+              org.systemSettings.ticketCategories = [
+                'Hardware & Workstations',
+                'Software & Cloud Apps',
+                'Network & Connectivity',
+                'Security & Access',
+                'User Accounts & Permissions',
+                'AV & Conference Rooms'
+              ];
             }
             return org;
           });

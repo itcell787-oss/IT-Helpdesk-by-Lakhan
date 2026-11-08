@@ -1804,8 +1804,23 @@ apiRouter.post('/tickets/:id/comments', async (req: Request, res: Response) => {
   // Update ticket: touch updatedAt; if this is first public agent response, log firstResponseAt
   const ticket = tickets[ticketIdx];
   const isAgent = actor.role !== 'requester';
-  if (!isInternal && isAgent && !ticket.firstResponseAt) {
-    ticket.firstResponseAt = new Date().toISOString();
+  if (!isInternal && isAgent) {
+    if (!ticket.firstResponseAt) {
+      ticket.firstResponseAt = new Date().toISOString();
+    }
+    ticket.hasRequesterReply = false;
+    ticket.lastReplyBy = 'technician';
+  } else if (actor.role === 'requester') {
+    ticket.hasRequesterReply = true;
+    ticket.lastReplyBy = 'requester';
+    ticket.lastReplyAt = new Date().toISOString();
+    if (ticket.status === 'resolved' || ticket.status === 'closed') {
+      ticket.status = 'open'; // Auto reopen ticket upon requester reply
+      ticket.resolvedAt = undefined;
+      ticket.closedAt = undefined;
+    } else if (ticket.status === 'pending_requester' || ticket.status === 'on_hold') {
+      ticket.status = 'in_progress';
+    }
   }
   ticket.updatedAt = new Date().toISOString();
   db.set('tickets', tickets);
@@ -2898,11 +2913,15 @@ apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
     currentGw.incomingPassword ||
     '';
 
-  const fromEmail = (req.body.fromEmail ? req.body.fromEmail.trim() : currentGw.fromEmail) || 'it-helpdesk@confiancebizsol.tech';
-  const replyToEmail = (req.body.replyToEmail ? req.body.replyToEmail.trim() : (req.body.fromEmail ? req.body.fromEmail.trim() : currentGw.replyToEmail)) || fromEmail;
+  const fromEmail = req.body.fromEmail !== undefined ? req.body.fromEmail.trim() : (currentGw.fromEmail || '');
+  const replyToEmail = req.body.replyToEmail !== undefined ? req.body.replyToEmail.trim() : (req.body.fromEmail ? req.body.fromEmail.trim() : (currentGw.replyToEmail || fromEmail));
   const fromName = req.body.fromName ? req.body.fromName.trim() : (currentGw.fromName || 'IT Helpdesk Support');
-  const incomingUser = (req.body.incomingUsername ? req.body.incomingUsername.trim() : (currentGw.incomingUsername || fromEmail));
-  const outgoingUser = (req.body.outgoingUsername ? req.body.outgoingUsername.trim() : (currentGw.outgoingUsername || fromEmail));
+  const incomingUser = (req.body.incomingUsername !== undefined ? req.body.incomingUsername.trim() : (currentGw.incomingUsername || fromEmail));
+  const outgoingUser = (req.body.outgoingUsername !== undefined ? req.body.outgoingUsername.trim() : (currentGw.outgoingUsername || fromEmail));
+
+  const status = !fromEmail
+    ? 'not_configured'
+    : (req.body.status || currentGw.status || 'configured');
 
   const updated: DefaultEmailGatewayConfig = {
     ...currentGw,
@@ -2915,19 +2934,30 @@ apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
     incomingPassword,
     outgoingPassword,
     aliasAddresses: req.body.aliasAddresses !== undefined ? req.body.aliasAddresses.trim() : (currentGw.aliasAddresses || ''),
-    status: req.body.status || 'connected',
+    status,
     lastTestedAt: new Date().toISOString(),
   };
   db.set('defaultGatewayConfig', updated);
 
-  // Sync with organization's default support email if fromEmail is changed
-  if (updated.fromEmail) {
-    const orgs = db.get('organizations') || [];
-    if (orgs.length > 0) {
-      if (!orgs[0].branding) orgs[0].branding = {} as any;
-      orgs[0].branding.supportEmail = updated.fromEmail;
-      db.set('organizations', orgs);
+  // Sync with organization's default support email and systemSettings
+  const orgs = db.get('organizations') || [];
+  if (orgs.length > 0 && orgs[0]) {
+    const org = orgs[0];
+    if (!org.branding) org.branding = {} as any;
+    if (updated.fromEmail) {
+      org.branding.supportEmail = updated.fromEmail;
     }
+    if (updated.enableInboundTicketGeneration !== undefined) {
+      if (!org.systemSettings) {
+        org.systemSettings = {
+          requireOtpForTicketSubmission: false,
+          enableTicketRating: true,
+          enableCategoryAutoAssign: true,
+        } as any;
+      }
+      (org.systemSettings as any).enableInboundTicketGeneration = Boolean(updated.enableInboundTicketGeneration);
+    }
+    db.set('organizations', orgs);
   }
 
   logAudit(
@@ -2939,6 +2969,59 @@ apiRouter.post('/email/default-gateway', (req: Request, res: Response) => {
   );
 
   res.json(updated);
+});
+
+apiRouter.post('/email/inbound-toggle', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req) || (db.get('currentUserId') ? db.get('users').find((u) => u.id === db.get('currentUserId')) : null);
+  if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin')) {
+    return res.status(403).json({ error: 'Forbidden: Only Administrators can toggle email ticket generation.' });
+  }
+
+  const currentGw = db.get('defaultGatewayConfig') || ({} as any);
+  const orgs = db.get('organizations') || [];
+  if (orgs.length === 0) {
+    orgs.push({
+      id: 'org-default',
+      name: 'Primary Organization',
+      systemSettings: {
+        requireOtpForTicketSubmission: false,
+        enableTicketRating: true,
+        enableCategoryAutoAssign: true,
+      },
+    } as any);
+  }
+  const org = orgs[0]!;
+  if (!org.systemSettings) {
+    org.systemSettings = {
+      requireOtpForTicketSubmission: false,
+      enableTicketRating: true,
+      enableCategoryAutoAssign: true,
+    } as any;
+  }
+
+  const enabled = req.body.enabled !== undefined
+    ? Boolean(req.body.enabled)
+    : !(currentGw.enableInboundTicketGeneration ?? true);
+
+  currentGw.enableInboundTicketGeneration = enabled;
+  (org.systemSettings as any).enableInboundTicketGeneration = enabled;
+
+  db.set('defaultGatewayConfig', currentGw);
+  db.set('organizations', orgs);
+
+  logAudit(
+    actor,
+    'email.inbound_generation_toggled',
+    'setting',
+    'defaultGatewayConfig',
+    `Super Administrator ${actor.name} (${actor.email}) toggled Email Ticket Generation to: ${enabled ? 'ENABLED' : 'DISABLED'}`
+  );
+
+  res.json({
+    success: true,
+    enableInboundTicketGeneration: enabled,
+    message: `Email-to-ticket generation is now ${enabled ? 'ENABLED' : 'DISABLED'}.`,
+  });
 });
 
 apiRouter.post('/email/default-gateway/test', async (req: Request, res: Response) => {
@@ -2994,6 +3077,24 @@ apiRouter.post('/email/default-gateway/poll', async (req: Request, res: Response
 
   // If inbound sample message is provided in body (simulator), process it directly
   if (req.body.from && req.body.subject && req.body.body) {
+    const gwConfig = db.get('defaultGatewayConfig');
+    const orgs = db.get('organizations') || [];
+    const orgSettings = (orgs[0]?.systemSettings || {}) as Record<string, any>;
+    const isEmailTicketEnabled = gwConfig?.enableInboundTicketGeneration !== false && orgSettings.enableInboundTicketGeneration !== false;
+    const isThreadedReply = Boolean(
+      String(req.body.subject).match(/(?:\[|\b)(ITL-\d+)(?:\]|\b)/i) ||
+      req.body.inReplyTo ||
+      req.body.references
+    );
+
+    if (!isEmailTicketEnabled && !isThreadedReply) {
+      return res.status(403).json({
+        success: false,
+        message: 'Inbound email-to-ticket generation has been disabled by Super Administrator.',
+        error: 'Inbound email-to-ticket generation has been disabled by Super Administrator.',
+      });
+    }
+
     const inboundRes = await emailService.processInboundEmail({
       from: req.body.from,
       subject: req.body.subject,
@@ -3001,6 +3102,7 @@ apiRouter.post('/email/default-gateway/poll', async (req: Request, res: Response
       cc: req.body.cc,
       managerEmail: req.body.managerEmail,
       messageId: req.body.messageId,
+      attachments: req.body.attachments || req.body.files || [],
     });
     const actionMsg =
       inboundRes.mode === 'threaded'
@@ -3084,6 +3186,7 @@ apiRouter.post(['/email/inbound', '/email/webhook'], async (req: Request, res: R
       messageId: req.body.messageId || req.body['Message-Id'] || req.body['message-id'],
       inReplyTo: req.body.inReplyTo || req.body['In-Reply-To'] || req.body['in-reply-to'],
       references: req.body.references || req.body['References'] || req.body['references'],
+      attachments: req.body.attachments || req.body.files || [],
     });
 
     res.status(result.mode === 'created' ? 201 : 200).json({
@@ -3566,127 +3669,62 @@ apiRouter.get('/email-channels', (req: Request, res: Response) => {
   res.json(db.get('emailChannels'));
 });
 
-apiRouter.post('/email/simulate-inbound', (req: Request, res: Response) => {
-  const { from, subject, body, cc, managerEmail } = req.body;
+apiRouter.post('/email/simulate-inbound', async (req: Request, res: Response) => {
+  const { from, subject, body, cc, managerEmail, attachments } = req.body;
   if (!from || !subject || !body) {
     return res.status(400).json({ error: 'from, subject, and body are required' });
   }
 
   const currentUserId = db.get('currentUserId');
   const users = db.get('users');
-  const actor = users.find(u => u.id === currentUserId) || users[0];
+  const actor = users.find((u) => u.id === currentUserId) || users[0];
 
-  // Parse any CC or manager forward recipients from email
-  const ccList: string[] = [];
-  if (cc) {
-    if (Array.isArray(cc)) ccList.push(...cc);
-    else if (typeof cc === 'string') {
-      ccList.push(...cc.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean));
-    }
-  }
-  if (managerEmail && !ccList.includes(managerEmail.trim())) {
-    ccList.push(managerEmail.trim());
-  }
+  const gwConfig = db.get('defaultGatewayConfig');
+  const orgs = db.get('organizations') || [];
+  const orgSettings = (orgs[0]?.systemSettings || {}) as Record<string, any>;
+  const isEmailTicketEnabled = gwConfig?.enableInboundTicketGeneration !== false && orgSettings.enableInboundTicketGeneration !== false;
+  const isThreadedReply = Boolean(
+    String(subject).match(/(?:\[|\b)(ITL-\d+)(?:\]|\b)/i) ||
+    req.body.inReplyTo ||
+    req.body.references
+  );
 
-  // Check email threading: Look for "[ITL-XXXXXX]"
-  const match = subject.match(/\[(ITL-\d+)\]/i);
-  const tickets = db.get('tickets');
-
-  if (match) {
-    const existingTicketId = match[1].toUpperCase();
-    const existing = tickets.find(t => t.id === existingTicketId);
-    if (existing) {
-      // Add any new CC recipients from this reply
-      for (const recipient of ccList) {
-        if (!existing.ccRecipients.includes(recipient)) {
-          existing.ccRecipients.push(recipient);
-        }
-      }
-
-      // Append public reply from sender
-      const comment: TicketComment = {
-        id: `cmt-${Date.now()}`,
-        ticketId: existing.id,
-        authorId: 'usr-email-sender',
-        authorName: from.split('@')[0],
-        authorEmail: from,
-        authorRole: 'requester',
-        isInternal: false,
-        content: `[Received via Email Intake / Gateway Poller]:\n${body}${ccList.length > 0 ? `\n\n(CC / Forwarded: ${ccList.join(', ')})` : ''}`,
-        createdAt: new Date().toISOString(),
-      };
-      const comments = db.get('comments');
-      db.set('comments', [...comments, comment]);
-
-      existing.updatedAt = new Date().toISOString();
-      if (existing.status === 'pending_requester') {
-        existing.status = 'in_progress'; // Automatically resume work on user reply!
-      }
-      db.set('tickets', tickets);
-
-      logAudit(actor, 'email.threaded_reply', 'ticket', existing.id, `Threaded inbound email reply onto ${existing.id} from ${from}${ccList.length > 0 ? ` (CC: ${ccList.join(', ')})` : ''}`);
-      return res.json({ mode: 'threaded', ticket: existing, comment });
-    }
+  if (!isEmailTicketEnabled && !isThreadedReply) {
+    return res.status(403).json({
+      success: false,
+      error: 'Inbound email-to-ticket generation has been disabled by Super Administrator.',
+    });
   }
 
-  // Create new ticket from email
-  const ticketId = db.generateTicketId();
-  const slaPolicies = db.get('slaPolicies');
-  const { firstResponseDeadline, resolutionDeadline } = calculateSlaDeadlines('normal', slaPolicies);
+  try {
+    const result = await emailService.processInboundEmail({
+      from,
+      subject,
+      body,
+      cc,
+      managerEmail,
+      attachments: attachments || req.body.files || [],
+      messageId: `sim-msg-${Date.now()}`,
+    });
 
-  let newTicket: Ticket = {
-    id: ticketId,
-    subject: subject.replace(/^[Rr][Ee]:\s*/i, ''),
-    description: body,
-    status: 'new',
-    priority: 'normal',
-    type: 'incident',
-    category: 'General IT Support',
-    impact: 'medium',
-    urgency: 'medium',
-    channel: 'email',
-    requesterId: 'usr-email-inbound',
-    requesterName: from.split('@')[0],
-    requesterEmail: from,
-    organizationId: actor.organizationId,
-    followers: [],
-    ccRecipients: ccList,
-    managerEmail: managerEmail?.trim() || undefined,
-    forwardedToManager: Boolean(managerEmail || ccList.length > 0),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    dueDate: resolutionDeadline,
-    relatedAssetIds: [],
-    tags: ['email-intake'],
-    estimatedMinutes: 60,
-    actualMinutesSpent: 0,
-    customFields: {},
-    slaStatus: 'within_target',
-    slaFirstResponseDeadline: firstResponseDeadline,
-    slaResolutionDeadline: resolutionDeadline,
-  };
+    logAudit(
+      actor,
+      result.mode === 'threaded' ? 'email.threaded_reply' : 'email.ticket_created',
+      'ticket',
+      result.ticket.id,
+      `Simulated inbound email from ${from} -> ${result.mode === 'threaded' ? `Threaded into ticket [${result.ticket.id}]` : `Created ticket [${result.ticket.id}]`}`
+    );
 
-  // Run automations
-  const automationRules = db.get('automationRules');
-  const { updatedTicket, generatedComments } = runAutomations('ticket_created', newTicket, automationRules);
-  newTicket = updatedTicket;
-
-  db.set('tickets', [newTicket, ...tickets]);
-  if (generatedComments.length > 0) {
-    const comments = db.get('comments');
-    db.set('comments', [...comments, ...generatedComments]);
+    res.status(result.mode === 'created' ? 201 : 200).json({
+      success: true,
+      mode: result.mode,
+      ticket: result.ticket,
+      comment: result.comment,
+      isDuplicate: result.isDuplicate || false,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed processing simulated inbound email.' });
   }
-
-  // Update email channel statistics
-  const channels = db.get('emailChannels');
-  if (channels.length > 0) {
-    channels[0].totalProcessed = (channels[0].totalProcessed || 0) + 1;
-    channels[0].lastPolledAt = new Date().toISOString();
-    db.set('emailChannels', channels);
-  }
-
-  logAudit(actor, 'email.ticket_created', 'ticket', ticketId, `Processed inbound email from ${from} -> Created ticket [${ticketId}]`);
-  res.status(201).json({ mode: 'created', ticket: newTicket });
 });
 
 // -------------------------------------------------------------

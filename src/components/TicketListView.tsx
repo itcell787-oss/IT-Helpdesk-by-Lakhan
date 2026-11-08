@@ -1246,6 +1246,15 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                         <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-bold text-slate-950 dark:text-white line-clamp-1 max-w-md text-xs">{t.subject}</span>
+                            {(t.hasRequesterReply || t.lastReplyBy === 'requester') && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60 font-mono text-[9px] font-bold shrink-0"
+                                title={`Requester sent a response${t.lastReplyAt ? ' at ' + new Date(t.lastReplyAt).toLocaleTimeString() : ''}`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                                User Replied
+                              </span>
+                            )}
                             {t.attachments && t.attachments.length > 0 && (
                               <span
                                 className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-100/80 dark:bg-cyan-950/70 text-cyan-800 dark:text-cyan-300 font-mono text-[10px] font-bold border border-cyan-300/80 dark:border-cyan-800/60"
@@ -1318,9 +1327,11 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
 
                       {selectedColumns.includes('status') && (
                         <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                          <span className={`capitalize px-2 py-0.5 rounded-md text-[10px] inline-block ${statusBadge[t.status]?.cls || 'bg-slate-200 text-slate-800'}`}>
-                            {statusBadge[t.status]?.label || t.status.replace(/_/g, ' ')}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`capitalize px-2 py-0.5 rounded-md text-[10px] inline-block ${statusBadge[t.status]?.cls || 'bg-slate-200 text-slate-800'}`}>
+                              {statusBadge[t.status]?.label || t.status.replace(/_/g, ' ')}
+                            </span>
+                          </div>
                         </td>
                       )}
 

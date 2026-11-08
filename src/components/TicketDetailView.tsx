@@ -447,7 +447,18 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                 size="md"
               />
             </div>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight mt-1">{ticket.subject}</h1>
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              <h1 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">{ticket.subject}</h1>
+              {(ticket.hasRequesterReply || ticket.lastReplyBy === 'requester') && (
+                <span
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60 font-mono text-xs font-bold shrink-0 shadow-xs"
+                  title={`Requester replied${ticket.lastReplyAt ? ' on ' + new Date(ticket.lastReplyAt).toLocaleString() : ''}`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  User Replied
+                </span>
+              )}
+            </div>
           </div>
         </div>
 

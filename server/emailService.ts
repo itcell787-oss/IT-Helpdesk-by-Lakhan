@@ -32,6 +32,18 @@ export interface EmailTestResult {
   diagnostics: string[];
 }
 
+export interface EmailAttachmentPayload {
+  id?: string;
+  name?: string;
+  filename?: string;
+  size?: number;
+  type?: string;
+  contentType?: string;
+  url?: string;
+  content?: any;
+  data?: string;
+}
+
 export interface InboundEmailPayload {
   from: string;
   to?: string;
@@ -43,6 +55,7 @@ export interface InboundEmailPayload {
   references?: string | string[];
   uid?: string | number;
   managerEmail?: string;
+  attachments?: EmailAttachmentPayload[];
 }
 
 export interface OutboundEmailRecord {
@@ -55,6 +68,68 @@ export interface OutboundEmailRecord {
   error?: string;
   messageId?: string;
   ticketId?: string;
+}
+
+export function extractCleanEmail(raw: string): string {
+  if (!raw) return '';
+  const match = raw.match(/<([^>]+)>/);
+  if (match && match[1]) {
+    return match[1].trim().toLowerCase();
+  }
+  return raw.replace(/["']/g, '').trim().toLowerCase();
+}
+
+export function extractDisplayName(raw: string, fallbackEmail: string): string {
+  if (!raw) return fallbackEmail.split('@')[0] || 'Requester';
+  const match = raw.match(/^"?([^"<]+)"?\s*<[^>]+>/);
+  if (match && match[1] && match[1].trim()) {
+    return match[1].trim();
+  }
+  const cleanEmail = extractCleanEmail(raw);
+  const localPart = cleanEmail.split('@')[0] || 'Requester';
+  return localPart.replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function normalizeEmailAttachments(rawAttachments?: any[]): Array<{
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  url: string;
+}> {
+  if (!rawAttachments || !Array.isArray(rawAttachments) || rawAttachments.length === 0) {
+    return [];
+  }
+  return rawAttachments.map((att: any, idx: number) => {
+    const id = att.id || `att-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
+    const name = att.filename || att.name || `attachment-${idx + 1}`;
+    const type = att.contentType || att.type || 'application/octet-stream';
+    let url = att.url || '';
+    let size = Number(att.size) || 0;
+
+    if (!url && att.content) {
+      if (Buffer.isBuffer(att.content)) {
+        size = att.content.length;
+        if (size <= 8 * 1024 * 1024) {
+          url = `data:${type};base64,${att.content.toString('base64')}`;
+        }
+      } else if (typeof att.content === 'string') {
+        url = att.content.startsWith('data:') ? att.content : `data:${type};base64,${att.content}`;
+        size = size || att.content.length;
+      }
+    } else if (!url && att.data) {
+      url = att.data.startsWith('data:') ? att.data : `data:${type};base64,${att.data}`;
+      size = size || att.data.length;
+    }
+
+    return {
+      id,
+      name,
+      size,
+      type,
+      url,
+    };
+  }).filter((a) => Boolean(a.name && (a.url || a.size > 0)));
 }
 
 class EmailGatewayService {
@@ -252,6 +327,9 @@ class EmailGatewayService {
       tls: {
         rejectUnauthorized: false, // Allows self-signed certificates for self-hosted mail servers
       },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
   }
 
@@ -950,9 +1028,12 @@ class EmailGatewayService {
     comment?: TicketComment;
     isDuplicate?: boolean;
   }> {
-    const from = payload.from.trim();
+    const rawFrom = payload.from.trim();
+    const cleanFrom = extractCleanEmail(rawFrom);
+    const fromName = extractDisplayName(rawFrom, cleanFrom);
     const subject = payload.subject.trim();
     const body = payload.body.trim();
+    const normalizedAttachments = normalizeEmailAttachments(payload.attachments);
 
     const ccList: string[] = [];
     if (payload.cc) {
@@ -971,8 +1052,10 @@ class EmailGatewayService {
       subject.toLowerCase().includes('[itl-test-') ||
       subject.toLowerCase().includes('connection probe') ||
       subject.toLowerCase().includes('handshake test') ||
-      from.toLowerCase().includes('mailer-daemon') ||
-      from.toLowerCase().includes('postmaster');
+      rawFrom.toLowerCase().includes('mailer-daemon') ||
+      rawFrom.toLowerCase().includes('postmaster') ||
+      cleanFrom.includes('mailer-daemon') ||
+      cleanFrom.includes('postmaster');
 
     const tickets = db.get('tickets') || [];
     const users = db.get('users') || [];
@@ -980,7 +1063,6 @@ class EmailGatewayService {
 
     const rawMsgId = (payload.messageId || '').replace(/[<>]/g, '').trim().toLowerCase();
     const uidKey = payload.uid ? `${config.incomingHost || 'imap'}:${payload.uid}` : undefined;
-    const cleanFrom = from.toLowerCase();
     const cleanSubject = subject.replace(/^((re|fwd|fw):\s*)+/i, '').trim();
     const normSubject = cleanSubject.toLowerCase();
     const normBodySnippet = body.replace(/\s+/g, ' ').trim().substring(0, 250).toLowerCase();
@@ -995,21 +1077,7 @@ class EmailGatewayService {
       };
     }
 
-    // 1. Persistent deduplication check (Message-ID, IMAP UID, or Content Fingerprint)
-    if (this.isMessageAlreadyProcessed(rawMsgId, uidKey, fingerprint)) {
-      console.log(`[Email Intake] Deduplication: skipping already processed email from ${from} (MsgId: ${rawMsgId || 'N/A'})`);
-      const existingTicket = tickets.find(
-        (t) => t.requesterEmail.toLowerCase() === cleanFrom && t.subject.toLowerCase() === cleanSubject.toLowerCase()
-      ) || tickets[0] || ({} as any);
-
-      return {
-        mode: 'ignored_duplicate',
-        ticket: existingTicket,
-        isDuplicate: true,
-      };
-    }
-
-    // 2. Threaded reply detection:
+    // 1. Threaded reply detection (checked first so replies are NEVER dropped by content hash):
     // Check (a) subject has [ITL-XXXXXX] or ITL-XXXXXX
     // Check (b) inReplyTo / references match a known ticket messageId
     // Check (c) quoted reply body contains [ITL-XXXXXX]
@@ -1069,15 +1137,15 @@ class EmailGatewayService {
       if (existing) {
         const cleanReplyContent = this.cleanEmailReplyBody(body);
 
-        // Check if this identical comment was already added to this ticket
+        // Check if this identical email message was already added as a comment to this ticket
         const comments = db.get('comments') || [];
-        const isDuplicateComment = comments.some(
-          (c) => c.ticketId === existing.id && c.content.trim().toLowerCase() === cleanReplyContent.toLowerCase()
+        const isDuplicateMsg = rawMsgId && comments.some(
+          (c) => c.ticketId === existing.id && c.emailMessageId && c.emailMessageId.replace(/[<>]/g, '').trim().toLowerCase() === rawMsgId
         );
 
-        if (isDuplicateComment) {
-          console.log(`[Email Intake] Skipping duplicate threaded comment on ticket ${existing.id}`);
-          this.recordProcessedMessage(rawMsgId, uidKey, fingerprint, existing.id);
+        if (isDuplicateMsg) {
+          console.log(`[Email Intake] Skipping already appended threaded comment on ticket ${existing.id}`);
+          this.recordProcessedMessage(rawMsgId, uidKey, undefined, existing.id);
           return { mode: 'ignored_duplicate', ticket: existing, isDuplicate: true };
         }
 
@@ -1089,15 +1157,15 @@ class EmailGatewayService {
         }
 
         let authorId = 'usr-email-sender';
-        let authorName = from.split('@')[0];
+        let authorName = fromName || cleanFrom.split('@')[0];
         let authorRole: 'requester' | 'technician' | 'admin' | 'superadmin' | 'manager' = 'requester';
 
-        const senderUser = users.find((u) => u.email.toLowerCase() === from.toLowerCase());
+        const senderUser = users.find((u) => u.email.toLowerCase() === cleanFrom);
         if (senderUser) {
           authorId = senderUser.id;
           authorName = senderUser.name;
           authorRole = senderUser.role as any;
-        } else if (existing.requesterEmail && existing.requesterEmail.toLowerCase() === from.toLowerCase()) {
+        } else if (existing.requesterEmail && existing.requesterEmail.toLowerCase() === cleanFrom) {
           authorId = existing.requesterId;
           authorName = existing.requesterName;
           authorRole = 'requester';
@@ -1108,42 +1176,81 @@ class EmailGatewayService {
           ticketId: existing.id,
           authorId,
           authorName,
-          authorEmail: from,
+          authorEmail: cleanFrom,
           authorRole,
           isInternal: false,
-          content: cleanReplyContent,
+          content: cleanReplyContent || body.trim(),
           createdAt: new Date().toISOString(),
           emailMessageId: payload.messageId,
           emailDispatched: false,
           emailRecipient: undefined,
+          attachments: normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
         };
 
         db.set('comments', [...comments, comment]);
 
         existing.updatedAt = new Date().toISOString();
-        if (existing.status === 'pending_requester') {
+        existing.hasRequesterReply = true;
+        existing.lastReplyBy = 'requester';
+        existing.lastReplyAt = new Date().toISOString();
+
+        // Also append newly received attachments to ticket attachments pool
+        if (normalizedAttachments.length > 0) {
+          const existingAtts = existing.attachments || [];
+          const existingKeys = new Set(existingAtts.map((a) => `${a.name}-${a.size}`));
+          const toAdd = normalizedAttachments.filter((a) => !existingKeys.has(`${a.name}-${a.size}`));
+          if (toAdd.length > 0) {
+            existing.attachments = [...existingAtts, ...toAdd];
+          }
+        }
+
+        // Auto-reopen ticket if previously resolved or closed
+        const wasResolvedOrClosed = existing.status === 'resolved' || existing.status === 'closed';
+        if (wasResolvedOrClosed) {
+          existing.status = 'open'; // Auto reopen ticket upon requester email reply
+          existing.resolvedAt = undefined;
+          existing.closedAt = undefined;
+        } else if (existing.status === 'pending_requester' || existing.status === 'on_hold') {
           existing.status = 'in_progress'; // Automatically resume ticket upon requester response
         }
         db.set('tickets', tickets);
 
         // Record audit trail entry
         const auditLogs = db.get('auditLogs') || [];
+        const auditDetails = wasResolvedOrClosed
+          ? `Inbound email reply received from ${cleanFrom} and reopened resolved ticket [${existing.id}] (Status auto-changed from resolved to open)`
+          : `Inbound email reply received from ${cleanFrom} and appended to ticket [${existing.id}] (Status: ${existing.status})`;
+
         auditLogs.unshift({
           id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           timestamp: new Date().toISOString(),
           actorId: authorId,
           actorName: authorName,
           actorRole: authorRole as any,
-          action: 'ticket.email_reply_received',
+          action: wasResolvedOrClosed ? 'ticket.reopened' : 'ticket.email_reply_received',
           entityType: 'ticket',
           entityId: existing.id,
-          details: `Inbound email reply received from ${from} and appended to ticket [${existing.id}]`,
+          details: auditDetails,
         });
         db.set('auditLogs', auditLogs);
 
-        this.recordProcessedMessage(rawMsgId, uidKey, fingerprint, existing.id);
+        this.recordProcessedMessage(rawMsgId, uidKey, undefined, existing.id);
         return { mode: 'threaded', ticket: existing, comment };
       }
+    }
+
+    // 2. Persistent deduplication check for brand new tickets (Message-ID, IMAP UID, or Content Fingerprint)
+    if (this.isMessageAlreadyProcessed(rawMsgId, uidKey, fingerprint)) {
+      console.log(`[Email Intake] Deduplication: skipping already processed email from ${cleanFrom} (MsgId: ${rawMsgId || 'N/A'})`);
+      const existingTicket = tickets.find(
+        (t) => t.requesterEmail.toLowerCase() === cleanFrom && t.subject.toLowerCase() === cleanSubject.toLowerCase()
+      ) || tickets[0] || ({} as any);
+
+      return {
+        mode: 'ignored_duplicate',
+        ticket: existingTicket,
+        isDuplicate: true,
+      };
     }
 
     // 3. Collision Prevention & Follow-up: Check if requester already has an active open ticket with the exact same subject
@@ -1177,13 +1284,13 @@ class EmailGatewayService {
       // If user sent a follow-up email on the same topic:
       // Append it as a comment to their existing ticket rather than creating a duplicate ticket!
       console.log(`[Email Intake] Same topic detected for requester ${cleanFrom}. Appending as comment to existing ticket ${activeTicket.id}`);
-      const senderUser = users.find((u) => u.email.toLowerCase() === from.toLowerCase());
+      const senderUser = users.find((u) => u.email.toLowerCase() === cleanFrom);
       const comment: TicketComment = {
         id: `cmt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         ticketId: activeTicket.id,
         authorId: senderUser ? senderUser.id : 'usr-email-sender',
-        authorName: senderUser ? senderUser.name : from.split('@')[0],
-        authorEmail: from,
+        authorName: senderUser ? senderUser.name : (fromName || cleanFrom.split('@')[0]),
+        authorEmail: cleanFrom,
         authorRole: senderUser ? senderUser.role : 'requester',
         isInternal: false,
         content: body,
@@ -1191,13 +1298,31 @@ class EmailGatewayService {
         emailMessageId: payload.messageId,
         emailDispatched: true,
         emailRecipient: activeTicket.requesterEmail,
+        attachments: normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
       };
 
       const comments = db.get('comments') || [];
       db.set('comments', [...comments, comment]);
 
       activeTicket.updatedAt = new Date().toISOString();
-      if (activeTicket.status === 'pending_requester') {
+      activeTicket.hasRequesterReply = true;
+      activeTicket.lastReplyBy = 'requester';
+      activeTicket.lastReplyAt = new Date().toISOString();
+
+      if (normalizedAttachments.length > 0) {
+        const existingAtts = activeTicket.attachments || [];
+        const existingKeys = new Set(existingAtts.map((a) => `${a.name}-${a.size}`));
+        const toAdd = normalizedAttachments.filter((a) => !existingKeys.has(`${a.name}-${a.size}`));
+        if (toAdd.length > 0) {
+          activeTicket.attachments = [...existingAtts, ...toAdd];
+        }
+      }
+
+      if (activeTicket.status === 'resolved' || activeTicket.status === 'closed') {
+        activeTicket.status = 'open';
+        activeTicket.resolvedAt = undefined;
+        activeTicket.closedAt = undefined;
+      } else if (activeTicket.status === 'pending_requester' || activeTicket.status === 'on_hold') {
         activeTicket.status = 'in_progress';
       }
       db.set('tickets', tickets);
@@ -1238,14 +1363,13 @@ class EmailGatewayService {
     }
 
     // Ensure requester exists in user directory
-    let matchedUser = users.find((u) => u.email.toLowerCase() === from.toLowerCase());
+    let matchedUser = users.find((u) => u.email.toLowerCase() === cleanFrom);
     if (!matchedUser) {
       const newUserId = `usr-req-${Date.now().toString(36)}`;
-      const cleanName = from.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
       matchedUser = {
         id: newUserId,
-        email: from,
-        name: cleanName || 'Inbound Requester',
+        email: cleanFrom,
+        name: fromName || cleanFrom.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
         role: 'requester',
         organizationId: org.id,
         status: 'active',
@@ -1267,7 +1391,7 @@ class EmailGatewayService {
       channel: 'email',
       requesterId: matchedUser.id,
       requesterName: matchedUser.name,
-      requesterEmail: from,
+      requesterEmail: cleanFrom,
       organizationId: org.id,
       assignedTechnicianId: assignedTechId,
       assignedTechnicianName: assignedTechName,
@@ -1287,6 +1411,7 @@ class EmailGatewayService {
       slaStatus: 'within_target',
       slaFirstResponseDeadline: firstResponseDeadline,
       slaResolutionDeadline: resolutionDeadline,
+      attachments: normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
     };
 
     // Run automation rules for ticket_created
@@ -1331,6 +1456,14 @@ class EmailGatewayService {
     const config = db.get('defaultGatewayConfig');
     if (!config) {
       return { success: false, message: 'Default email gateway is not configured.', processedCount: 0 };
+    }
+
+    if (!config || !config.fromEmail || !config.incomingHost || config.status === 'not_configured') {
+      return {
+        success: true,
+        message: 'Email Gateway not configured. Configure Helpdesk Support Email in Settings to enable live polling.',
+        processedCount: 0,
+      };
     }
 
     if (config.enableInboundTicketGeneration === false) {
@@ -1388,11 +1521,11 @@ class EmailGatewayService {
         try {
           // Search unread messages, or inspect recent inbox items in case webmail already marked them seen
           let uidsToFetch: number[] = [];
-          const unseenResult = await client.search({ seen: false });
+          const unseenResult = await client.search({ seen: false }, { uid: true });
           if (Array.isArray(unseenResult) && unseenResult.length > 0) {
             uidsToFetch = unseenResult.slice(-25); // Process up to 25 recent unseen messages
           } else {
-            const allResult = await client.search({ all: true });
+            const allResult = await client.search({ all: true }, { uid: true });
             if (Array.isArray(allResult) && allResult.length > 0) {
               const recent = allResult.slice(-15);
               uidsToFetch = recent.filter((uid) => !this.isMessageAlreadyProcessed(undefined, `${config.incomingHost}:${uid}`));
@@ -1400,7 +1533,14 @@ class EmailGatewayService {
           }
 
           if (uidsToFetch.length > 0) {
-            for await (const message of client.fetch(uidsToFetch, { envelope: true, source: true, flags: true, uid: true })) {
+            // NB: fetchAll collects all messages into memory first, avoiding IMAP command interleaving deadlock
+            const fetchedMessages = await client.fetchAll(
+              uidsToFetch,
+              { envelope: true, source: true, flags: true, uid: true },
+              { uid: true }
+            );
+
+            for (const message of fetchedMessages) {
               const uidKey = `${config.incomingHost}:${message.uid}`;
               let rawMsgId = `msg-${message.uid}`;
               try {
@@ -1414,7 +1554,9 @@ class EmailGatewayService {
 
                 if (!message.source) continue;
                 const parsed: any = await simpleParser(message.source);
-                const fromAddress = parsed.from?.value?.[0]?.address || parsed.from?.text || '';
+                const rawFrom = parsed.from?.text || parsed.from?.value?.[0]?.address || '';
+                const cleanSender = extractCleanEmail(rawFrom) || (parsed.from?.value?.[0]?.address || '').toLowerCase().trim();
+                const fromAddress = rawFrom || cleanSender;
                 const subject = parsed.subject || 'Support Request via Inbound Email';
                 const body = parsed.text || (parsed.html ? parsed.html.replace(/<[^>]+>/g, ' ') : '') || '';
                 const messageId = parsed.messageId || `msg-${message.uid}`;
@@ -1428,7 +1570,7 @@ class EmailGatewayService {
                   ...(config.aliasAddresses ? config.aliasAddresses.split(/[,;\s]+/).map((a: string) => a.toLowerCase().trim()) : []),
                 ].filter(Boolean);
 
-                if (fromAddress && gatewayIdentities.includes(fromAddress.toLowerCase().trim())) {
+                if (cleanSender && gatewayIdentities.includes(cleanSender)) {
                   this.recordProcessedMessage(rawMsgId, uidKey);
                   continue;
                 }
@@ -1439,8 +1581,8 @@ class EmailGatewayService {
                   subject.toLowerCase().includes('[itl-test-') ||
                   subject.toLowerCase().includes('connection probe') ||
                   subject.toLowerCase().includes('handshake test') ||
-                  fromAddress.toLowerCase().includes('mailer-daemon') ||
-                  fromAddress.toLowerCase().includes('postmaster');
+                  cleanSender.includes('mailer-daemon') ||
+                  cleanSender.includes('postmaster');
 
                 if (isProbeOrBounce) {
                   this.recordProcessedMessage(rawMsgId, uidKey);
@@ -1451,7 +1593,34 @@ class EmailGatewayService {
                   continue;
                 }
 
-                if (fromAddress && (body.trim() || subject.trim())) {
+                const imapAttachments: any[] = [];
+                if (Array.isArray(parsed.attachments)) {
+                  for (const att of parsed.attachments) {
+                    try {
+                      const type = att.contentType || 'application/octet-stream';
+                      const name = att.filename || `attachment-${Date.now()}`;
+                      const contentBuf = att.content;
+                      const size = Number(att.size) || (contentBuf ? contentBuf.length : 0);
+                      let url = '';
+                      if (contentBuf && Buffer.isBuffer(contentBuf)) {
+                        if (size <= 8 * 1024 * 1024) {
+                          url = `data:${type};base64,${contentBuf.toString('base64')}`;
+                        }
+                      }
+                      imapAttachments.push({
+                        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                        name,
+                        size,
+                        type,
+                        url,
+                      });
+                    } catch (attErr: any) {
+                      console.warn('Error reading attachment from IMAP message:', attErr.message);
+                    }
+                  }
+                }
+
+                if (cleanSender && (body.trim() || subject.trim())) {
                   const inboundRes = await this.processInboundEmail({
                     from: fromAddress,
                     subject,
@@ -1460,6 +1629,7 @@ class EmailGatewayService {
                     uid: message.uid,
                     inReplyTo: parsed.inReplyTo,
                     references: parsed.references,
+                    attachments: imapAttachments,
                   });
                   if (inboundRes.mode === 'created') {
                     processedTickets.push(inboundRes.ticket);

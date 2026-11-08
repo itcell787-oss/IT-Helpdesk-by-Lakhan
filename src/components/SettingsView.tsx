@@ -44,6 +44,8 @@ import {
   Upload,
   Laptop,
   Tag,
+  Power,
+  Paperclip,
 } from 'lucide-react';
 import { api } from '../services/api';
 import {
@@ -699,6 +701,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  // -------------------------------------------------------------
+  // OTP Verification for Ticket Submission Toggle State
+  // -------------------------------------------------------------
+  const [requireOtpForTicketSubmission, setRequireOtpForTicketSubmission] = useState<boolean>(() => {
+    return systemSettings?.requireOtpForTicketSubmission ?? organization.systemSettings?.requireOtpForTicketSubmission ?? false;
+  });
+  const [otpSaving, setOtpSaving] = useState(false);
+
+  const handleToggleRequireOtp = async () => {
+    const nextVal = !requireOtpForTicketSubmission;
+    setOtpSaving(true);
+    try {
+      await api.updateSystemSettings({ requireOtpForTicketSubmission: nextVal });
+      setRequireOtpForTicketSubmission(nextVal);
+      if (onUpdateOrganization) {
+        onUpdateOrganization(organization.id, {
+          systemSettings: {
+            requireOtpForTicketSubmission: nextVal,
+            enableTicketRating: organization.systemSettings?.enableTicketRating ?? true,
+            enableCategoryAutoAssign: organization.systemSettings?.enableCategoryAutoAssign ?? true,
+            ...(organization.systemSettings || {}),
+          },
+        });
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed updating OTP verification setting');
+    } finally {
+      setOtpSaving(false);
+    }
+  };
+
   // Admin Access Level & Privileges Modal State
   const [privilegeUser, setPrivilegeUser] = useState<User | null>(null);
   const [privCanManageTickets, setPrivCanManageTickets] = useState(true);
@@ -843,23 +876,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || 'mail.confiancebizsol.tech');
   const [gwIncomingPort, setGwIncomingPort] = useState(defaultGateway.incomingPort || 993);
   const [gwIncomingSecurity, setGwIncomingSecurity] = useState(defaultGateway.incomingSecurity || 'ssl');
-  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || 'it-helpdesk@confiancebizsol.tech');
+  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
   const [gwIncomingPassword, setGwIncomingPassword] = useState(defaultGateway.incomingPassword || '');
   const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || 'mail.confiancebizsol.tech');
   const [gwOutgoingPort, setGwOutgoingPort] = useState(defaultGateway.outgoingPort || 587);
   const [gwOutgoingSecurity, setGwOutgoingSecurity] = useState(defaultGateway.outgoingSecurity || 'starttls');
-  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || 'it-helpdesk@confiancebizsol.tech');
+  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
   const [gwOutgoingPassword, setGwOutgoingPassword] = useState(defaultGateway.outgoingPassword || '');
   const [gwShowPassword, setGwShowPassword] = useState(false);
   const [gwFromName, setGwFromName] = useState(defaultGateway.fromName || 'IT Helpdesk Support');
   const [gwFromEmail, setGwFromEmail] = useState(defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
-  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || 'it-helpdesk@confiancebizsol.tech');
+  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
   const [gwAliasAddresses, setGwAliasAddresses] = useState(defaultGateway.aliasAddresses || '');
   const [showAliasGuide, setShowAliasGuide] = useState(true);
   const [gwSubjectPrefix, setGwSubjectPrefix] = useState(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
   const [gwEnableInbound, setGwEnableInbound] = useState(defaultGateway.enableInboundTicketGeneration ?? true);
   const [gwEnableOutbound, setGwEnableOutbound] = useState(defaultGateway.enableOutboundReplyNotification ?? true);
-  const [gwPollingInterval, setGwPollingInterval] = useState(defaultGateway.pollingIntervalMinutes || 5);
+  const [gwPollingInterval, setGwPollingInterval] = useState(defaultGateway.pollingIntervalMinutes || 1);
   const [gwTesting, setGwTesting] = useState(false);
   const [gwTestResult, setGwTestResult] = useState<string | null>(null);
   const [gwDiagnostics, setGwDiagnostics] = useState<any | null>(null);
@@ -876,34 +909,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setGwIncomingHost(defaultGateway.incomingHost || 'mail.confiancebizsol.tech');
     setGwIncomingPort(defaultGateway.incomingPort || 993);
     setGwIncomingSecurity(defaultGateway.incomingSecurity || 'ssl');
-    setGwIncomingUser(defaultGateway.incomingUsername || 'it-helpdesk@confiancebizsol.tech');
+    setGwIncomingUser(defaultGateway.incomingUsername || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
     if (defaultGateway.incomingPassword !== undefined) {
       setGwIncomingPassword(defaultGateway.incomingPassword || '');
     }
     setGwOutgoingHost(defaultGateway.outgoingHost || 'mail.confiancebizsol.tech');
     setGwOutgoingPort(defaultGateway.outgoingPort || 587);
     setGwOutgoingSecurity(defaultGateway.outgoingSecurity || 'starttls');
-    setGwOutgoingUser(defaultGateway.outgoingUsername || 'it-helpdesk@confiancebizsol.tech');
+    setGwOutgoingUser(defaultGateway.outgoingUsername || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
     if (defaultGateway.outgoingPassword !== undefined) {
       setGwOutgoingPassword(defaultGateway.outgoingPassword || '');
     }
     setGwFromName(defaultGateway.fromName || 'IT Helpdesk Support');
     setGwFromEmail(defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
-    setGwReplyToEmail(defaultGateway.replyToEmail || 'it-helpdesk@confiancebizsol.tech');
+    setGwReplyToEmail(defaultGateway.replyToEmail || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
     setGwAliasAddresses(defaultGateway.aliasAddresses || '');
     setGwSubjectPrefix(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
     setGwEnableInbound(defaultGateway.enableInboundTicketGeneration ?? true);
     setGwEnableOutbound(defaultGateway.enableOutboundReplyNotification ?? true);
-    setGwPollingInterval(defaultGateway.pollingIntervalMinutes || 5);
+    setGwPollingInterval(defaultGateway.pollingIntervalMinutes || 1);
   }, [defaultGateway]);
   // Inbound Email Simulator Form State
   const [showEmailSimulator, setShowEmailSimulator] = useState(false);
-  const [simFrom, setSimFrom] = useState('user.employee@company.com');
-  const [simSubject, setSimSubject] = useState('VPN Client disconnection issue on laptop');
-  const [simBody, setSimBody] = useState('Hello Support,\n\nMy VPN connection keeps dropping every 15 minutes. Please check my network configuration.');
+  const [simFrom, setSimFrom] = useState('lakhan@confiancebizsol.tech');
+  const [simSubject, setSimSubject] = useState('Support Request from Lakhan');
+  const [simBody, setSimBody] = useState('Hello Support,\n\nI am experiencing an issue with my workstation network configuration. Please assist.');
   const [simCc, setSimCc] = useState('');
   const [simLoading, setSimLoading] = useState(false);
   const [simMessage, setSimMessage] = useState<string | null>(null);
+  const [gwTogglingInbound, setGwTogglingInbound] = useState(false);
+  const [simAttachments, setSimAttachments] = useState<Array<{ id: string; name: string; size: number; type: string; url: string }>>([]);
 
   // -------------------------------------------------------------
   // Organization Branding State
@@ -1240,6 +1275,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  const handleToggleInboundEmail = async () => {
+    setGwTogglingInbound(true);
+    try {
+      const nextVal = !gwEnableInbound;
+      const res = await api.toggleInboundEmail(nextVal);
+      setGwEnableInbound(res.enableInboundTicketGeneration);
+      if (onUpdateOrganization) {
+        onUpdateOrganization(organization.id, {
+          systemSettings: {
+            requireOtpForTicketSubmission: organization.systemSettings?.requireOtpForTicketSubmission ?? false,
+            enableTicketRating: organization.systemSettings?.enableTicketRating ?? true,
+            enableCategoryAutoAssign: organization.systemSettings?.enableCategoryAutoAssign ?? true,
+            ...(organization.systemSettings || {}),
+            enableInboundTicketGeneration: res.enableInboundTicketGeneration,
+          },
+        });
+      }
+      setGwTestResult(`✓ Inbound Email-to-Ticket Generation is now ${res.enableInboundTicketGeneration ? 'ENABLED (ON)' : 'DISABLED (OFF)'}`);
+      setTimeout(() => setGwTestResult(null), 4000);
+    } catch (err: any) {
+      alert(err.message || 'Failed to toggle email ticket generation');
+    } finally {
+      setGwTogglingInbound(false);
+    }
+  };
+
   const handleSimulateInboundEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     setSimLoading(true);
@@ -1250,8 +1311,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         subject: simSubject,
         body: simBody,
         cc: simCc || undefined,
+        attachments: simAttachments.length > 0 ? simAttachments : undefined,
       });
-      setSimMessage(`✓ ${res.message}`);
+      setSimMessage(`✓ ${res.message}${simAttachments.length > 0 ? ` (${simAttachments.length} attachment(s) included)` : ''}`);
     } catch (err: any) {
       setSimMessage(`✕ Error: ${err.message}`);
     } finally {
@@ -2111,6 +2173,85 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </form>
               </div>
             </div>
+
+            {/* Super Admin Quick Governance Controls */}
+            {currentUser.role === 'superadmin' && (
+              <div className="lg:col-span-3 neu-card p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-white/10">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+                      Super Administrator System Controls
+                    </h3>
+                  </div>
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800">
+                    Master Authority
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Email Ticket Generation Master Switch */}
+                  <div className="p-4 rounded-xl neu-flat border border-slate-200 dark:border-white/10 flex items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Mail className="w-4 h-4 text-cyan-600" />
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">
+                          Generate Ticket via Email
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {gwEnableInbound
+                          ? 'Active: Incoming emails create tickets in General IT Support.'
+                          : 'Disabled: Inbound email ticket creation is paused.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={gwTogglingInbound}
+                      onClick={handleToggleInboundEmail}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 shadow-sm ${
+                        gwEnableInbound
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'bg-rose-600 hover:bg-rose-700 text-white'
+                      } disabled:opacity-50`}
+                    >
+                      <Power className="w-3.5 h-3.5" />
+                      <span>{gwTogglingInbound ? 'Updating...' : gwEnableInbound ? 'ON (Active)' : 'OFF (Suspended)'}</span>
+                    </button>
+                  </div>
+
+                  {/* Require OTP for Portal Submission */}
+                  <div className="p-4 rounded-xl neu-flat border border-slate-200 dark:border-white/10 flex items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <KeyRound className="w-4 h-4 text-amber-600" />
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">
+                          Require OTP for Ticket Submission
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {requireOtpForTicketSubmission
+                          ? 'Active: Requesters must verify an OTP code before submission.'
+                          : 'Optional: Users can submit tickets immediately without an OTP code.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={otpSaving}
+                      onClick={handleToggleRequireOtp}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 shadow-sm ${
+                        requireOtpForTicketSubmission
+                          ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                          : 'bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-200'
+                      } disabled:opacity-50`}
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      <span>{otpSaving ? 'Updating...' : requireOtpForTicketSubmission ? 'ON (Required)' : 'OFF (Optional)'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3863,16 +4004,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-mono font-bold rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>{gwFromEmail || 'it-helpdesk@confiancebizsol.tech'}</span>
-              </span>
+              {gwFromEmail ? (
+                <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-mono font-bold rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>{gwFromEmail}</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 px-3 py-1 text-xs font-mono font-bold rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60">
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  <span>No Email Configured</span>
+                </span>
+              )}
               <button
                 type="button"
-                disabled={gwPolling}
+                disabled={gwPolling || !gwFromEmail}
                 onClick={handlePollMailboxNow}
                 className="neu-btn px-3 py-1 text-xs font-bold rounded-xl text-cyan-700 dark:text-cyan-400 hover:text-cyan-800 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                title="Poll unread emails from mailbox right now"
+                title={gwFromEmail ? "Poll unread emails from mailbox right now" : "Configure email gateway first"}
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${gwPolling ? 'animate-spin' : ''}`} />
                 <span>{gwPolling ? 'Checking...' : 'Check Mailbox Now'}</span>
@@ -3894,6 +4042,55 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
+          {/* Super Admin Master Toggle: Generate Ticket via Email [ON / OFF] */}
+          <div className="p-4 rounded-2xl neu-card border-2 border-slate-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-slate-50 via-white to-slate-50 dark:from-slate-900/60 dark:via-slate-900/40 dark:to-slate-900/60 shadow-sm">
+            <div className="flex items-start gap-3.5">
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border transition-all ${
+                gwEnableInbound
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 shadow-emerald-500/10 shadow-lg'
+                  : 'bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400'
+              }`}>
+                <Power className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                    Generate Ticket via Email
+                  </span>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold font-mono border flex items-center gap-1.5 transition-all ${
+                    gwEnableInbound
+                      ? 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700/60'
+                      : 'bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700/60'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${gwEnableInbound ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                    {gwEnableInbound ? 'ON — Active' : 'OFF — Suspended'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 font-medium leading-relaxed">
+                  {gwEnableInbound ? (
+                    <>When <strong className="text-emerald-600 dark:text-emerald-400">ON</strong>: Any emails received at <code className="font-mono text-cyan-600 font-bold">{gwFromEmail}</code> automatically create new support tickets in General IT Support. Replies thread directly into existing tickets.</>
+                  ) : (
+                    <>When <strong className="text-rose-600 dark:text-rose-400">OFF</strong>: Email ticket creation is completely paused. New tickets will NOT be created from incoming emails. (Threaded replies to existing tickets still append).</>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={gwTogglingInbound}
+              onClick={handleToggleInboundEmail}
+              className={`px-4 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer shrink-0 shadow-md ${
+                gwEnableInbound
+                  ? 'bg-rose-600 hover:bg-rose-700 active:scale-95 text-white shadow-rose-500/20'
+                  : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white shadow-emerald-500/20'
+              } disabled:opacity-50`}
+            >
+              <Power className="w-4 h-4" />
+              <span>{gwTogglingInbound ? 'Saving State...' : gwEnableInbound ? 'Turn OFF (Suspend Email Tickets)' : 'Turn ON (Enable Email Tickets)'}</span>
+            </button>
+          </div>
+
           {/* Active Helpdesk Support Email & Single Active Gateway Notice */}
           <div className="p-4 rounded-xl bg-gradient-to-r from-cyan-500/10 via-emerald-500/10 to-transparent border border-cyan-500/30 dark:border-cyan-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -3905,16 +4102,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
                     Active Support Email:
                   </span>
-                  <span className="px-2.5 py-0.5 rounded font-mono text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    {gwFromEmail || 'it-helpdesk@confiancebizsol.tech'}
-                  </span>
+                  {gwFromEmail ? (
+                    <span className="px-2.5 py-0.5 rounded font-mono text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/60 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      {gwFromEmail}
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded font-mono text-xs font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/60 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-500" />
+                      Not Configured
+                    </span>
+                  )}
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950/50 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800/40 font-bold">
                     Single Active Gateway Mode
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 font-medium">
-                  <strong>Only one support email is active at a time.</strong> All emails sent to <code className="font-mono text-cyan-600 font-bold">{gwFromEmail}</code> automatically create tickets or thread into the Activity &amp; Communications Stream.
+                  <strong>Only one support email is active at a time.</strong> {gwFromEmail ? (
+                    <>All emails sent to <code className="font-mono text-cyan-600 font-bold">{gwFromEmail}</code> automatically create tickets or thread into the Activity &amp; Communications Stream.</>
+                  ) : (
+                    <>No support email is currently configured. Select a 1-Click Preset or enter your server details below to activate email ticketing.</>
+                  )}
                 </p>
               </div>
             </div>
@@ -4560,6 +4768,54 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     onChange={(e) => setSimBody(e.target.value)}
                     className="w-full p-2 neu-input bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
                   />
+                </div>
+
+                {/* Email Attachment Simulation */}
+                <div className="p-3 rounded-xl neu-flat border border-slate-200 dark:border-white/10 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
+                      <Paperclip className="w-3.5 h-3.5 text-cyan-600" />
+                      <span>Email Attachments ({simAttachments.length})</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const sampleImg: any = {
+                            id: `att-sim-${Date.now()}`,
+                            name: `system-diagnostic-${simAttachments.length + 1}.png`,
+                            size: 28672,
+                            type: 'image/png',
+                            url: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180"><rect width="320" height="180" fill="%230f172a" rx="10"/><rect x="10" y="10" width="300" height="160" fill="%231e293b" rx="6"/><text x="160" y="80" font-family="monospace" font-size="14" fill="%2338bdf8" text-anchor="middle" font-weight="bold">System Diagnostic Log</text><text x="160" y="110" font-family="monospace" font-size="11" fill="%2310b981" text-anchor="middle">Status: Network Packet Trace OK</text></svg>',
+                          };
+                          setSimAttachments([...simAttachments, sampleImg]);
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg neu-btn text-cyan-700 dark:text-cyan-300 hover:text-cyan-800 cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Attach Sample Screenshot</span>
+                      </button>
+                      {simAttachments.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSimAttachments([])}
+                          className="text-[11px] text-rose-500 hover:text-rose-600 cursor-pointer font-bold"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {simAttachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {simAttachments.map((att) => (
+                        <span key={att.id} className="px-2 py-0.5 rounded bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 text-[11px] font-mono border border-cyan-300 dark:border-cyan-800 flex items-center gap-1">
+                          <Paperclip className="w-3 h-3" />
+                          {att.name} ({(att.size / 1024).toFixed(0)} KB)
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-end pt-1">

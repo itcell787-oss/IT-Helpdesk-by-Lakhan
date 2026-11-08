@@ -518,7 +518,7 @@ export const api = {
     });
   },
 
-  async pollDefaultGateway(inboundMsg?: { from?: string; subject?: string; body?: string; cc?: string; managerEmail?: string }): Promise<any> {
+  async pollDefaultGateway(inboundMsg?: { from?: string; subject?: string; body?: string; cc?: string; managerEmail?: string; attachments?: any[] }): Promise<any> {
     return request('/api/email/default-gateway/poll', {
       method: 'POST',
       body: JSON.stringify(inboundMsg || {}),
@@ -530,10 +530,10 @@ export const api = {
     return request('/api/email-channels');
   },
 
-  async simulateInboundEmail(from: string, subject: string, body: string, cc?: string, managerEmail?: string): Promise<{ mode: string; ticket: Ticket; comment?: any }> {
+  async simulateInboundEmail(from: string, subject: string, body: string, cc?: string, managerEmail?: string, attachments?: any[]): Promise<{ mode: string; ticket: Ticket; comment?: any }> {
     return request('/api/email/simulate-inbound', {
       method: 'POST',
-      body: JSON.stringify({ from, subject, body, cc, managerEmail }),
+      body: JSON.stringify({ from, subject, body, cc, managerEmail, attachments }),
     });
   },
 
@@ -758,7 +758,14 @@ export const api = {
     return request('/api/email/delivery-logs');
   },
 
-  async sendInboundEmailWebhook(payload: { from: string; subject: string; body: string; cc?: string; managerEmail?: string }): Promise<any> {
+  async toggleInboundEmail(enabled?: boolean): Promise<{ success: boolean; enableInboundTicketGeneration: boolean; message: string }> {
+    return request('/api/email/inbound-toggle', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  async sendInboundEmailWebhook(payload: { from: string; subject: string; body: string; cc?: string; managerEmail?: string; attachments?: any[] }): Promise<any> {
     return request('/api/email/inbound', {
       method: 'POST',
       body: JSON.stringify(payload),

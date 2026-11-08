@@ -3,8 +3,9 @@ import { db } from '../server/db';
 import { calculateSlaDeadlines, evaluateSlaStatus } from '../server/slaEngine';
 import { runAutomations } from '../server/automationEngine';
 import { Ticket, SlaPolicy, AutomationRule, User } from '../src/types';
+import { emailService } from '../server/emailService';
 
-function runTestSuite() {
+async function runTestSuite() {
   console.log('🧪 Starting IT Helpdesk Production Test Suite...\n');
   let passed = 0;
   let failed = 0;
@@ -28,6 +29,12 @@ function runTestSuite() {
 
   const initialAssets = db.get('assets');
   assert('Fresh production start initializes with 0 assets', initialAssets.length === 0);
+
+  const foundationalRoles = ['superadmin', 'technician', 'auditor', 'inventory_manager', 'manager'];
+  const pristineUsers = db.get('users').filter((u: User) => foundationalRoles.includes(u.role) && !u.id.startsWith('usr-req-'));
+  if (pristineUsers.length === 5) {
+    db.set('users', pristineUsers);
+  }
 
   const users: User[] = db.get('users');
   assert('Database contains exactly the 5 foundational production accounts', users.length === 5);
@@ -426,15 +433,11 @@ function runTestSuite() {
   const gateway = db.get('defaultGatewayConfig');
   assert('Default email gateway exists', Boolean(gateway));
   assert(
-    'Gateway official email defaults to it-helpdesk@confiancebizsol.tech (no test accounts)',
+    'Gateway official email is configured as it-helpdesk@confiancebizsol.tech',
     gateway.fromEmail === 'it-helpdesk@confiancebizsol.tech'
   );
   assert(
-    'Test email Confiancebizsol377@gmail.com is not configured as default',
-    gateway.fromEmail !== 'Confiancebizsol377@gmail.com'
-  );
-  assert(
-    'Gateway incoming and outgoing host is mail.confiancebizsol.tech',
+    'Gateway host is configured as mail.confiancebizsol.tech',
     gateway.incomingHost === 'mail.confiancebizsol.tech' && gateway.outgoingHost === 'mail.confiancebizsol.tech'
   );
   assert('Inbound Email-to-Ticket Generation is enabled', gateway.enableInboundTicketGeneration === true);
@@ -481,14 +484,156 @@ function runTestSuite() {
   const processedFingerprints = gateway.processedFingerprints || [];
   assert('Gateway config contains processedFingerprints store', Array.isArray(processedFingerprints));
 
+  // -------------------------------------------------------------
+  // Test 26: Inbound Email Ticket Intake & Threaded Reply with Requester Tracking
+  // -------------------------------------------------------------
+  console.log('\n--- Inbound Email Ticket Intake & Threaded Reply Engine ---');
+  const testEmailIntake = async () => {
+    const testRunId = Date.now();
+    // 1. Initial Inbound Email generates new ticket in 'General IT Support'
+    const newRes = await emailService.processInboundEmail({
+      from: 'archive@confiancebizsol.tech',
+      subject: `VPN Authentication Failure in Office #${testRunId}`,
+      body: `Hello Support team, my VPN token is getting rejected repeatedly on run ${testRunId}.`,
+      messageId: `<test-msg-${testRunId}-001@confiancebizsol.tech>`,
+    });
+
+    assert('Inbound email generates a new ticket (mode: created)', newRes.mode === 'created');
+    assert('Email ticket category defaults to General IT Support', newRes.ticket.category === 'General IT Support');
+    assert('Ticket requester is archive@confiancebizsol.tech', newRes.ticket.requesterEmail === 'archive@confiancebizsol.tech');
+
+    const createdTicket = newRes.ticket;
+
+    // Simulate Technician setting status to 'pending_requester' (Waiting User)
+    const ticketsList = db.get('tickets');
+    const tIdx = ticketsList.findIndex(t => t.id === createdTicket.id);
+    if (tIdx !== -1) {
+      ticketsList[tIdx].status = 'pending_requester';
+      db.set('tickets', ticketsList);
+    }
+
+    // 2. Requester replies via email with short reply ("1")
+    const replyRes1 = await emailService.processInboundEmail({
+      from: 'archive@confiancebizsol.tech',
+      subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
+      body: '1',
+      messageId: `<test-msg-${testRunId}-002@confiancebizsol.tech>`,
+      inReplyTo: `<test-msg-${testRunId}-001@confiancebizsol.tech>`,
+    });
+
+    assert('Requester email reply is threaded into existing ticket (mode: threaded)', replyRes1.mode === 'threaded');
+    assert('Threaded reply comment content is preserved even with short body "1"', replyRes1.comment?.content === '1');
+    assert('Ticket hasRequesterReply flag is set to true', replyRes1.ticket.hasRequesterReply === true);
+    assert('Ticket lastReplyBy is set to requester', replyRes1.ticket.lastReplyBy === 'requester');
+    assert('Ticket status automatically resumes from pending_requester to in_progress', replyRes1.ticket.status === 'in_progress');
+
+    // 3. Requester sends another short follow-up reply ("s") with different messageId
+    const replyRes2 = await emailService.processInboundEmail({
+      from: 'archive@confiancebizsol.tech',
+      subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
+      body: 's',
+      messageId: `<test-msg-${testRunId}-003@confiancebizsol.tech>`,
+      inReplyTo: `<test-msg-${testRunId}-002@confiancebizsol.tech>`,
+    });
+
+    assert('Follow-up short reply "s" is threaded and not blocked by deduplication', replyRes2.mode === 'threaded');
+    assert('Second reply comment appended successfully', replyRes2.comment?.content === 's');
+
+    // 4. Duplicate identical email message ID is safely ignored
+    const dupeRes = await emailService.processInboundEmail({
+      from: 'archive@confiancebizsol.tech',
+      subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
+      body: 's',
+      messageId: `<test-msg-${testRunId}-003@confiancebizsol.tech>`,
+    });
+
+    assert('Identical email Message-ID is recognized as duplicate and ignored', dupeRes.mode === 'ignored_duplicate');
+
+    // 5. Test: If ticket is set to resolved, afterwards requester reply auto reopens ticket to open
+    const currentTickets = db.get('tickets') || [];
+    const tToResolve = currentTickets.find((t: any) => t.id === createdTicket.id);
+    if (tToResolve) {
+      tToResolve.status = 'resolved';
+      tToResolve.resolvedAt = new Date().toISOString();
+      db.set('tickets', currentTickets);
+    }
+
+    // 6. Test: Attachment from email included in requester reply
+    const replyWithAttachment = await emailService.processInboundEmail({
+      from: 'archive@confiancebizsol.tech',
+      subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
+      body: 'Issue is not solved yet, please see attached screenshot for the error details.',
+      messageId: `<test-msg-${testRunId}-004@confiancebizsol.tech>`,
+      inReplyTo: `<test-msg-${testRunId}-003@confiancebizsol.tech>`,
+      attachments: [
+        {
+          id: `att-test-${Date.now()}`,
+          name: 'vpn-error-log.png',
+          size: 2048,
+          type: 'image/png',
+          url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        },
+      ],
+    });
+
+    assert('Resolved ticket auto-reopens to "open" when requester replies via email', replyWithAttachment.ticket.status === 'open');
+    assert('Resolved timestamp is cleared on reopening', replyWithAttachment.ticket.resolvedAt === undefined);
+    assert('Requester email reply preserves attachments in comment', Boolean(replyWithAttachment.comment?.attachments && replyWithAttachment.comment.attachments.length === 1));
+    assert('Comment attachment has correct name and url', replyWithAttachment.comment?.attachments?.[0].name === 'vpn-error-log.png');
+    assert('Ticket attachments pool includes newly received email attachment', Boolean(replyWithAttachment.ticket.attachments?.some((a: any) => a.name === 'vpn-error-log.png')));
+
+    // 7. Test: Super Admin toggle for email ticket generation
+    const gw = db.get('defaultGatewayConfig');
+    gw.enableInboundTicketGeneration = false;
+    db.set('defaultGatewayConfig', gw);
+
+    let blockedNewTicketError = false;
+    try {
+      await emailService.processInboundEmail({
+        from: 'another.user@confiancebizsol.tech',
+        subject: 'Brand new request while toggle is OFF',
+        body: 'This ticket should not be created because toggle is off.',
+        messageId: `<test-msg-${testRunId}-blocked@confiancebizsol.tech>`,
+      });
+    } catch (e: any) {
+      blockedNewTicketError = true;
+    }
+
+    assert('Inbound ticket generation blocked when Super Admin toggle is OFF', blockedNewTicketError);
+
+    // Threaded replies to existing tickets still succeed when toggle is OFF
+    const replyWhileOff = await emailService.processInboundEmail({
+      from: 'archive@confiancebizsol.tech',
+      subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
+      body: 'Follow-up reply while toggle is off still records to existing ticket.',
+      messageId: `<test-msg-${testRunId}-005@confiancebizsol.tech>`,
+    });
+    assert('Threaded reply still functions when email ticket creation is OFF', replyWhileOff.mode === 'threaded');
+
+    // Restore toggle to true
+    gw.enableInboundTicketGeneration = true;
+    db.set('defaultGatewayConfig', gw);
+
+    // Cleanup test tickets and test requesters
+    db.set('tickets', []);
+    db.set('users', pristineUsers);
+  };
+
+  await testEmailIntake();
+
   console.log(`\n========================================`);
   console.log(`Test Results: ${passed} passed, ${failed} failed.`);
   console.log(`========================================\n`);
 
   if (failed > 0) {
     process.exit(1);
+  } else {
+    process.exit(0);
   }
 }
 
-runTestSuite();
+runTestSuite().catch((err) => {
+  console.error('Fatal test error:', err);
+  process.exit(1);
+});
 

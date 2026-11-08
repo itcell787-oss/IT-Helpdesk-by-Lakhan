@@ -989,11 +989,13 @@
     "replyToEmail": "it-helpdesk@confiancebizsol.tech",
     "subjectPrefix": "[ITL-{{ticketId}}]",
     "status": "connected",
+    "lastPollStatus": "Connected to mail.confiancebizsol.tech: Ready for email-to-ticket ingestion.",
     "enableInboundTicketGeneration": true,
     "enableOutboundReplyNotification": true,
     "pollingIntervalMinutes": 1,
-    "lastTestedAt": "2026-10-03T19:00:00Z",
-    "lastPolledAt": "2026-10-03T19:00:00Z"
+    "processedMessageIds": [],
+    "processedUids": [],
+    "processedFingerprints": []
   },
   "otpRecords": [],
   "currentUserId": "",

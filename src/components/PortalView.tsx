@@ -721,7 +721,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
               IT Self-Service Portal
             </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-              How can IT support assist you today, <span className="text-cyan-600 dark:text-cyan-400 font-mono">{currentUser ? `[${currentUser.employeeCode || (currentUser.name.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010')}]${currentUser.name}` : 'there'}</span>?
+              How can IT support assist you today, <span className="text-cyan-600 dark:text-cyan-400">{currentUser ? (currentUser.name.trim().split(/\s+/)[0] || currentUser.name) : 'there'}</span>?
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
               Submit support tickets, request hardware &amp; software, track open requests, or browse step-by-step guides.
