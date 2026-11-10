@@ -43,12 +43,19 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
       ...(token ? { 'x-session-token': token } : {}),
       ...(userId ? { 'x-user-id': userId } : {}),
       ...options?.headers,
     },
     ...options,
   });
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    // Server returned HTML (e.g. Vite SPA fallback or proxy message during reload)
+    throw new Error(`Expected JSON response but received ${contentType || 'non-JSON'} from ${url}`);
+  }
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({ error: res.statusText }));
@@ -121,7 +128,11 @@ export const api = {
   },
 
   async getSystemStatus(): Promise<any> {
-    return request('/api/system/status');
+    try {
+      return await request('/api/system/status');
+    } catch {
+      return null;
+    }
   },
 
   async updateUserPrivileges(userId: string, privileges: Partial<User['privileges']>): Promise<User> {

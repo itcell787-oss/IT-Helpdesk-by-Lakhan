@@ -30,6 +30,14 @@ async function startServer() {
     next();
   });
 
+  // Catch-all for unmatched /api routes so they never fall through to Vite SPA index.html
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({
+      error: `API endpoint ${_req.method} ${_req.originalUrl} not found`,
+      code: 'NOT_FOUND',
+    });
+  });
+
   if (!isProd) {
     // In dev: mount Vite middlewares
     const { createServer } = await import('vite');

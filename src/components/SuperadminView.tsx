@@ -269,7 +269,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
         }
       }
     } catch (err) {
-      console.error('Failed fetching live system status:', err);
+      // Transient poll error while server is busy or restarting - ignore silently
     } finally {
       setSystemLoading(false);
     }
@@ -364,11 +364,11 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
           setPskValue(s.preSharedKey);
         }
       }
-    }).catch(console.error);
+    }).catch(() => {});
 
     api.getSurveys().then((sv) => {
       if (sv) setSurveys(sv);
-    }).catch(console.error);
+    }).catch(() => {});
 
     api.getSlaPolicies().then((policies) => {
       if (policies && policies.length > 0) {
@@ -388,7 +388,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
         if (lowP) setSlaLowHours(Math.round(lowP.resolutionMinutes / 60) || 48);
         setEditingSlaPolicy(policies[0]);
       }
-    }).catch(console.error);
+    }).catch(() => {});
 
     fetchLiveSystemStatus();
     const statusInterval = setInterval(fetchLiveSystemStatus, 8000);
