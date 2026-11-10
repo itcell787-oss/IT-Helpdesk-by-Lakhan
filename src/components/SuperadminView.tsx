@@ -39,6 +39,14 @@ import {
   Mail,
   Send,
   Inbox,
+  Globe,
+  Terminal,
+  FileCode,
+  Lock,
+  Cpu,
+  Network,
+  BookOpen,
+  FileText,
 } from 'lucide-react';
 import { Organization, AuditLog, User as UserType, UserRole, ServiceCatalogItem, SatisfactionSurvey, SlaPolicy, DefaultEmailGatewayConfig, Ticket } from '../types';
 import { api } from '../services/api';
@@ -223,12 +231,47 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   const [liveSystemStatus, setLiveSystemStatus] = useState<any>(null);
   const [systemLoading, setSystemLoading] = useState(false);
 
+  // Live Domain Setup & AGPL License State
+  const [hostingDomain, setHostingDomain] = useState('helpdesk.lakhanglobal.com');
+  const [serverPublicIp, setServerPublicIp] = useState('');
+  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
+
+  const handleCopyCode = (snippetId: string, text: string) => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedSnippet(snippetId);
+      setTimeout(() => {
+        setCopiedSnippet((prev) => (prev === snippetId ? null : prev));
+      }, 2500);
+    } catch (e) {
+      console.warn('Copy failed', e);
+    }
+  };
+
   const fetchLiveSystemStatus = React.useCallback(async () => {
     try {
+      setSystemLoading(true);
       const res = await api.getSystemStatus();
-      if (res) setLiveSystemStatus(res);
+      if (res) {
+        setLiveSystemStatus(res);
+        if (res.serverIp && res.serverIp !== '127.0.0.1') {
+          setServerPublicIp((prev) => prev || res.serverIp);
+        }
+      }
     } catch (err) {
       console.error('Failed fetching live system status:', err);
+    } finally {
+      setSystemLoading(false);
     }
   }, []);
 
@@ -2974,7 +3017,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
 
       {/* TAB 4: System Health & Real-Time Engine Diagnostics */}
       {activeTab === 'system' && (
-        <div className="space-y-4 animate-in fade-in">
+        <div className="space-y-6 animate-in fade-in">
           {/* Top Live Uptime & Engine Status Banner */}
           <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md bg-gradient-to-r from-slate-50 via-white to-cyan-50/30 dark:from-slate-900 dark:via-slate-900/90 dark:to-cyan-950/20">
             <div className="flex items-center gap-3">
@@ -2983,11 +3026,20 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                 <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
               </div>
               <div>
-                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
                   <span>Engine Status: Online &amp; Operational</span>
                   <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/40">
                     HEALTHY
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowLicenseModal(true)}
+                    className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700/40 hover:bg-indigo-200 cursor-pointer flex items-center gap-1 transition-colors"
+                    title="View GNU AGPL-3.0 License details"
+                  >
+                    <BookOpen className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                    <span>AGPL-3.0 · Lakhan Prajapati</span>
+                  </button>
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
                   Engines Uptime: <strong className="text-cyan-700 dark:text-cyan-400">{liveSystemStatus?.engineUptimeFormatted || `${stats.systemUptimeHours}h`}</strong> · Process PID: <strong className="text-slate-700 dark:text-slate-300">{liveSystemStatus?.processId || 'PID'}</strong> · Title: <strong className="text-slate-700 dark:text-slate-300">{liveSystemStatus?.processTitle || 'node'}</strong>
@@ -3005,18 +3057,18 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                 className="neu-btn px-3 py-1.5 text-xs font-semibold rounded-xl flex items-center gap-1.5 text-slate-700 dark:text-slate-300 hover:text-cyan-600 cursor-pointer shadow-xs"
                 title="Force refresh live engine status"
               >
-                <RefreshCw className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                <RefreshCw className={`w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 ${systemLoading ? 'animate-spin' : ''}`} />
                 <span>Refresh Live</span>
               </button>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Card 1: Runtime Environment & Hosting */}
+            {/* Card 1: Runtime Environment & Host Platform */}
             <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3 shadow-md">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Server className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                Runtime Environment &amp; Hosting
+                Runtime Environment &amp; Hosting Platform
               </h3>
               <div className="text-xs space-y-2.5 text-slate-700 dark:text-slate-300 divide-y divide-slate-200/80 dark:divide-white/5">
                 <div className="flex items-center justify-between pt-1">
@@ -3026,15 +3078,22 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center justify-between pt-2">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Operating System / Distro:</span>
+                  <span className="font-mono font-semibold text-cyan-700 dark:text-cyan-400">
+                    {liveSystemStatus?.osDistro || (liveSystemStatus?.osRelease ? `Linux (${liveSystemStatus.osRelease})` : 'Ubuntu 22.04 LTS / Debian Linux')}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2">
                   <span className="text-slate-500 dark:text-slate-400 font-medium">Node.js Engine:</span>
                   <span className="font-mono font-bold text-cyan-700 dark:text-cyan-400">
                     {liveSystemStatus?.nodeEngine || 'v22.x LTS'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between pt-2">
-                  <span className="text-slate-500 dark:text-slate-400 font-medium">Memory RSS:</span>
-                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                    {liveSystemStatus?.memoryRss || '84.2 MB'}
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Server Host IPv4:</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <Network className="w-3.5 h-3.5 text-slate-400" />
+                    {liveSystemStatus?.serverIp || '127.0.0.1'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between pt-2">
@@ -3044,19 +3103,19 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center justify-between pt-2">
-                  <span className="text-slate-500 dark:text-slate-400 font-medium">Host Kernel / OS:</span>
-                  <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                    {liveSystemStatus?.osType ? `${liveSystemStatus.osType} ${liveSystemStatus.osRelease}` : 'Linux 6.x'}
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">License &amp; Copyright:</span>
+                  <span className="font-mono text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    {liveSystemStatus?.license || 'AGPL-3.0'} · {liveSystemStatus?.licenseHolder || 'Lakhan Prajapati'}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Card 2: Data Integrity & Storage */}
+            {/* Card 2: Data Integrity & Storage Engine */}
             <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3 shadow-md">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Database className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                Data Integrity &amp; Storage
+                Data Integrity &amp; Storage Engine
               </h3>
               <div className="text-xs space-y-2.5 text-slate-700 dark:text-slate-300 divide-y divide-slate-200/80 dark:divide-white/5">
                 <div className="flex items-center justify-between pt-1">
@@ -3066,16 +3125,36 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center justify-between pt-2">
-                  <span className="text-slate-500 dark:text-slate-400 font-medium">Write Mode:</span>
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Persistence Mode:</span>
                   <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
                     {liveSystemStatus?.writeMode || 'Atomic fs.writeFileSync'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between pt-2">
-                  <span className="text-slate-500 dark:text-slate-400 font-medium">Database Size:</span>
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Database File Size:</span>
                   <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
                     {liveSystemStatus?.databaseSize || `${stats.databaseSizeKb} KB`}
                   </span>
+                </div>
+                <div className="flex flex-col gap-1 pt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500 dark:text-slate-400 font-medium">Host Disk Drive:</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                      {liveSystemStatus?.diskFree || 'Free'} free / {liveSystemStatus?.diskTotal || 'Total'} ({liveSystemStatus?.diskUsedPercent ?? 0}% used)
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-700/60 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className={`h-1.5 rounded-full ${
+                        (liveSystemStatus?.diskUsedPercent ?? 0) > 85
+                          ? 'bg-red-500'
+                          : (liveSystemStatus?.diskUsedPercent ?? 0) > 65
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(5, liveSystemStatus?.diskUsedPercent ?? 15))}%` }}
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between pt-2">
                   <span className="text-slate-500 dark:text-slate-400 font-medium">Tenant Multi-Tenancy:</span>
@@ -3086,17 +3165,20 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                 <div className="flex items-center justify-between pt-2">
                   <span className="text-slate-500 dark:text-slate-400 font-medium">Active Isolated Sessions:</span>
                   <span className="font-mono font-bold text-violet-600 dark:text-violet-400">
-                    {liveSystemStatus?.activeSessionsCount ?? 1} independent client session(s)
+                    {liveSystemStatus?.activeSessionsCount ?? 0} independent client session(s)
                   </span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Additional Hardware & Host Diagnostic Strip */}
-          <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          {/* Hardware Diagnostic Metrics Strip (5 Cards) */}
+          <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-white/10 grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
             <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5">
-              <div className="text-[10px] uppercase font-bold text-slate-500">Heap Memory Used</div>
+              <div className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                <Activity className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
+                <span>Heap Memory</span>
+              </div>
               <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
                 {liveSystemStatus?.heapUsed || '38.4 MB'}
               </div>
@@ -3104,29 +3186,330 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5">
-              <div className="text-[10px] uppercase font-bold text-slate-500">System Physical RAM</div>
-              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
-                {liveSystemStatus?.systemFreeRam || '4.2 GB'} free
+              <div className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                <HardDrive className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                <span>Physical RAM</span>
               </div>
-              <div className="text-[10px] text-slate-400">of {liveSystemStatus?.systemTotalRam || '8.0 GB'}</div>
+              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                {liveSystemStatus?.systemFreeRam || '3.4 GB'} free
+              </div>
+              <div className="text-[10px] text-slate-400">of {liveSystemStatus?.systemTotalRam || '4.0 GB'} ({liveSystemStatus?.ramUsagePercent || 0}% used)</div>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5 col-span-2 sm:col-span-1">
+              <div className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                <Cpu className="w-3 h-3 text-violet-600 dark:text-violet-400" />
+                <span>Processor Cores</span>
+              </div>
+              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                {liveSystemStatus?.cpuCount || 2} vCPUs
+              </div>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={liveSystemStatus?.cpuModel}>
+                {liveSystemStatus?.cpuModel && !liveSystemStatus.cpuModel.toLowerCase().includes('unknown')
+                  ? liveSystemStatus.cpuModel
+                  : 'Intel / AMD 64-bit Server vCPU'}
+              </div>
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5">
-              <div className="text-[10px] uppercase font-bold text-slate-500">Processor Cores</div>
-              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
-                {liveSystemStatus?.cpuCount || 4} vCPUs
+              <div className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                <HardDrive className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                <span>Disk Storage</span>
               </div>
-              <div className="text-[10px] text-slate-400 truncate">{liveSystemStatus?.cpuModel?.slice(0, 24) || 'Multi-core'}</div>
+              <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                {liveSystemStatus?.diskFree || 'Free'}
+              </div>
+              <div className="text-[10px] text-slate-400">of {liveSystemStatus?.diskTotal || 'Total'} ({liveSystemStatus?.diskUsedPercent || 0}% used)</div>
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-white/5">
-              <div className="text-[10px] uppercase font-bold text-slate-500">Host Machine Uptime</div>
+              <div className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                <Clock className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                <span>Host Uptime</span>
+              </div>
               <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
                 {liveSystemStatus?.systemUptimeFormatted || 'Operational'}
               </div>
               <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">● System Healthy</div>
             </div>
           </div>
+
+          {/* ============================================================= */}
+          {/* LIVE CUSTOM DOMAIN HOSTING GUIDE (helpdesk.lakhanglobal.com)  */}
+          {/* ============================================================= */}
+          {(() => {
+            const cleanDomain = (hostingDomain || 'helpdesk.lakhanglobal.com').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '') || 'helpdesk.lakhanglobal.com';
+            const domainParts = cleanDomain.split('.');
+            const subdomain = domainParts.length > 2 ? domainParts[0] : '@';
+            const rootDomain = domainParts.length > 2 ? domainParts.slice(1).join('.') : cleanDomain;
+            const cleanIp = serverPublicIp.trim() || liveSystemStatus?.serverIp || '203.0.113.195';
+
+            const systemdService = `[Unit]
+Description=IT Helpdesk Portal (by Lakhan Prajapati)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/helpdesk
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target`;
+
+            const nginxConfig = `# Nginx Configuration for ${cleanDomain}
+# Managed for IT Helpdesk Portal by Lakhan Prajapati
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${cleanDomain};
+
+    # Maximum upload size for ticket attachments (images, logs, zip)
+    client_max_body_size 50M;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        # WebSocket & Long-Polling Support
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Standard Proxy Headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Timeouts for background tasks & long operations
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+    }
+}`;
+
+            return (
+              <div className="neu-flat p-6 rounded-2xl border border-indigo-300/80 dark:border-indigo-500/30 space-y-6 bg-gradient-to-br from-indigo-50/40 via-transparent to-cyan-50/20 dark:from-indigo-950/20 dark:to-cyan-950/15">
+                {/* Guide Title & Live Domain Config Inputs */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-indigo-200/60 dark:border-indigo-500/20">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 rounded-2xl bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30">
+                      <Globe className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                          Live Custom Domain Hosting &amp; Reverse Proxy Setup
+                        </h2>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700/50">
+                          Production Ready
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/50">
+                          Nginx + SSL / TLS
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                        Follow these battle-tested steps to bind this IT Helpdesk instance to your public domain (e.g. <strong>{cleanDomain}</strong>) with automatic HTTPS SSL certificates.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Interactive Inputs */}
+                  <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-0.5">Live Domain Name</label>
+                      <input
+                        type="text"
+                        value={hostingDomain}
+                        onChange={(e) => setHostingDomain(e.target.value)}
+                        placeholder="helpdesk.lakhanglobal.com"
+                        className="px-3 py-1.5 text-xs font-mono rounded-xl bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-500/40 text-indigo-700 dark:text-indigo-300 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 w-56 shadow-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-0.5">Server Public IPv4</label>
+                      <input
+                        type="text"
+                        value={serverPublicIp}
+                        onChange={(e) => setServerPublicIp(e.target.value)}
+                        placeholder="203.0.113.195"
+                        className="px-3 py-1.5 text-xs font-mono rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-slate-900 dark:text-white font-bold focus:outline-none focus:ring-2 focus:ring-cyan-500 w-44 shadow-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Steps Accordion / Cards */}
+                <div className="grid grid-cols-1 gap-4">
+                  {/* STEP 1: DNS Configuration */}
+                  <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-white/10 space-y-2.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">1</span>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Configure DNS A-Record in your Registrar (Cloudflare, GoDaddy, Namecheap)</h4>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-500">DNS Resolution</span>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Add an <strong>A Record</strong> pointing your target hostname to your VPS/Server public IP address:
+                    </p>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
+                      <table className="w-full text-xs font-mono">
+                        <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400">
+                          <tr>
+                            <th className="py-1.5 px-3 text-left">Record Type</th>
+                            <th className="py-1.5 px-3 text-left">Host / Subdomain Name</th>
+                            <th className="py-1.5 px-3 text-left">Value / Target IP</th>
+                            <th className="py-1.5 px-3 text-left">TTL</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 dark:divide-white/5 bg-slate-50 dark:bg-slate-900/60 font-semibold">
+                          <tr>
+                            <td className="py-1.5 px-3 text-indigo-600 dark:text-indigo-400">A</td>
+                            <td className="py-1.5 px-3 text-slate-900 dark:text-white">{subdomain}</td>
+                            <td className="py-1.5 px-3 text-emerald-600 dark:text-emerald-400">{cleanIp}</td>
+                            <td className="py-1.5 px-3 text-slate-500">Auto (300s)</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* STEP 2: Firewall Security (UFW) */}
+                  <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-white/10 space-y-2.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">2</span>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Enable Linux Firewall (UFW) for SSH, HTTP &amp; HTTPS</h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyCode('ufw', 'sudo ufw default deny incoming && sudo ufw default allow outgoing && sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw --force enable')}
+                        className="neu-btn px-2.5 py-1 text-[11px] font-medium rounded-lg flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-indigo-600 cursor-pointer"
+                      >
+                        {copiedSnippet === 'ufw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedSnippet === 'ufw' ? 'Copied!' : 'Copy Command'}</span>
+                      </button>
+                    </div>
+                    <pre className="p-2.5 rounded-lg bg-slate-950 text-cyan-400 font-mono text-[11px] overflow-x-auto">
+                      sudo ufw default deny incoming &amp;&amp; sudo ufw default allow outgoing &amp;&amp; sudo ufw allow 22/tcp &amp;&amp; sudo ufw allow 80/tcp &amp;&amp; sudo ufw allow 443/tcp &amp;&amp; sudo ufw --force enable
+                    </pre>
+                  </div>
+
+                  {/* STEP 3: Production Systemd Background Service */}
+                  <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-white/10 space-y-2.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">3</span>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Create 24/7 Systemd Background Service (/etc/systemd/system/it-helpdesk.service)</h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyCode('systemd', `sudo tee /etc/systemd/system/it-helpdesk.service > /dev/null << 'EOF'\n${systemdService}\nEOF\n\nsudo systemctl daemon-reload && sudo systemctl enable --now it-helpdesk && sudo systemctl status it-helpdesk`)}
+                        className="neu-btn px-2.5 py-1 text-[11px] font-medium rounded-lg flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-indigo-600 cursor-pointer"
+                      >
+                        {copiedSnippet === 'systemd' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedSnippet === 'systemd' ? 'Copied!' : 'Copy Service File'}</span>
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Ensures the helpdesk stays running permanently, restarts automatically on reboot, and logs all events to systemd journal.
+                    </p>
+                    <pre className="p-2.5 rounded-lg bg-slate-950 text-slate-300 font-mono text-[11px] overflow-x-auto leading-relaxed">
+                      {`sudo tee /etc/systemd/system/it-helpdesk.service > /dev/null << 'EOF'
+${systemdService}
+EOF
+
+sudo systemctl daemon-reload && sudo systemctl enable --now it-helpdesk`}
+                    </pre>
+                  </div>
+
+                  {/* STEP 4: Nginx Reverse Proxy with WebSockets */}
+                  <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-white/10 space-y-2.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">4</span>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Nginx Reverse Proxy &amp; WebSocket Configuration (/etc/nginx/sites-available/{cleanDomain}.conf)</h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyCode('nginx', `sudo tee /etc/nginx/sites-available/${cleanDomain}.conf > /dev/null << 'EOF'\n${nginxConfig}\nEOF\n\nsudo ln -sf /etc/nginx/sites-available/${cleanDomain}.conf /etc/nginx/sites-enabled/\nsudo nginx -t && sudo systemctl reload nginx`)}
+                        className="neu-btn px-2.5 py-1 text-[11px] font-medium rounded-lg flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-indigo-600 cursor-pointer"
+                      >
+                        {copiedSnippet === 'nginx' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedSnippet === 'nginx' ? 'Copied!' : 'Copy Nginx Config'}</span>
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Creates the virtual host routing incoming traffic on <strong>{cleanDomain}</strong> to Express port 3000 with WebSocket upgrades and 50MB ticket attachment limits:
+                    </p>
+                    <pre className="p-2.5 rounded-lg bg-slate-950 text-emerald-400 font-mono text-[11px] overflow-x-auto leading-relaxed">
+                      {`sudo tee /etc/nginx/sites-available/${cleanDomain}.conf > /dev/null << 'EOF'
+${nginxConfig}
+EOF
+
+sudo ln -sf /etc/nginx/sites-available/${cleanDomain}.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx`}
+                    </pre>
+                  </div>
+
+                  {/* STEP 5: Let's Encrypt SSL/TLS Certificate (Certbot) */}
+                  <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-white/10 space-y-2.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">5</span>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Install Free Automated Let's Encrypt SSL/TLS Certificate (HTTPS)</h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyCode('certbot', `sudo apt update && sudo apt install -y certbot python3-certbot-nginx\nsudo certbot --nginx -d ${cleanDomain} --non-interactive --agree-tos -m admin@${rootDomain} --redirect`)}
+                        className="neu-btn px-2.5 py-1 text-[11px] font-medium rounded-lg flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-indigo-600 cursor-pointer"
+                      >
+                        {copiedSnippet === 'certbot' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedSnippet === 'certbot' ? 'Copied!' : 'Copy SSL Command'}</span>
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Certbot automatically provisions an SSL certificate, updates your Nginx config, forces HTTPS redirection, and sets up auto-renewal:
+                    </p>
+                    <pre className="p-2.5 rounded-lg bg-slate-950 text-amber-400 font-mono text-[11px] overflow-x-auto">
+                      sudo apt update &amp;&amp; sudo apt install -y certbot python3-certbot-nginx{'\n'}
+                      sudo certbot --nginx -d {cleanDomain} --non-interactive --agree-tos -m admin@{rootDomain} --redirect
+                    </pre>
+                  </div>
+
+                  {/* STEP 6: Verification & Health Check */}
+                  <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-white/10 space-y-2.5 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center shrink-0">6</span>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Verify Live Portal &amp; API Healthcheck</h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyCode('verify', `curl -fsSL https://${cleanDomain}/api/system/status | grep healthy`)}
+                        className="neu-btn px-2.5 py-1 text-[11px] font-medium rounded-lg flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-indigo-600 cursor-pointer"
+                      >
+                        {copiedSnippet === 'verify' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedSnippet === 'verify' ? 'Copied!' : 'Copy Verification'}</span>
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Test that your live domain responds with HTTP 200 and a healthy status report:
+                    </p>
+                    <pre className="p-2.5 rounded-lg bg-slate-950 text-emerald-300 font-mono text-[11px] overflow-x-auto">
+                      curl -fsSL https://{cleanDomain}/api/system/status | grep healthy
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -3898,6 +4281,77 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* AGPL-3.0 License Information Modal */}
+      {showLicenseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="glass-panel p-6 rounded-2xl max-w-2xl w-full border border-indigo-200 dark:border-indigo-500/30 space-y-4 max-h-[90vh] flex flex-col shadow-2xl bg-white dark:bg-slate-900">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-white/10 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30">
+                  <BookOpen className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>GNU Affero General Public License (AGPL-3.0)</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/50">
+                      Open Source
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Copyright © 2026 <strong>Lakhan Prajapati</strong> &lt;lakhan.prajapati2024@gmail.com&gt;
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLicenseModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-3.5 text-xs text-slate-700 dark:text-slate-300 pr-1">
+              <div className="p-3 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-500/20 text-indigo-950 dark:text-indigo-200 leading-relaxed">
+                <strong>Project:</strong> Enterprise IT Helpdesk &amp; Service Management System (ITSM)<br />
+                <strong>Author &amp; Copyright Holder:</strong> Lakhan Prajapati<br />
+                <strong>License:</strong> GNU Affero General Public License Version 3 (AGPL-3.0-or-later)
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  Key Liberties &amp; Copyleft Obligations (AGPLv3)
+                </h4>
+                <ul className="list-disc list-inside space-y-1.5 text-slate-600 dark:text-slate-400">
+                  <li><strong>Freedom to Run:</strong> You may run this helpdesk software privately, on premise, or in the cloud without restrictions.</li>
+                  <li><strong>Freedom to Modify:</strong> You may customize workflows, database connectors, branding, and ticket templates to fit your organizational needs.</li>
+                  <li><strong>Network Use Copyleft (Section 13):</strong> If you modify this program and run it over a computer network for users, you must offer them the opportunity to download the modified source code at no charge.</li>
+                  <li><strong>Preserve Author &amp; License Notices:</strong> All redistributed copies or derivative works must retain the copyright notice in the name of <strong>Lakhan Prajapati</strong> and this AGPL-3.0 license.</li>
+                </ul>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950 text-slate-300 font-mono text-[11px] leading-relaxed border border-slate-800">
+                <div className="text-slate-400 font-bold mb-1">// Official Preamble Excerpt</div>
+                The GNU Affero General Public License is designed specifically to ensure cooperation with the community in the case of network server software. It guarantees freedom to share and change all versions of a program, and requires that operators of network services provide modified source code to users accessing the service remotely over a network.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-white/10 shrink-0">
+              <span className="text-[11px] text-slate-500 font-mono">
+                Full text available in repository /LICENSE file
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowLicenseModal(false)}
+                className="px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

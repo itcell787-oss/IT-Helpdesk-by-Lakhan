@@ -267,7 +267,7 @@ class DatabaseEngine {
             } else if (!org.systemSettings.preSharedKey) {
               org.systemSettings.preSharedKey = 'Sports@9433';
             }
-            if (!org.systemSettings.defaultCurrency) {
+            if (!org.systemSettings.defaultCurrency || org.systemSettings.defaultCurrency === '$') {
               org.systemSettings.defaultCurrency = '₹';
             }
             if (org.systemSettings.allowRequesterAssetSelfService === undefined) {

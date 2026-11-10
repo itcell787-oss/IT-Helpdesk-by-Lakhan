@@ -1,7 +1,9 @@
 {
-  "name": "react-example",
-  "private": true,
-  "version": "0.0.0",
+  "name": "it-helpdesk-by-lakhan",
+  "version": "1.0.0",
+  "description": "Enterprise IT Helpdesk & Service Management (ITSM) System by Lakhan Prajapati",
+  "license": "AGPL-3.0-or-later",
+  "author": "Lakhan Prajapati <lakhan.prajapati2024@gmail.com>",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",

@@ -131,8 +131,76 @@ apiRouter.get('/system/status', (req: Request, res: Response) => {
 
   const dbSizeKb = (dbSizeBytes / 1024).toFixed(1);
 
-  const osPlatform = process.platform === 'linux' ? 'Linux Server' : process.platform === 'darwin' ? 'macOS Server' : 'Windows Server';
+  // Accurate OS & Distro Detection
+  let osDistro = '';
+  try {
+    if (fs.existsSync('/etc/os-release')) {
+      const raw = fs.readFileSync('/etc/os-release', 'utf8');
+      const match = raw.match(/PRETTY_NAME="?([^\n"]+)"?/);
+      if (match) osDistro = match[1];
+    }
+  } catch {}
+
+  const osPlatform = osDistro || (process.platform === 'linux' ? 'Ubuntu / Linux Server' : process.platform === 'darwin' ? 'macOS Server' : 'Windows Server');
   const osArch = process.arch === 'x64' ? 'x86_64' : process.arch;
+
+  // Accurate CPU Model Detection (Prevents 'unknown' in virtualized/container environments)
+  let cpuModel = os.cpus()[0]?.model;
+  if (!cpuModel || cpuModel.toLowerCase().includes('unknown')) {
+    try {
+      if (fs.existsSync('/proc/cpuinfo')) {
+        const raw = fs.readFileSync('/proc/cpuinfo', 'utf8');
+        const modelMatch = raw.match(/model name\s*:\s*([^\n]+)/);
+        if (modelMatch && modelMatch[1] && !modelMatch[1].toLowerCase().includes('unknown')) {
+          cpuModel = modelMatch[1].trim();
+        } else {
+          const vendorMatch = raw.match(/vendor_id\s*:\s*([^\n]+)/);
+          const vendor = vendorMatch ? vendorMatch[1].trim() : '';
+          if (vendor.includes('Intel')) {
+            cpuModel = 'Intel 64-bit Server Processor (vCPU)';
+          } else if (vendor.includes('AMD')) {
+            cpuModel = 'AMD 64-bit Server Processor (vCPU)';
+          } else {
+            cpuModel = 'x86_64 Multi-Core Server Processor';
+          }
+        }
+      }
+    } catch {}
+  }
+  if (!cpuModel || cpuModel.toLowerCase().includes('unknown')) {
+    cpuModel = 'Multi-Core Server Processor';
+  }
+
+  // Host Disk Space Storage Detection (via statfsSync)
+  let diskTotal = '0 GB';
+  let diskFree = '0 GB';
+  let diskUsedPercent = 0;
+  try {
+    if (typeof (fs as any).statfsSync === 'function') {
+      const stat = (fs as any).statfsSync('/');
+      const totalBytes = Number(stat.bsize) * Number(stat.blocks);
+      const freeBytes = Number(stat.bsize) * Number(stat.bfree);
+      diskTotal = `${(totalBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      diskFree = `${(freeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      if (totalBytes > 0) {
+        diskUsedPercent = Math.round(((totalBytes - freeBytes) / totalBytes) * 100);
+      }
+    }
+  } catch {}
+
+  // Server Primary Network IPv4 Address
+  let serverIp = '127.0.0.1';
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const iface of ifaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          serverIp = iface.address;
+          break;
+        }
+      }
+    }
+  } catch {}
 
   const nodeVersion = process.version;
   const nodeMajor = nodeVersion.split('.')[0];
@@ -150,10 +218,13 @@ apiRouter.get('/system/status', (req: Request, res: Response) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     platform: `${osPlatform} (${osArch})`,
+    osDistro: osDistro || 'Ubuntu / Debian Linux',
+    osKernel: os.release(),
     osType: os.type(),
-    osRelease: os.release(),
+    osRelease: `${osDistro ? `${osDistro} · ` : ''}Kernel ${os.release()}`,
     osArch: osArch,
     hostname: os.hostname(),
+    serverIp,
     nodeEngine: nodeEngineDisplay,
     nodeVersion: process.version,
     v8Version: process.versions.v8,
@@ -171,12 +242,15 @@ apiRouter.get('/system/status', (req: Request, res: Response) => {
     systemFreeRam: `${(os.freemem() / (1024 * 1024 * 1024)).toFixed(1)} GB`,
     ramUsagePercent: Math.round(((os.totalmem() - os.freemem()) / os.totalmem()) * 100),
     cpuCount: os.cpus().length,
-    cpuModel: os.cpus()[0]?.model || 'Host Multi-Core Processor',
+    cpuModel,
+    diskTotal,
+    diskFree,
+    diskUsedPercent,
     loadAverage: os.loadavg(),
     portAndProxy: proxyDisplay,
     port: Number(port),
     runtimeEnvironment: process.env.NODE_ENV === 'production' ? 'Production (Optimized)' : 'Development (Vite SSR/HMR)',
-    hostingProvider: 'Local Host / On-Premise Container',
+    hostingProvider: 'Self-Hosted Linux Server / Container',
     primaryDatabase: 'data/database.json',
     writeMode: 'Atomic fs.writeFileSync',
     databaseSize: `${dbSizeKb} KB`,
@@ -187,6 +261,8 @@ apiRouter.get('/system/status', (req: Request, res: Response) => {
     totalUsers: users.length,
     totalAssets: assets.length,
     activeSessionsCount: activeSessions.size,
+    license: 'AGPL-3.0',
+    licenseHolder: 'Lakhan Prajapati',
   });
 });
 
