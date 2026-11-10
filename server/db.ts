@@ -110,13 +110,20 @@ class DatabaseEngine {
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
     }
 
-    // Candidate search: If destination DB does not exist in targetDir, check fallback paths
+    // Prefer pristine seed file if destination DB does not exist
+    if (!fs.existsSync(DB_FILE) && fs.existsSync(DB_SEED_FILE)) {
+      try {
+        fs.copyFileSync(DB_SEED_FILE, DB_FILE);
+      } catch (e) {
+        console.warn('Could not copy initial seed database:', e);
+      }
+    }
+
+    // Secondary fallback search if destination DB still does not exist
     if (!fs.existsSync(DB_FILE)) {
       const fallbackPaths = [
         path.join(APP_ROOT, 'data', 'database.json'),
         '/opt/it-helpdesk/data/database.json',
-        path.join(BACKUP_DIR, 'latest_active_db.json'),
-        '/tmp/it_helpdesk_emergency_backup.json',
       ];
       for (const fb of fallbackPaths) {
         if (fs.existsSync(fb) && fs.statSync(fb).size > 1000) {
@@ -126,15 +133,6 @@ class DatabaseEngine {
             break;
           } catch {}
         }
-      }
-    }
-
-    // If destination DB still does not exist, seed from database.seed.json if present
-    if (!fs.existsSync(DB_FILE) && fs.existsSync(DB_SEED_FILE)) {
-      try {
-        fs.copyFileSync(DB_SEED_FILE, DB_FILE);
-      } catch (e) {
-        console.warn('Could not copy initial seed database:', e);
       }
     }
 
@@ -162,21 +160,21 @@ class DatabaseEngine {
     const initialDefaultGateway: DefaultEmailGatewayConfig = {
       serviceProvider: 'self_hosted_imap',
       incomingProtocol: 'imap',
-      incomingHost: 'mail.confiancebizsol.tech',
+      incomingHost: '',
       incomingPort: 993,
       incomingSecurity: 'ssl',
-      incomingUsername: 'it-helpdesk@confiancebizsol.tech',
+      incomingUsername: '',
       outgoingProtocol: 'smtp',
-      outgoingHost: 'mail.confiancebizsol.tech',
+      outgoingHost: '',
       outgoingPort: 587,
       outgoingSecurity: 'starttls',
-      outgoingUsername: 'it-helpdesk@confiancebizsol.tech',
+      outgoingUsername: '',
       fromName: 'IT Helpdesk Support',
-      fromEmail: 'it-helpdesk@confiancebizsol.tech',
-      replyToEmail: 'it-helpdesk@confiancebizsol.tech',
+      fromEmail: '',
+      replyToEmail: '',
       subjectPrefix: '[ITL-{{ticketId}}]',
-      status: 'connected',
-      lastPollStatus: 'Connected to mail.confiancebizsol.tech: Ready for email-to-ticket ingestion.',
+      status: 'disconnected',
+      lastPollStatus: 'Not configured. Enter email credentials in Settings > Helpdesk Email Gateway to connect.',
       enableInboundTicketGeneration: true,
       enableOutboundReplyNotification: true,
       pollingIntervalMinutes: 1,
@@ -190,19 +188,39 @@ class DatabaseEngine {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
         if (!parsed.adminMailboxes) parsed.adminMailboxes = initialAdminMailboxes;
-        if (!parsed.defaultGatewayConfig || !parsed.defaultGatewayConfig.fromEmail) {
+        if (!parsed.defaultGatewayConfig) {
           parsed.defaultGatewayConfig = initialDefaultGateway;
         } else {
+          if (parsed.defaultGatewayConfig.fromEmail?.includes('confiancebizsol')) {
+            parsed.defaultGatewayConfig.fromEmail = '';
+            parsed.defaultGatewayConfig.status = 'disconnected';
+            parsed.defaultGatewayConfig.lastPollStatus = 'Not configured. Enter email credentials in Settings > Helpdesk Email Gateway to connect.';
+          }
+          if (parsed.defaultGatewayConfig.incomingHost?.includes('confiancebizsol')) {
+            parsed.defaultGatewayConfig.incomingHost = '';
+          }
+          if (parsed.defaultGatewayConfig.outgoingHost?.includes('confiancebizsol')) {
+            parsed.defaultGatewayConfig.outgoingHost = '';
+          }
+          if (parsed.defaultGatewayConfig.incomingUsername?.includes('confiancebizsol')) {
+            parsed.defaultGatewayConfig.incomingUsername = '';
+          }
+          if (parsed.defaultGatewayConfig.outgoingUsername?.includes('confiancebizsol')) {
+            parsed.defaultGatewayConfig.outgoingUsername = '';
+          }
+          if (parsed.defaultGatewayConfig.replyToEmail?.includes('confiancebizsol')) {
+            parsed.defaultGatewayConfig.replyToEmail = '';
+          }
           if (!parsed.defaultGatewayConfig.incomingHost) {
-            parsed.defaultGatewayConfig.incomingHost = 'mail.confiancebizsol.tech';
+            parsed.defaultGatewayConfig.incomingHost = '';
           }
           if (!parsed.defaultGatewayConfig.outgoingHost) {
-            parsed.defaultGatewayConfig.outgoingHost = 'mail.confiancebizsol.tech';
+            parsed.defaultGatewayConfig.outgoingHost = '';
           }
-          if (!parsed.defaultGatewayConfig.incomingUsername) {
+          if (!parsed.defaultGatewayConfig.incomingUsername && parsed.defaultGatewayConfig.fromEmail) {
             parsed.defaultGatewayConfig.incomingUsername = parsed.defaultGatewayConfig.fromEmail;
           }
-          if (!parsed.defaultGatewayConfig.outgoingUsername) {
+          if (!parsed.defaultGatewayConfig.outgoingUsername && parsed.defaultGatewayConfig.fromEmail) {
             parsed.defaultGatewayConfig.outgoingUsername = parsed.defaultGatewayConfig.fromEmail;
           }
           if (parsed.defaultGatewayConfig.enableInboundTicketGeneration === undefined) {
@@ -215,7 +233,7 @@ class DatabaseEngine {
             parsed.defaultGatewayConfig.pollingIntervalMinutes = 1;
           }
           if (!parsed.defaultGatewayConfig.status) {
-            parsed.defaultGatewayConfig.status = 'connected';
+            parsed.defaultGatewayConfig.status = parsed.defaultGatewayConfig.fromEmail ? 'connected' : 'disconnected';
           }
           if (!parsed.defaultGatewayConfig.processedMessageIds) {
             parsed.defaultGatewayConfig.processedMessageIds = [];
@@ -274,28 +292,45 @@ class DatabaseEngine {
 
         // Ensure users have passwords, username, and default privileges
         if (parsed.users) {
-          parsed.users = parsed.users.map((u: any) => {
-            if (u.role === 'superadmin') {
-              u.name = 'Lakhan Prajapati';
-              u.username = 'admin';
-              if (!u.password || u.password === 'Sports@9433' || u.password === 'Admin@123' || u.password === 'Lakhan@Production2026!') {
-                u.password = 'L@khan@123';
-                u.mustChangePassword = true;
+          parsed.users = parsed.users
+            .map((u: any) => {
+              if (u.role === 'superadmin' || u.id === 'usr-superadmin') {
+                u.name = 'Lakhan Prajapati';
+                u.username = 'admin';
+                u.email = 'admin@lakhanglobal.com';
+                u.employeeCode = 'CBPL2045';
+                if (!u.title) {
+                  u.title = 'Super Administrator & Global Head of IT';
+                }
+                if (!u.password || u.password === 'Sports@9433' || u.password === 'Admin@123' || u.password === 'Lakhan@Production2026!') {
+                  u.password = 'L@khan@123';
+                  u.mustChangePassword = true;
+                }
+              } else if (!u.password) {
+                u.password = (u.role === 'admin') ? 'Admin@123' : (u.role === 'requester' ? 'User@123' : 'Tech@123');
               }
-            } else if (!u.password) {
-              u.password = (u.role === 'admin') ? 'Admin@123' : (u.role === 'requester' ? 'User@123' : 'Tech@123');
-            }
-            if (!u.privileges && (u.role === 'superadmin' || u.role === 'admin' || u.role === 'manager' || u.role === 'technician')) {
-              u.privileges = {
-                canManageTickets: true,
-                canDeleteTickets: u.role === 'superadmin' || u.role === 'admin',
-                canManageAssets: true,
-                canManageKnowledgeBase: u.role !== 'technician',
-                canManageApprovals: u.role !== 'technician',
-              };
-            }
-            return u;
-          });
+              if (!u.privileges && (u.role === 'superadmin' || u.role === 'admin' || u.role === 'manager' || u.role === 'technician')) {
+                u.privileges = {
+                  canManageTickets: true,
+                  canDeleteTickets: u.role === 'superadmin' || u.role === 'admin',
+                  canManageAssets: true,
+                  canManageKnowledgeBase: u.role !== 'technician',
+                  canManageApprovals: u.role !== 'technician',
+                };
+              }
+              return u;
+            })
+            .filter((u: any) => !u.email?.includes('confiancebizsol'));
+        }
+
+        if (parsed.tickets) {
+          parsed.tickets = parsed.tickets.filter((t: any) => !t.requesterEmail?.includes('confiancebizsol'));
+        }
+        if (parsed.comments) {
+          parsed.comments = parsed.comments.filter((c: any) => !c.authorEmail?.includes('confiancebizsol') && !c.emailRecipient?.includes('confiancebizsol'));
+        }
+        if (parsed.auditLogs) {
+          parsed.auditLogs = parsed.auditLogs.filter((a: any) => !a.details?.includes('confiancebizsol'));
         }
 
         // Ensure active open tickets have active deadlines for live ticking timer
@@ -386,6 +421,7 @@ class DatabaseEngine {
           });
         }
 
+        this.save(parsed);
         return parsed;
       } catch (err) {
         console.error('Failed reading database file, reseeding initial data:', err);

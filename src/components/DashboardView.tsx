@@ -578,12 +578,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
          ========================================================================= */}
       {(() => {
         const gw = defaultGatewayConfig;
-        const connectedEmail = gw?.fromEmail || 'it-helpdesk@confiancebizsol.tech';
+        const connectedEmail = gw?.fromEmail || '';
         const provider = gw?.serviceProvider || 'self_hosted_imap';
         const incomingProto = (gw?.incomingProtocol || 'imap').toUpperCase();
         const outgoingProto = (gw?.outgoingProtocol || 'smtp').toUpperCase();
-        const incomingHost = gw?.incomingHost || 'imap.confiancebizsol.tech';
-        const outgoingHost = gw?.outgoingHost || 'smtp.confiancebizsol.tech';
+        const incomingHost = gw?.incomingHost || '';
+        const outgoingHost = gw?.outgoingHost || '';
         const inboundEnabled = gw?.enableInboundTicketGeneration !== false;
         const outboundEnabled = gw?.enableOutboundReplyNotification !== false;
 
@@ -612,7 +612,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               code: 'POP3',
               badgeClass: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-900',
               iconColor: 'text-amber-600',
-              details: `Custom POP3 (${incomingHost}) & Dovecot/SMTP (${outgoingHost})`,
+              details: `Custom POP3 (${incomingHost || 'Not set'}) & Dovecot/SMTP (${outgoingHost || 'Not set'})`,
             };
           }
           return {
@@ -620,7 +620,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             code: 'IMAP',
             badgeClass: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900',
             iconColor: 'text-emerald-600',
-            details: `Custom IMAP (${incomingHost}) & Postfix/SMTP (${outgoingHost})`,
+            details: `Custom IMAP (${incomingHost || 'Not set'}) & Postfix/SMTP (${outgoingHost || 'Not set'})`,
           };
         };
 
@@ -638,10 +638,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
                       Current Connected Helpdesk Email
                     </h3>
-                    <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      {connectedEmail}
-                    </span>
+                    {connectedEmail ? (
+                      <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        {connectedEmail}
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                        Not Configured (Click to set up)
+                      </span>
+                    )}
                   </div>
                   <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium mt-0.5">
                     Live bidirectional email gateway handling automated ticket intake and staff reply dispatches.

@@ -1227,7 +1227,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
               </div>
 
               <p className="text-xs text-slate-700 dark:text-slate-300 font-medium leading-relaxed">
-                Automatically convert incoming emails received at <strong className="text-slate-900 dark:text-white font-mono">it-helpdesk@confiancebizsol.tech</strong> into new support tickets. When disabled, inbound email ingestion is paused and no new tickets will be generated from incoming emails.
+                Automatically convert incoming emails received at your configured support mailbox into new support tickets. When disabled, inbound email ingestion is paused and no new tickets will be generated from incoming emails.
               </p>
 
               <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-white/5 flex items-center justify-between text-xs font-mono">

@@ -1204,17 +1204,22 @@ apiRouter.get('/tickets/:id', (req: Request, res: Response) => {
     };
   }
 
-  const allComments = db.get('comments');
-  const comments = allComments.filter(c => c.ticketId === id);
+  const isAgent = currentUser && (currentUser.role === 'superadmin' || currentUser.role === 'admin' || currentUser.role === 'technician' || currentUser.role === 'auditor');
+  const allComments = db.get('comments') || [];
+  const comments = isAgent
+    ? allComments.filter(c => c.ticketId === id)
+    : allComments.filter(c => c.ticketId === id && !c.isInternal);
 
-  const allTasks = db.get('tasks');
+  const allTasks = db.get('tasks') || [];
   const tasks = allTasks.filter(t => t.ticketId === id);
 
-  const allWorkLogs = db.get('workLogs');
+  const allWorkLogs = db.get('workLogs') || [];
   const workLogs = allWorkLogs.filter(w => w.ticketId === id);
 
-  const allAuditLogs = db.get('auditLogs');
-  const auditLogs = allAuditLogs.filter(a => a.entityId === id);
+  const allAuditLogs = db.get('auditLogs') || [];
+  const auditLogs = isAgent
+    ? allAuditLogs.filter(a => a.entityId === id)
+    : allAuditLogs.filter(a => a.entityId === id && a.action !== 'ticket.internal_note');
 
   res.json({
     ticket: updatedTicket,
@@ -1749,6 +1754,16 @@ apiRouter.post('/tickets/:id/comments', async (req: Request, res: Response) => {
 
   const actor = getActor(req);
 
+  // Security: Requesters can only reply to their own tickets
+  if (actor.role === 'requester') {
+    const targetTicket = tickets[ticketIdx];
+    if (targetTicket.requesterId !== actor.id && targetTicket.requesterEmail?.toLowerCase() !== actor.email?.toLowerCase()) {
+      return res.status(403).json({ error: 'Access denied: You can only reply to your own tickets.' });
+    }
+  }
+
+  const cleanIsInternal = actor.role === 'requester' ? false : Boolean(isInternal);
+
   const comment: TicketComment = {
     id: `cmt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     ticketId: id,
@@ -1756,19 +1771,19 @@ apiRouter.post('/tickets/:id/comments', async (req: Request, res: Response) => {
     authorName: actor.name,
     authorEmail: actor.email,
     authorRole: actor.role,
-    isInternal: Boolean(isInternal),
+    isInternal: cleanIsInternal,
     content,
     createdAt: new Date().toISOString(),
     attachments,
-    emailDispatched: !isInternal,
-    emailRecipient: !isInternal ? tickets[ticketIdx].requesterEmail : undefined,
-    emailDeliveryStatus: !isInternal ? 'simulated_success' : undefined,
+    emailDispatched: !cleanIsInternal,
+    emailRecipient: !cleanIsInternal ? tickets[ticketIdx].requesterEmail : undefined,
+    emailDeliveryStatus: !cleanIsInternal ? 'simulated_success' : undefined,
   };
 
   // If public reply, dispatch notification email via Default Gateway SMTP
-  if (!isInternal) {
+  if (!cleanIsInternal) {
     const defaultGateway = db.get('defaultGatewayConfig') || {
-      outgoingHost: 'smtp.confiancebizsol.tech',
+      outgoingHost: '',
       outgoingPort: 587,
       outgoingProtocol: 'smtp',
     };
@@ -1804,7 +1819,7 @@ apiRouter.post('/tickets/:id/comments', async (req: Request, res: Response) => {
   // Update ticket: touch updatedAt; if this is first public agent response, log firstResponseAt
   const ticket = tickets[ticketIdx];
   const isAgent = actor.role !== 'requester';
-  if (!isInternal && isAgent) {
+  if (!cleanIsInternal && isAgent) {
     if (!ticket.firstResponseAt) {
       ticket.firstResponseAt = new Date().toISOString();
     }
@@ -1827,7 +1842,7 @@ apiRouter.post('/tickets/:id/comments', async (req: Request, res: Response) => {
 
   logAudit(
     actor,
-    isInternal ? 'ticket.internal_note' : 'ticket.reply_sent',
+    cleanIsInternal ? 'ticket.internal_note' : 'ticket.reply_sent',
     'ticket',
     id,
     isInternal

@@ -253,12 +253,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={() => onNavigate('settings')}
               className="hidden lg:flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 bg-slate-100/90 dark:bg-slate-900/90 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-slate-200 dark:border-slate-800 hover:border-cyan-400 dark:hover:border-cyan-700 rounded-xl transition-all cursor-pointer font-medium shadow-2xs group"
-              title={`Connected Email Gateway (${defaultGatewayConfig?.fromEmail || 'it-helpdesk@confiancebizsol.tech'}) - Click to configure`}
+              title={defaultGatewayConfig?.fromEmail ? `Email Gateway Connected: ${defaultGatewayConfig.fromEmail}` : 'Email Gateway: Not configured (Click to set up)'}
             >
               <Mail className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 group-hover:scale-110 transition-transform" />
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className={`w-2 h-2 rounded-full ${defaultGatewayConfig?.fromEmail ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
               <span className="font-mono text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                {defaultGatewayConfig?.fromEmail || 'it-helpdesk@confiancebizsol.tech'}
+                {defaultGatewayConfig?.fromEmail || 'Configure Email Gateway'}
               </span>
             </button>
           )}

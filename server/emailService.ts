@@ -315,7 +315,7 @@ class EmailGatewayService {
     const isSecure = config.outgoingSecurity === 'ssl' || port === 465;
 
     return nodemailer.createTransport({
-      host: config.outgoingHost || 'mail.confiancebizsol.tech',
+      host: config.outgoingHost || 'mail.example.com',
       port,
       secure: isSecure,
       auth: (username && cleanPassword)
@@ -929,7 +929,7 @@ class EmailGatewayService {
     const to = recipientEmail.trim().toLowerCase();
 
     const subject = `Your IT Helpdesk Verification Code: ${otpCode}`;
-    const textContent = `Hello,\n\nYour 6-digit verification code to submit your support ticket is: ${otpCode}\n\nThis verification code expires in 10 minutes.\n\nIT Helpdesk Support\n${config?.fromEmail || 'it-helpdesk@confiancebizsol.tech'}`;
+    const textContent = `Hello,\n\nYour 6-digit verification code to submit your support ticket is: ${otpCode}\n\nThis verification code expires in 10 minutes.\n\nIT Helpdesk Support\n${config?.fromEmail || 'helpdesk@example.com'}`;
 
     const htmlContent = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff;">
@@ -984,7 +984,7 @@ class EmailGatewayService {
     try {
       const transporter = this.createTransporter(config);
       const info = await transporter.sendMail({
-        from: `"${config.fromName || 'IT Helpdesk Support'}" <${config.fromEmail || 'it-helpdesk@confiancebizsol.tech'}>`,
+        from: `"${config.fromName || 'IT Helpdesk Support'}" <${config.fromEmail || 'helpdesk@example.com'}>`,
         to,
         subject,
         text: textContent,

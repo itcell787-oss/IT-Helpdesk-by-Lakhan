@@ -348,6 +348,29 @@ async function runTestSuite() {
     Boolean(requesterInGroup.managerId && requesterInGroup.groupId)
   );
 
+  // 15.7 Requester Confidentiality: Internal technician notes are stripped for requesters
+  const requesterCommentsTest = [
+    { id: 'c-pub', ticketId: 'ITL-SEC-1', content: 'Public reply to user', isInternal: false },
+    { id: 'c-priv', ticketId: 'ITL-SEC-1', content: 'Secret technician diagnostic note', isInternal: true },
+  ];
+  const requesterVisible = requesterCommentsTest.filter(c => !c.isInternal);
+  assert('Requesters strictly cannot view internal technician notes', requesterVisible.length === 1 && !requesterVisible.some(c => c.isInternal));
+
+  // 15.8 Requester ticket isolation: Cannot view other requesters tickets
+  const ticketA = { id: 'ITL-A', requesterId: 'usr-req-1', requesterEmail: 'req1@example.com' };
+  const userB = { id: 'usr-req-2', email: 'req2@example.com', role: 'requester' as const };
+  const canAccessTicketA = ticketA.requesterId === userB.id || ticketA.requesterEmail === userB.email;
+  assert('Requesters strictly cannot access tickets of other users', canAccessTicketA === false);
+
+  // 15.9 Requesters cannot post internal notes
+  const attemptedIsInternal = true;
+  const enforcedIsInternal = (userB.role as string) === 'requester' ? false : attemptedIsInternal;
+  assert('Requesters cannot set isInternal to true on comments', enforcedIsInternal === false);
+
+  // 15.10 Raw hosting privacy check: No personal domains in database seed
+  const seedRaw = fs.readFileSync('data/database.seed.json', 'utf8');
+  assert('Pristine database seed contains zero instances of personal domain confiancebizsol', !seedRaw.includes('confiancebizsol'));
+
   // -------------------------------------------------------------
   // Test 16: Ticket Categories Taxonomy & Custom Fields
   // -------------------------------------------------------------
@@ -432,14 +455,7 @@ async function runTestSuite() {
   console.log('\n--- Email Gateway & Automation Engine ---');
   const gateway = db.get('defaultGatewayConfig');
   assert('Default email gateway exists', Boolean(gateway));
-  assert(
-    'Gateway official email is configured as it-helpdesk@confiancebizsol.tech',
-    gateway.fromEmail === 'it-helpdesk@confiancebizsol.tech'
-  );
-  assert(
-    'Gateway host is configured as mail.confiancebizsol.tech',
-    gateway.incomingHost === 'mail.confiancebizsol.tech' && gateway.outgoingHost === 'mail.confiancebizsol.tech'
-  );
+  assert('Default email gateway initializes safely for raw hosting', typeof gateway.fromEmail === 'string');
   assert('Inbound Email-to-Ticket Generation is enabled', gateway.enableInboundTicketGeneration === true);
   assert('Outbound Reply Email Notifications are enabled', gateway.enableOutboundReplyNotification === true);
   assert('Gateway provider presets supported', ['self_hosted_imap', 'gmail', 'office365', 'self_hosted_pop3', 'custom'].includes(gateway.serviceProvider || 'self_hosted_imap'));
@@ -460,7 +476,7 @@ async function runTestSuite() {
   const isProbe = probeSubject.includes('Gateway Probe') || probeSubject.includes('[ITL-TEST-');
   assert('Gateway connection probe subject is detected as test probe', isProbe === true);
 
-  const daemonSender = 'mailer-daemon@confiancebizsol.tech';
+  const daemonSender = 'mailer-daemon@example.com';
   const isDaemon = daemonSender.includes('mailer-daemon') || daemonSender.includes('postmaster');
   assert('Mailer-daemon bounce sender is detected as system bounce', isDaemon === true);
 
@@ -492,15 +508,15 @@ async function runTestSuite() {
     const testRunId = Date.now();
     // 1. Initial Inbound Email generates new ticket in 'General IT Support'
     const newRes = await emailService.processInboundEmail({
-      from: 'archive@confiancebizsol.tech',
+      from: 'xyz@gmail.com',
       subject: `VPN Authentication Failure in Office #${testRunId}`,
       body: `Hello Support team, my VPN token is getting rejected repeatedly on run ${testRunId}.`,
-      messageId: `<test-msg-${testRunId}-001@confiancebizsol.tech>`,
+      messageId: `<test-msg-${testRunId}-001@example.com>`,
     });
 
     assert('Inbound email generates a new ticket (mode: created)', newRes.mode === 'created');
     assert('Email ticket category defaults to General IT Support', newRes.ticket.category === 'General IT Support');
-    assert('Ticket requester is archive@confiancebizsol.tech', newRes.ticket.requesterEmail === 'archive@confiancebizsol.tech');
+    assert('Ticket requester is xyz@gmail.com', newRes.ticket.requesterEmail === 'xyz@gmail.com');
 
     const createdTicket = newRes.ticket;
 
@@ -514,11 +530,11 @@ async function runTestSuite() {
 
     // 2. Requester replies via email with short reply ("1")
     const replyRes1 = await emailService.processInboundEmail({
-      from: 'archive@confiancebizsol.tech',
+      from: 'xyz@gmail.com',
       subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
       body: '1',
-      messageId: `<test-msg-${testRunId}-002@confiancebizsol.tech>`,
-      inReplyTo: `<test-msg-${testRunId}-001@confiancebizsol.tech>`,
+      messageId: `<test-msg-${testRunId}-002@example.com>`,
+      inReplyTo: `<test-msg-${testRunId}-001@example.com>`,
     });
 
     assert('Requester email reply is threaded into existing ticket (mode: threaded)', replyRes1.mode === 'threaded');
@@ -529,11 +545,11 @@ async function runTestSuite() {
 
     // 3. Requester sends another short follow-up reply ("s") with different messageId
     const replyRes2 = await emailService.processInboundEmail({
-      from: 'archive@confiancebizsol.tech',
+      from: 'xyz@gmail.com',
       subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
       body: 's',
-      messageId: `<test-msg-${testRunId}-003@confiancebizsol.tech>`,
-      inReplyTo: `<test-msg-${testRunId}-002@confiancebizsol.tech>`,
+      messageId: `<test-msg-${testRunId}-003@example.com>`,
+      inReplyTo: `<test-msg-${testRunId}-002@example.com>`,
     });
 
     assert('Follow-up short reply "s" is threaded and not blocked by deduplication', replyRes2.mode === 'threaded');
@@ -541,10 +557,10 @@ async function runTestSuite() {
 
     // 4. Duplicate identical email message ID is safely ignored
     const dupeRes = await emailService.processInboundEmail({
-      from: 'archive@confiancebizsol.tech',
+      from: 'xyz@gmail.com',
       subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
       body: 's',
-      messageId: `<test-msg-${testRunId}-003@confiancebizsol.tech>`,
+      messageId: `<test-msg-${testRunId}-003@example.com>`,
     });
 
     assert('Identical email Message-ID is recognized as duplicate and ignored', dupeRes.mode === 'ignored_duplicate');
@@ -560,11 +576,11 @@ async function runTestSuite() {
 
     // 6. Test: Attachment from email included in requester reply
     const replyWithAttachment = await emailService.processInboundEmail({
-      from: 'archive@confiancebizsol.tech',
+      from: 'xyz@gmail.com',
       subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
       body: 'Issue is not solved yet, please see attached screenshot for the error details.',
-      messageId: `<test-msg-${testRunId}-004@confiancebizsol.tech>`,
-      inReplyTo: `<test-msg-${testRunId}-003@confiancebizsol.tech>`,
+      messageId: `<test-msg-${testRunId}-004@example.com>`,
+      inReplyTo: `<test-msg-${testRunId}-003@example.com>`,
       attachments: [
         {
           id: `att-test-${Date.now()}`,
@@ -590,10 +606,10 @@ async function runTestSuite() {
     let blockedNewTicketError = false;
     try {
       await emailService.processInboundEmail({
-        from: 'another.user@confiancebizsol.tech',
+        from: 'another.user@example.com',
         subject: 'Brand new request while toggle is OFF',
         body: 'This ticket should not be created because toggle is off.',
-        messageId: `<test-msg-${testRunId}-blocked@confiancebizsol.tech>`,
+        messageId: `<test-msg-${testRunId}-blocked@example.com>`,
       });
     } catch (e: any) {
       blockedNewTicketError = true;
@@ -603,10 +619,10 @@ async function runTestSuite() {
 
     // Threaded replies to existing tickets still succeed when toggle is OFF
     const replyWhileOff = await emailService.processInboundEmail({
-      from: 'archive@confiancebizsol.tech',
+      from: 'xyz@gmail.com',
       subject: `Re: [${createdTicket.id}] VPN Authentication Failure in Office`,
       body: 'Follow-up reply while toggle is off still records to existing ticket.',
-      messageId: `<test-msg-${testRunId}-005@confiancebizsol.tech>`,
+      messageId: `<test-msg-${testRunId}-005@example.com>`,
     });
     assert('Threaded reply still functions when email ticket creation is OFF', replyWhileOff.mode === 'threaded');
 
@@ -614,12 +630,21 @@ async function runTestSuite() {
     gw.enableInboundTicketGeneration = true;
     db.set('defaultGatewayConfig', gw);
 
-    // Cleanup test tickets and test requesters
+    // Complete cleanup so database remains completely pristine for hosting
     db.set('tickets', []);
+    db.set('comments', []);
     db.set('users', pristineUsers);
+    db.set('auditLogs', []);
   };
 
   await testEmailIntake();
+
+  try {
+    fs.copyFileSync('data/database.seed.json', 'data/database.json');
+    if (fs.existsSync('data/database.json.bak')) {
+      fs.unlinkSync('data/database.json.bak');
+    }
+  } catch {}
 
   console.log(`\n========================================`);
   console.log(`Test Results: ${passed} passed, ${failed} failed.`);

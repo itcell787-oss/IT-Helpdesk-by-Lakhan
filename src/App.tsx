@@ -41,21 +41,21 @@ import {
 
 const fallbackGateway: DefaultEmailGatewayConfig = {
   incomingProtocol: 'imap',
-  incomingHost: 'mail.confiancebizsol.tech',
+  incomingHost: '',
   incomingPort: 993,
   incomingSecurity: 'ssl',
-  incomingUsername: 'it-helpdesk@confiancebizsol.tech',
+  incomingUsername: '',
   outgoingProtocol: 'smtp',
-  outgoingHost: 'mail.confiancebizsol.tech',
+  outgoingHost: '',
   outgoingPort: 587,
   outgoingSecurity: 'starttls',
-  outgoingUsername: 'it-helpdesk@confiancebizsol.tech',
+  outgoingUsername: '',
   fromName: 'IT Helpdesk Support',
-  fromEmail: 'it-helpdesk@confiancebizsol.tech',
-  replyToEmail: 'it-helpdesk@confiancebizsol.tech',
+  fromEmail: '',
+  replyToEmail: '',
   subjectPrefix: '[ITL-{{ticketId}}]',
-  status: 'connected',
-  lastPollStatus: 'Connected to mail.confiancebizsol.tech',
+  status: 'disconnected',
+  lastPollStatus: 'Not configured',
 };
 
 export default function App() {

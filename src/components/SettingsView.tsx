@@ -873,20 +873,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     defaultGateway.serviceProvider || 'self_hosted_imap'
   );
   const [gwIncomingProtocol, setGwIncomingProtocol] = useState<'imap' | 'pop3'>(defaultGateway.incomingProtocol || 'imap');
-  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || 'mail.confiancebizsol.tech');
+  const [gwIncomingHost, setGwIncomingHost] = useState(defaultGateway.incomingHost || '');
   const [gwIncomingPort, setGwIncomingPort] = useState(defaultGateway.incomingPort || 993);
   const [gwIncomingSecurity, setGwIncomingSecurity] = useState(defaultGateway.incomingSecurity || 'ssl');
-  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
+  const [gwIncomingUser, setGwIncomingUser] = useState(defaultGateway.incomingUsername || defaultGateway.fromEmail || '');
   const [gwIncomingPassword, setGwIncomingPassword] = useState(defaultGateway.incomingPassword || '');
-  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || 'mail.confiancebizsol.tech');
+  const [gwOutgoingHost, setGwOutgoingHost] = useState(defaultGateway.outgoingHost || '');
   const [gwOutgoingPort, setGwOutgoingPort] = useState(defaultGateway.outgoingPort || 587);
   const [gwOutgoingSecurity, setGwOutgoingSecurity] = useState(defaultGateway.outgoingSecurity || 'starttls');
-  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
+  const [gwOutgoingUser, setGwOutgoingUser] = useState(defaultGateway.outgoingUsername || defaultGateway.fromEmail || '');
   const [gwOutgoingPassword, setGwOutgoingPassword] = useState(defaultGateway.outgoingPassword || '');
   const [gwShowPassword, setGwShowPassword] = useState(false);
   const [gwFromName, setGwFromName] = useState(defaultGateway.fromName || 'IT Helpdesk Support');
-  const [gwFromEmail, setGwFromEmail] = useState(defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
-  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
+  const [gwFromEmail, setGwFromEmail] = useState(defaultGateway.fromEmail || '');
+  const [gwReplyToEmail, setGwReplyToEmail] = useState(defaultGateway.replyToEmail || defaultGateway.fromEmail || '');
   const [gwAliasAddresses, setGwAliasAddresses] = useState(defaultGateway.aliasAddresses || '');
   const [showAliasGuide, setShowAliasGuide] = useState(true);
   const [gwSubjectPrefix, setGwSubjectPrefix] = useState(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
@@ -906,23 +906,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (!defaultGateway) return;
     setGwServiceProvider(defaultGateway.serviceProvider || 'self_hosted_imap');
     setGwIncomingProtocol(defaultGateway.incomingProtocol || 'imap');
-    setGwIncomingHost(defaultGateway.incomingHost || 'mail.confiancebizsol.tech');
+    setGwIncomingHost(defaultGateway.incomingHost || '');
     setGwIncomingPort(defaultGateway.incomingPort || 993);
     setGwIncomingSecurity(defaultGateway.incomingSecurity || 'ssl');
-    setGwIncomingUser(defaultGateway.incomingUsername || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
+    setGwIncomingUser(defaultGateway.incomingUsername || defaultGateway.fromEmail || '');
     if (defaultGateway.incomingPassword !== undefined) {
       setGwIncomingPassword(defaultGateway.incomingPassword || '');
     }
-    setGwOutgoingHost(defaultGateway.outgoingHost || 'mail.confiancebizsol.tech');
+    setGwOutgoingHost(defaultGateway.outgoingHost || '');
     setGwOutgoingPort(defaultGateway.outgoingPort || 587);
     setGwOutgoingSecurity(defaultGateway.outgoingSecurity || 'starttls');
-    setGwOutgoingUser(defaultGateway.outgoingUsername || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
+    setGwOutgoingUser(defaultGateway.outgoingUsername || defaultGateway.fromEmail || '');
     if (defaultGateway.outgoingPassword !== undefined) {
       setGwOutgoingPassword(defaultGateway.outgoingPassword || '');
     }
     setGwFromName(defaultGateway.fromName || 'IT Helpdesk Support');
-    setGwFromEmail(defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
-    setGwReplyToEmail(defaultGateway.replyToEmail || defaultGateway.fromEmail || 'it-helpdesk@confiancebizsol.tech');
+    setGwFromEmail(defaultGateway.fromEmail || '');
+    setGwReplyToEmail(defaultGateway.replyToEmail || defaultGateway.fromEmail || '');
     setGwAliasAddresses(defaultGateway.aliasAddresses || '');
     setGwSubjectPrefix(defaultGateway.subjectPrefix || '[ITL-{{ticketId}}]');
     setGwEnableInbound(defaultGateway.enableInboundTicketGeneration ?? true);
@@ -931,9 +931,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [defaultGateway]);
   // Inbound Email Simulator Form State
   const [showEmailSimulator, setShowEmailSimulator] = useState(false);
-  const [simFrom, setSimFrom] = useState('lakhan@confiancebizsol.tech');
-  const [simSubject, setSimSubject] = useState('Support Request from Lakhan');
-  const [simBody, setSimBody] = useState('Hello Support,\n\nI am experiencing an issue with my workstation network configuration. Please assist.');
+  const [simFrom, setSimFrom] = useState('xyz@gmail.com');
+  const [simSubject, setSimSubject] = useState('Support Request: Network Connectivity Issue');
+  const [simBody, setSimBody] = useState('Hello Support,\n\nI am experiencing an issue connecting to the corporate Wi-Fi. Please assist.');
   const [simCc, setSimCc] = useState('');
   const [simLoading, setSimLoading] = useState(false);
   const [simMessage, setSimMessage] = useState<string | null>(null);
@@ -1151,12 +1151,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setGwServiceProvider('self_hosted_imap');
     setGwIncomingProtocol('imap');
     if (!gwIncomingHost || gwIncomingHost.includes('gmail') || gwIncomingHost.includes('office365')) {
-      setGwIncomingHost('mail.confiancebizsol.tech');
+      setGwIncomingHost('mail.yourdomain.com');
     }
     setGwIncomingPort(993);
     setGwIncomingSecurity('ssl');
     if (!gwOutgoingHost || gwOutgoingHost.includes('gmail') || gwOutgoingHost.includes('office365')) {
-      setGwOutgoingHost('mail.confiancebizsol.tech');
+      setGwOutgoingHost('mail.yourdomain.com');
     }
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
@@ -1167,12 +1167,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setGwServiceProvider('self_hosted_pop3');
     setGwIncomingProtocol('pop3');
     if (!gwIncomingHost || gwIncomingHost.includes('gmail') || gwIncomingHost.includes('office365')) {
-      setGwIncomingHost('mail.confiancebizsol.tech');
+      setGwIncomingHost('mail.yourdomain.com');
     }
     setGwIncomingPort(995);
     setGwIncomingSecurity('ssl');
     if (!gwOutgoingHost || gwOutgoingHost.includes('gmail') || gwOutgoingHost.includes('office365')) {
-      setGwOutgoingHost('mail.confiancebizsol.tech');
+      setGwOutgoingHost('mail.yourdomain.com');
     }
     setGwOutgoingPort(587);
     setGwOutgoingSecurity('starttls');
@@ -4000,7 +4000,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Default Email Gateway &amp; Mailbox Connector
               </h2>
               <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                Connect your organization's support mailbox (e.g., <code className="text-cyan-600 dark:text-cyan-400 font-mono font-bold">it-helpdesk@confiancebizsol.tech</code> or Gmail with 16-character App Password, Microsoft 365, or Self-Hosted SMTP/IMAP/POP3) for automated ticket creation and public reply notifications.
+                Connect your organization's support mailbox (e.g., <code className="text-cyan-600 dark:text-cyan-400 font-mono font-bold">helpdesk@yourcompany.com</code> or Gmail with 16-character App Password, Microsoft 365, or Self-Hosted SMTP/IMAP/POP3) for automated ticket creation and public reply notifications.
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -4443,7 +4443,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <input
                   type="text"
-                  placeholder="e.g. support@confiancebizsol.tech, help@confiancebizsol.tech, it-service@confiancebizsol.tech"
+                  placeholder="e.g. support@company.com, help@company.com, it-service@company.com"
                   value={gwAliasAddresses}
                   onChange={(e) => setGwAliasAddresses(e.target.value)}
                   className="w-full px-3 py-1.5 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-medium"
