@@ -396,6 +396,16 @@ The system uses an atomic, transaction-safe JSON database engine located at `/da
   ```
 * **Instant Restore:** Replace `/data/database.json` with any historical snapshot and restart the service.
 
+##  ScreenShots
+<img width="1893" height="955" alt="image" src="https://github.com/user-attachments/assets/541b8051-f877-493a-a6d8-f0dfa9edf203" />
+<img width="1917" height="958" alt="image" src="https://github.com/user-attachments/assets/ac3e725d-7c37-41b1-908a-c5528ce1b95d" />
+<img width="1917" height="976" alt="image" src="https://github.com/user-attachments/assets/df685a59-2abe-467b-ae3f-19209754aa89" />
+<img width="1917" height="962" alt="image" src="https://github.com/user-attachments/assets/cd88f110-d2d6-44f5-8d48-a124bff16c55" />
+<img width="1917" height="962" alt="image" src="https://github.com/user-attachments/assets/76e3cb5d-c2a6-4eb3-bd77-fe18b2f2dc71" />
+<img width="1901" height="968" alt="image" src="https://github.com/user-attachments/assets/434072c8-e306-485d-a0e1-4654d6e195ac" />
+<img width="1885" height="962" alt="image" src="https://github.com/user-attachments/assets/91d7d95d-7087-4626-9d0f-340df296727e" />
+
+
 ---
 
 ## 📄 Author & License
