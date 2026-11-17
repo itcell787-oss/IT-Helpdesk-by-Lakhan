@@ -51,6 +51,7 @@ import {
 import { Organization, AuditLog, User as UserType, UserRole, ServiceCatalogItem, SatisfactionSurvey, SlaPolicy, DefaultEmailGatewayConfig, Ticket } from '../types';
 import { api } from '../services/api';
 import { SuperadminAttendancePanel } from './SuperadminAttendancePanel';
+import { isUserAttendanceEligible } from './TechnicianShiftTimer';
 
 interface SuperadminViewProps {
   organizations: Organization[];
@@ -827,7 +828,8 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       title: agentTitle,
       phone: agentPhone,
       organizationId: agentOrgId || organizations[0]?.id,
-      assignedWorkHoursPerDay: agentRole === 'technician' ? Math.max(1, Math.min(24, Number(agentWorkHours) || 8)) : undefined,
+      attendanceEnabled: true,
+      assignedWorkHoursPerDay: Math.max(0.5, Math.min(24, Number(agentWorkHours) || 8)),
     });
     setShowAgentModal(false);
     setAgentName('');
@@ -2641,7 +2643,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                         </span>
                       </td>
                       <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-300">
-                        {agent.role === 'technician' ? `${agent.assignedWorkHoursPerDay ?? 8} hrs/day` : '—'}
+                        {isUserAttendanceEligible(agent) ? `${agent.assignedWorkHoursPerDay ?? 8} hrs/day` : '—'}
                       </td>
                       <td className="py-3 px-3">
                         <span className="text-emerald-600 dark:text-emerald-400 font-semibold capitalize font-mono text-[11px]">
@@ -4294,8 +4296,9 @@ sudo nginx -t && sudo systemctl reload nginx`}
                     className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-lg text-slate-800 dark:text-slate-200"
                   >
                     <option value="technician">Technician / Agent</option>
-                    <option value="manager">Service Desk Manager</option>
+                    <option value="manager">Service Desk / Team Manager</option>
                     <option value="admin">System Administrator</option>
+                    <option value="inventory_manager">Inventory Manager</option>
                     <option value="auditor">Auditor (Read-Only)</option>
                   </select>
                 </div>
@@ -4312,22 +4315,20 @@ sudo nginx -t && sudo systemctl reload nginx`}
                 />
               </div>
 
-              {agentRole === 'technician' && (
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    Assigned Work Hours / Day (Overtime Threshold)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="1"
-                    max="24"
-                    value={agentWorkHours}
-                    onChange={(e) => setAgentWorkHours(Number(e.target.value) || 8)}
-                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              )}
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  Assigned Work Hours / Day (Overtime Threshold)
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  max="24"
+                  value={agentWorkHours}
+                  onChange={(e) => setAgentWorkHours(Number(e.target.value) || 8)}
+                  className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                />
+              </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-white/10">
                 <button

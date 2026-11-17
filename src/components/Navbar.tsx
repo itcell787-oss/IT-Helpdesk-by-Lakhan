@@ -251,8 +251,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             ZONE 3: RIGHT SECTION (Search... ⌘K, Theme, Profile / Lakhan Prajapati CBPL2045)
            ========================================================================= */}
         <div className="flex items-center gap-2.5 shrink-0">
-          {/* Technician Shift & Break Live Timer Widget */}
-          {currentUser && currentUser.role === 'technician' && technicianAttendance && (
+          {/* Staff & Technician Shift & Break Live Timer Widget */}
+          {currentUser && technicianAttendance?.isEligible && (
             <TechnicianNavbarTimerWidget attendance={technicianAttendance} />
           )}
 

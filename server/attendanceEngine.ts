@@ -3,8 +3,20 @@ import {
   User,
   TechnicianAttendanceSession,
   TechnicianAttendanceOverviewItem,
+  DailyAttendanceBreakdownRow,
   BreakInterval,
 } from '../src/types';
+
+export const DEFAULT_ATTENDANCE_ROLES = ['superadmin', 'admin', 'manager', 'technician'] as const;
+
+export function isUserAttendanceEligible(
+  user?: Pick<User, 'role' | 'attendanceEnabled'> | null
+): boolean {
+  if (!user) return false;
+  if (user.attendanceEnabled === true) return true;
+  if (user.attendanceEnabled === false) return false;
+  return (DEFAULT_ATTENDANCE_ROLES as readonly string[]).includes(user.role);
+}
 
 export function getLocalDateKey(d: Date = new Date()): string {
   const year = d.getFullYear();
@@ -343,7 +355,8 @@ export function getMyAttendanceStatus(user: User, dateKey: string = getLocalDate
     totalBreakSecondsToday,
     overtimeSecondsToday,
     isOvertime: overtimeSecondsToday > 0,
-    needsFirstLoginStart: user.role === 'technician' && todaySessions.length === 0 && !activeSession,
+    attendanceEnabled: isUserAttendanceEligible(user),
+    needsFirstLoginStart: isUserAttendanceEligible(user) && todaySessions.length === 0 && !activeSession,
   };
 }
 
@@ -352,6 +365,7 @@ export function getTechnicianAttendanceOverview(params?: {
   date?: string;
   month?: string;
   technicianId?: string;
+  technicianIds?: string[];
 }): {
   period: 'daily' | 'monthly';
   dateKey: string;
@@ -388,13 +402,16 @@ export function getTechnicianAttendanceOverview(params?: {
   const tasks = db.get('tasks') || [];
   const technicianTasks = db.get('technicianTasks') || [];
 
-  // Target technicians (include all users with role === 'technician', plus any staff user who has attendance records)
+  // Target all Staff & Technicians by default plus any Superadmin-enrolled users (e.g. inventory_manager, auditor)
   const techUserIdsWithLogs = new Set(allSessions.map((s) => s.technicianId));
   let targetTechnicians = users.filter(
-    (u) => u.role === 'technician' || techUserIdsWithLogs.has(u.id)
+    (u) => isUserAttendanceEligible(u) || (techUserIdsWithLogs.has(u.id) && u.attendanceEnabled !== false)
   );
   if (params?.technicianId) {
     targetTechnicians = targetTechnicians.filter((u) => u.id === params.technicianId);
+  } else if (Array.isArray(params?.technicianIds) && params.technicianIds.length > 0) {
+    const allowedSet = new Set(params.technicianIds);
+    targetTechnicians = targetTechnicians.filter((u) => allowedSet.has(u.id));
   }
 
   const items: TechnicianAttendanceOverviewItem[] = targetTechnicians.map((tech) => {
@@ -438,26 +455,58 @@ export function getTechnicianAttendanceOverview(params?: {
         })()
       : null;
 
-    // Group work seconds per day so overtime is calculated accurately per working day
-    const workByDay = new Map<string, number>();
+    // Group sessions per day so overtime & daily breakdown tables are accurate per working day
+    const sessionsByDay = new Map<string, TechnicianAttendanceSession[]>();
     for (const s of periodSessions) {
-      workByDay.set(s.date, (workByDay.get(s.date) || 0) + s.totalWorkSeconds);
+      const list = sessionsByDay.get(s.date) || [];
+      list.push(s);
+      sessionsByDay.set(s.date, list);
     }
 
-    const daysWorked = workByDay.size;
+    const dailyBreakdown: DailyAttendanceBreakdownRow[] = Array.from(sessionsByDay.entries())
+      .map(([dayDate, daySessions]) => {
+        const sortedDayAsc = [...daySessions].sort(
+          (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+        );
+        const dayWork = daySessions.reduce((acc, s) => acc + s.totalWorkSeconds, 0);
+        const dayBreak = daySessions.reduce((acc, s) => acc + s.totalBreakSeconds, 0);
+        const dayOt = Math.max(0, dayWork - dailyTargetSeconds);
+        const dayFirstIn = sortedDayAsc[0]?.startTime;
+        const activeOnDay = daySessions.find((s) => s.status === 'working' || s.status === 'on_break');
+        const dayLastOut = activeOnDay ? undefined : sortedDayAsc[sortedDayAsc.length - 1]?.stopTime;
+        const dayStatus: 'working' | 'on_break' | 'stopped' = activeOnDay
+          ? (activeOnDay.status === 'on_break' ? 'on_break' : 'working')
+          : 'stopped';
+        const dayNotes = daySessions
+          .map((s) => s.notes)
+          .filter((n): n is string => Boolean(n && n.trim()))
+          .join(' | ');
+
+        return {
+          date: dayDate,
+          sessionsCount: daySessions.length,
+          firstClockIn: dayFirstIn,
+          lastClockOut: dayLastOut,
+          totalWorkSeconds: dayWork,
+          totalBreakSeconds: dayBreak,
+          targetSeconds: dailyTargetSeconds,
+          overtimeSeconds: dayOt,
+          isOvertime: dayOt > 0,
+          status: dayStatus,
+          ...(dayNotes ? { notes: dayNotes } : {}),
+        };
+      })
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    const daysWorked = sessionsByDay.size;
     let totalWorkSeconds = 0;
     let totalBreakSeconds = 0;
     let overtimeSeconds = 0;
 
-    for (const s of periodSessions) {
-      totalWorkSeconds += s.totalWorkSeconds;
-      totalBreakSeconds += s.totalBreakSeconds;
-    }
-
-    for (const [, dayWorkSec] of workByDay.entries()) {
-      if (dayWorkSec > dailyTargetSeconds) {
-        overtimeSeconds += (dayWorkSec - dailyTargetSeconds);
-      }
+    for (const row of dailyBreakdown) {
+      totalWorkSeconds += row.totalWorkSeconds;
+      totalBreakSeconds += row.totalBreakSeconds;
+      overtimeSeconds += row.overtimeSeconds;
     }
 
     const expectedTargetSeconds = period === 'daily'
@@ -537,11 +586,13 @@ export function getTechnicianAttendanceOverview(params?: {
       employeeCode: tech.employeeCode,
       role: tech.role,
       title: tech.title,
+      attendanceEnabled: isUserAttendanceEligible(tech),
       assignedWorkHoursPerDay,
       assignedShiftLabel: tech.assignedShiftLabel,
       currentStatus,
       activeSession,
       sessions: periodSessions,
+      dailyBreakdown,
       daysWorked,
       firstClockIn,
       lastClockOut,

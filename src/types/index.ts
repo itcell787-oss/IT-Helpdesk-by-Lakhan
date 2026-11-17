@@ -52,6 +52,7 @@ export interface User {
   privileges?: AdminPrivileges;
   assignedWorkHoursPerDay?: number; // Custom daily work hours assigned by Super Admin (default 8)
   assignedShiftLabel?: string; // Optional shift schedule note (e.g. "09:00 AM - 06:00 PM")
+  attendanceEnabled?: boolean; // Whether user participates in Tech Attendance & Overtime tracking
   createdAt: string;
 }
 
@@ -550,6 +551,7 @@ export interface AttendanceReportSchedule {
   frequency: 'daily' | 'monthly' | 'both';
   recipientEmail: string;
   ccEmails?: string[]; // Additional CC recipients
+  selectedTechnicianIds?: string[]; // Specific staff IDs ticked for report emails (empty/undefined = all enrolled staff)
   dailySendTime: string; // HH:mm 24h
   monthlyDayOfMonth: number; // 1 - 28
   monthlySendTime: string; // HH:mm 24h
@@ -582,6 +584,20 @@ export interface TechnicianAssignedTask {
   updatedAt: string;
 }
 
+export interface DailyAttendanceBreakdownRow {
+  date: string; // YYYY-MM-DD
+  sessionsCount: number;
+  firstClockIn: string;
+  lastClockOut?: string;
+  totalWorkSeconds: number;
+  totalBreakSeconds: number;
+  targetSeconds: number;
+  overtimeSeconds: number;
+  isOvertime: boolean;
+  status: 'working' | 'on_break' | 'stopped';
+  notes?: string;
+}
+
 export interface TechnicianAttendanceOverviewItem {
   technicianId: string;
   technicianName: string;
@@ -589,11 +605,13 @@ export interface TechnicianAttendanceOverviewItem {
   employeeCode?: string;
   role: UserRole;
   title?: string;
+  attendanceEnabled?: boolean;
   assignedWorkHoursPerDay: number;
   assignedShiftLabel?: string;
   currentStatus: 'working' | 'on_break' | 'stopped' | 'not_started';
   activeSession: TechnicianAttendanceSession | null;
   sessions: TechnicianAttendanceSession[];
+  dailyBreakdown?: DailyAttendanceBreakdownRow[];
   daysWorked: number;
   firstClockIn?: string;
   lastClockOut?: string;

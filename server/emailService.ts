@@ -1804,6 +1804,7 @@ class EmailGatewayService {
     frequency: 'daily' | 'monthly';
     recipientEmail?: string;
     ccEmails?: string[];
+    technicianIds?: string[];
     date?: string;
     month?: string;
     isScheduled?: boolean;
@@ -1812,6 +1813,7 @@ class EmailGatewayService {
     status: 'sent' | 'simulated_success' | 'failed';
     recipient: string;
     cc: string[];
+    selectedTechnicianIds?: string[];
     subject: string;
     messageId?: string;
     error?: string;
@@ -1832,10 +1834,16 @@ class EmailGatewayService {
       )
     );
 
+    const rawTechIds = params.technicianIds !== undefined ? params.technicianIds : schedule?.selectedTechnicianIds;
+    const effectiveTechIds = Array.isArray(rawTechIds)
+      ? Array.from(new Set(rawTechIds.map((id) => String(id || '').trim()).filter(Boolean)))
+      : undefined;
+
     const overview = getTechnicianAttendanceOverview({
       period: params.frequency,
       date: params.date,
       month: params.month,
+      technicianIds: effectiveTechIds && effectiveTechIds.length > 0 ? effectiveTechIds : undefined,
     });
 
     const periodTitle = params.frequency === 'monthly'
@@ -1846,6 +1854,9 @@ class EmailGatewayService {
 
     const includeTaskStatus = schedule?.includeTaskStatus !== false;
     const includeOvertimeDetails = schedule?.includeOvertimeDetails !== false;
+    const staffScopeLabel = effectiveTechIds && effectiveTechIds.length > 0
+      ? `Selected Staff (${overview.technicians.length}): ${overview.technicians.map((t) => t.technicianName).join(', ')}`
+      : `All Enrolled Staff (${overview.technicians.length})`;
 
     const textRows = overview.technicians.map((t) => {
       const otText = t.overtimeSeconds > 0 ? `+${formatDurationHM(t.overtimeSeconds)} OVERTIME` : '0m';
@@ -1858,7 +1869,7 @@ class EmailGatewayService {
       return `- ${t.technicianName} (${t.employeeCode || t.technicianId}): Status=${t.currentStatus.toUpperCase()} | Assigned=${t.assignedWorkHoursPerDay}h/day | Worked=${formatDurationHM(t.totalWorkSeconds)} | Break=${formatDurationHM(t.totalBreakSeconds)}${includeOvertimeDetails ? ` | Overtime=${otText}` : ''}${taskText}`;
     }).join('\n');
 
-    const textContent = `IT Helpdesk Technician Attendance & Task Status Report\nPeriod: ${periodTitle}\nGenerated At: ${new Date().toLocaleString()}${ccList.length > 0 ? `\nCC Recipients: ${ccList.join(', ')}` : ''}\n\nSummary:\n- Total Technicians: ${overview.totals.totalTechnicians}\n- Active Working: ${overview.totals.workingNow} | On Break: ${overview.totals.onBreakNow}\n- Total Working Time: ${formatDurationHM(overview.totals.totalWorkSeconds)}\n- Total Break Time: ${formatDurationHM(overview.totals.totalBreakSeconds)}\n- Total Overtime: ${formatDurationHM(overview.totals.totalOvertimeSeconds)} (${overview.totals.techniciansWithOvertime} technician(s))\n- Assigned Operational Tasks: ${overview.totals.assignedTasksCompleted}/${overview.totals.assignedTasksTotal} completed (${overview.totals.assignedTasksPending} pending, ${overview.totals.assignedTasksCancelled} cancelled)\n- Ticket Sub-tasks Completed: ${overview.totals.tasksCompleted}/${overview.totals.totalTasks}\n\nTechnician Breakdown:\n${textRows || 'No technicians registered.'}\n\n--\nIT Helpdesk by Lakhan • Automated Attendance & Operations Reporter`;
+    const textContent = `IT Helpdesk Technician Attendance & Task Status Report\nPeriod: ${periodTitle}\nStaff Included: ${staffScopeLabel}\nGenerated At: ${new Date().toLocaleString()}${ccList.length > 0 ? `\nCC Recipients: ${ccList.join(', ')}` : ''}\n\nSummary:\n- Total Technicians: ${overview.totals.totalTechnicians}\n- Active Working: ${overview.totals.workingNow} | On Break: ${overview.totals.onBreakNow}\n- Total Working Time: ${formatDurationHM(overview.totals.totalWorkSeconds)}\n- Total Break Time: ${formatDurationHM(overview.totals.totalBreakSeconds)}\n- Total Overtime: ${formatDurationHM(overview.totals.totalOvertimeSeconds)} (${overview.totals.techniciansWithOvertime} technician(s))\n- Assigned Operational Tasks: ${overview.totals.assignedTasksCompleted}/${overview.totals.assignedTasksTotal} completed (${overview.totals.assignedTasksPending} pending, ${overview.totals.assignedTasksCancelled} cancelled)\n- Ticket Sub-tasks Completed: ${overview.totals.tasksCompleted}/${overview.totals.totalTasks}\n\nTechnician Breakdown:\n${textRows || 'No technicians registered.'}\n\n--\nIT Helpdesk by Lakhan • Automated Attendance & Operations Reporter`;
 
     const htmlRows = overview.technicians.map((t) => {
       const statusBadge = t.currentStatus === 'working'
@@ -1925,6 +1936,7 @@ class EmailGatewayService {
           </span>
           <h2 style="color:#0f172a;margin:10px 0 4px;font-size:20px;">Technician Attendance, Overtime &amp; Task Status — ${periodTitle}</h2>
           <p style="margin:0;color:#64748b;font-size:12px;">Generated: ${new Date().toLocaleString()} ${params.isScheduled ? '(Automated Schedule)' : '(Manual Superadmin Trigger)'}${ccList.length > 0 ? ` • CC: ${ccList.join(', ')}` : ''}</p>
+          <p style="margin:4px 0 0;color:#0369a1;font-size:12px;font-weight:600;">Staff Included: ${staffScopeLabel}</p>
         </div>
 
         <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
@@ -2033,6 +2045,7 @@ class EmailGatewayService {
       status: finalStatus,
       recipient: to,
       cc: ccList,
+      selectedTechnicianIds: effectiveTechIds,
       subject,
       messageId,
       error: errorMsg,
@@ -2061,6 +2074,7 @@ class EmailGatewayService {
             frequency: 'daily',
             recipientEmail: schedule.recipientEmail,
             ccEmails: schedule.ccEmails || [],
+            technicianIds: schedule.selectedTechnicianIds,
             date: todayKey,
             isScheduled: true,
           });
@@ -2077,6 +2091,7 @@ class EmailGatewayService {
             frequency: 'monthly',
             recipientEmail: schedule.recipientEmail,
             ccEmails: schedule.ccEmails || [],
+            technicianIds: schedule.selectedTechnicianIds,
             month: monthKey,
             isScheduled: true,
           });

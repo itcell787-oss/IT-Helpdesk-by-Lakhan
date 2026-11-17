@@ -842,6 +842,7 @@ export const api = {
     date?: string;
     month?: string;
     technicianId?: string;
+    technicianIds?: string[];
   }): Promise<{
     period: 'daily' | 'monthly';
     dateKey: string;
@@ -871,6 +872,7 @@ export const api = {
     if (params?.date) sp.set('date', params.date);
     if (params?.month) sp.set('month', params.month);
     if (params?.technicianId) sp.set('technicianId', params.technicianId);
+    if (params?.technicianIds && params.technicianIds.length > 0) sp.set('technicianIds', params.technicianIds.join(','));
     const qs = sp.toString();
     return request(`/api/attendance/overview${qs ? `?${qs}` : ''}`);
   },
@@ -901,11 +903,26 @@ export const api = {
     frequency: 'daily' | 'monthly';
     recipientEmail?: string;
     ccEmails?: string[];
+    technicianIds?: string[];
     date?: string;
     month?: string;
   }): Promise<any> {
     return request('/api/attendance/report/send-now', {
       method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async setUserAttendanceEnrollment(
+    userId: string,
+    payload: {
+      attendanceEnabled: boolean;
+      assignedWorkHoursPerDay?: number;
+      assignedShiftLabel?: string;
+    }
+  ): Promise<{ success: boolean; user: User; message: string }> {
+    return request(`/api/attendance/users/${userId}/enrollment`, {
+      method: 'PATCH',
       body: JSON.stringify(payload),
     });
   },

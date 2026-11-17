@@ -260,6 +260,7 @@ class DatabaseEngine {
             frequency: 'daily',
             recipientEmail: 'admin@lakhanglobal.com',
             ccEmails: [],
+            selectedTechnicianIds: [],
             dailySendTime: '19:00',
             monthlyDayOfMonth: 1,
             monthlySendTime: '09:00',
@@ -267,8 +268,13 @@ class DatabaseEngine {
             includeOvertimeDetails: true,
             lastSendStatus: 'Not sent yet',
           };
-        } else if (!Array.isArray(parsed.attendanceSchedule.ccEmails)) {
-          parsed.attendanceSchedule.ccEmails = [];
+        } else {
+          if (!Array.isArray(parsed.attendanceSchedule.ccEmails)) {
+            parsed.attendanceSchedule.ccEmails = [];
+          }
+          if (!Array.isArray(parsed.attendanceSchedule.selectedTechnicianIds)) {
+            parsed.attendanceSchedule.selectedTechnicianIds = [];
+          }
         }
         
         // Ensure organizations have systemSettings and preSharedKey
@@ -342,7 +348,7 @@ class DatabaseEngine {
                   canManageApprovals: u.role !== 'technician',
                 };
               }
-              if (u.role === 'technician' && (u.assignedWorkHoursPerDay === undefined || u.assignedWorkHoursPerDay === null)) {
+              if ((u.role === 'technician' || u.role === 'manager' || u.role === 'admin' || u.role === 'superadmin') && (u.assignedWorkHoursPerDay === undefined || u.assignedWorkHoursPerDay === null)) {
                 u.assignedWorkHoursPerDay = 8;
               }
               return u;
@@ -484,6 +490,7 @@ class DatabaseEngine {
         frequency: 'daily',
         recipientEmail: 'admin@lakhanglobal.com',
         ccEmails: [],
+        selectedTechnicianIds: [],
         dailySendTime: '19:00',
         monthlyDayOfMonth: 1,
         monthlySendTime: '09:00',

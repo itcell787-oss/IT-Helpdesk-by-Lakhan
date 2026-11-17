@@ -15,6 +15,7 @@ import {
   getTechnicianAttendanceOverview,
   formatDurationHM,
   computeSessionDurations,
+  isUserAttendanceEligible,
 } from './attendanceEngine';
 import {
   Ticket,
@@ -607,8 +608,9 @@ apiRouter.post('/users', (req: Request, res: Response) => {
     status: 'active',
     assignedWorkHoursPerDay: req.body.assignedWorkHoursPerDay
       ? Number(req.body.assignedWorkHoursPerDay)
-      : (targetRole === 'technician' ? 8 : undefined),
+      : (['technician', 'manager', 'admin', 'superadmin'].includes(targetRole) || req.body.attendanceEnabled === true ? 8 : undefined),
     assignedShiftLabel: req.body.assignedShiftLabel,
+    ...(typeof req.body.attendanceEnabled === 'boolean' ? { attendanceEnabled: req.body.attendanceEnabled } : {}),
     createdAt: new Date().toISOString(),
   };
 
@@ -4088,8 +4090,8 @@ apiRouter.post('/attendance/start', (req: Request, res: Response) => {
   if (!actor) {
     return res.status(401).json({ error: 'Authentication required' });
   }
-  if (actor.role === 'requester') {
-    return res.status(403).json({ error: 'Attendance shift timer is reserved for support technicians and staff.' });
+  if (!isUserAttendanceEligible(actor)) {
+    return res.status(403).json({ error: 'Attendance & OT shift timer is not enabled for your account. Contact Super Admin.' });
   }
   try {
     const session = startShiftTimer(actor, req.body?.notes);
@@ -4175,12 +4177,17 @@ apiRouter.get('/attendance/overview', (req: Request, res: Response) => {
   const date = typeof req.query.date === 'string' ? req.query.date : undefined;
   const month = typeof req.query.month === 'string' ? req.query.month : undefined;
   const requestedTechId = typeof req.query.technicianId === 'string' ? req.query.technicianId : undefined;
+  const requestedTechIdsRaw = typeof req.query.technicianIds === 'string' ? req.query.technicianIds : undefined;
+  const requestedTechIds = requestedTechIdsRaw
+    ? requestedTechIdsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined;
 
   const overview = getTechnicianAttendanceOverview({
     period,
     date,
     month,
     technicianId: isPrivileged ? requestedTechId : actor.id,
+    technicianIds: isPrivileged ? requestedTechIds : undefined,
   });
 
   res.json(overview);
@@ -4244,6 +4251,59 @@ apiRouter.patch('/attendance/technician/:id/work-hours', (req: Request, res: Res
   });
 });
 
+apiRouter.patch('/attendance/users/:id/enrollment', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Permission denied: Only Super Admin can add or remove users in Tech Attendance & OT.' });
+  }
+
+  const { id } = req.params;
+  const users = db.get('users');
+  const idx = users.findIndex((u) => u.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const enabled = Boolean(req.body?.attendanceEnabled);
+  const requestedHours = req.body?.assignedWorkHoursPerDay !== undefined ? Number(req.body.assignedWorkHoursPerDay) : undefined;
+  if (requestedHours !== undefined && (isNaN(requestedHours) || requestedHours < 0.5 || requestedHours > 24)) {
+    return res.status(400).json({ error: 'Assigned daily work hours must be between 0.5 and 24 hours.' });
+  }
+
+  const currentUserRecord = users[idx];
+  const nextHours = requestedHours !== undefined
+    ? Math.round(requestedHours * 100) / 100
+    : (currentUserRecord.assignedWorkHoursPerDay && currentUserRecord.assignedWorkHoursPerDay > 0
+        ? currentUserRecord.assignedWorkHoursPerDay
+        : 8);
+
+  users[idx] = {
+    ...currentUserRecord,
+    attendanceEnabled: enabled,
+    ...(enabled ? { assignedWorkHoursPerDay: nextHours } : {}),
+    ...(req.body?.assignedShiftLabel !== undefined
+      ? { assignedShiftLabel: String(req.body.assignedShiftLabel).trim() || undefined }
+      : {}),
+  };
+  db.set('users', users);
+
+  logAudit(
+    actor,
+    enabled ? 'attendance.user_enrolled' : 'attendance.user_removed',
+    'user',
+    id,
+    `Super Admin ${enabled ? 'added' : 'removed'} ${users[idx].name} (${users[idx].role}) ${enabled ? `to Tech Attendance & OT (${nextHours} hrs/day)` : 'from Tech Attendance & OT'}`
+  );
+
+  res.json({
+    success: true,
+    user: users[idx],
+    message: enabled
+      ? `Added ${users[idx].name} (${users[idx].role}) to Tech Attendance & OT (${nextHours} hrs/day).`
+      : `Removed ${users[idx].name} from Tech Attendance & OT.`,
+  });
+});
+
 apiRouter.get('/attendance/schedule', (req: Request, res: Response) => {
   const actor = getOptionalActor(req);
   if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin')) {
@@ -4283,6 +4343,9 @@ apiRouter.put('/attendance/schedule', (req: Request, res: Response) => {
       ? req.body.recipientEmail.trim()
       : (current.recipientEmail || actor.email),
     ccEmails: req.body.ccEmails !== undefined ? parseEmails(req.body.ccEmails) : (current.ccEmails || []),
+    selectedTechnicianIds: Array.isArray(req.body.selectedTechnicianIds)
+      ? Array.from(new Set<string>(req.body.selectedTechnicianIds.map((id: unknown) => String(id || '').trim()).filter(Boolean)))
+      : (current.selectedTechnicianIds || []),
     dailySendTime: typeof req.body.dailySendTime === 'string' && /^\d{2}:\d{2}$/.test(req.body.dailySendTime)
       ? req.body.dailySendTime
       : (current.dailySendTime || '19:00'),
@@ -4302,7 +4365,7 @@ apiRouter.put('/attendance/schedule', (req: Request, res: Response) => {
     'attendance.schedule_updated',
     'setting',
     'attendanceSchedule',
-    `Updated Attendance & Task Status email schedule: Enabled=${next.enabled}, Frequency=${next.frequency}, Recipient=${next.recipientEmail}${next.ccEmails.length ? `, CC=${next.ccEmails.join(',')}` : ''}`
+    `Updated Attendance & Task Status email schedule: Enabled=${next.enabled}, Frequency=${next.frequency}, Recipient=${next.recipientEmail}${next.ccEmails.length ? `, CC=${next.ccEmails.join(',')}` : ''}${next.selectedTechnicianIds.length ? `, SelectedStaff=${next.selectedTechnicianIds.length}` : ', SelectedStaff=All'}`
   );
   res.json(next);
 });
@@ -4325,6 +4388,13 @@ apiRouter.post('/attendance/report/send-now', async (req: Request, res: Response
             .filter((e) => e.includes('@'))
         )
       );
+  const rawTechIds = req.body.technicianIds;
+  if (Array.isArray(rawTechIds) && rawTechIds.length === 0) {
+    return res.status(400).json({ error: 'Please tick at least one staff member to include in the email report.' });
+  }
+  const technicianIds = Array.isArray(rawTechIds)
+    ? Array.from(new Set<string>(rawTechIds.map((id: unknown) => String(id || '').trim()).filter(Boolean)))
+    : undefined;
   const date = typeof req.body.date === 'string' ? req.body.date : undefined;
   const month = typeof req.body.month === 'string' ? req.body.month : undefined;
 
@@ -4333,6 +4403,7 @@ apiRouter.post('/attendance/report/send-now', async (req: Request, res: Response
       frequency,
       recipientEmail,
       ccEmails,
+      technicianIds,
       date,
       month,
       isScheduled: false,
@@ -4358,12 +4429,12 @@ apiRouter.get('/technician-tasks', (req: Request, res: Response) => {
   if (!actor) {
     return res.status(401).json({ error: 'Authentication required' });
   }
-  if (actor.role === 'requester') {
+  if (actor.role === 'requester' && !isUserAttendanceEligible(actor)) {
     return res.status(403).json({ error: 'Access denied' });
   }
 
   let tasks = db.get('technicianTasks') || [];
-  if (actor.role === 'technician') {
+  if (actor.role !== 'superadmin' && actor.role !== 'admin') {
     tasks = tasks.filter((t) => t.technicianId === actor.id);
   } else {
     const techFilter = typeof req.query.technicianId === 'string' ? req.query.technicianId : '';

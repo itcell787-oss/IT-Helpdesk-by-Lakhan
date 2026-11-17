@@ -1467,6 +1467,8 @@ export default function App() {
               <AssetListView
                 assets={assets}
                 users={availableUsers}
+                currentUser={currentUser}
+                technicianAttendance={technicianAttendance}
                 onCreateAsset={handleCreateAsset}
                 onUpdateAsset={handleUpdateAsset}
                 onDeleteAsset={handleDeleteAsset}
@@ -1708,8 +1710,8 @@ export default function App() {
         />
       )}
 
-      {/* First-Login Shift Timer Prompt for Technicians */}
-      {currentUser?.role === 'technician' && (
+      {/* First-Login Shift Timer Prompt for Enrolled Staff & Technicians */}
+      {currentUser && technicianAttendance.isEligible && (
         <TechnicianFirstLoginTimerModal
           isOpen={Boolean(
             !currentUser.mustChangePassword &&

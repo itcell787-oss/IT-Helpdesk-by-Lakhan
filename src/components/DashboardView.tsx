@@ -577,8 +577,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Technician Live Shift Timer, Break Control & Overtime Tracker */}
-      {currentUser?.role === 'technician' && technicianAttendance && (
+      {/* Staff & Technician Live Shift Timer, Break Control, Overtime & Assigned Tasks */}
+      {currentUser && technicianAttendance?.isEligible && (
         <TechnicianShiftCard user={currentUser} attendance={technicianAttendance} />
       )}
 

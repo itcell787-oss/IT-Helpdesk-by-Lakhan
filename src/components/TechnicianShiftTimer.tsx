@@ -34,7 +34,19 @@ export function formatHM(totalSeconds: number): string {
   return `${safe}s`;
 }
 
+export const DEFAULT_ATTENDANCE_ROLES = ['superadmin', 'admin', 'manager', 'technician'] as const;
+
+export function isUserAttendanceEligible(
+  user?: Pick<User, 'role' | 'attendanceEnabled'> | null
+): boolean {
+  if (!user) return false;
+  if (user.attendanceEnabled === true) return true;
+  if (user.attendanceEnabled === false) return false;
+  return (DEFAULT_ATTENDANCE_ROLES as readonly string[]).includes(user.role);
+}
+
 export interface LiveAttendanceState {
+  isEligible: boolean;
   loading: boolean;
   actionLoading: boolean;
   currentStatus: 'working' | 'on_break' | 'stopped' | 'not_started';
@@ -122,7 +134,7 @@ export function useTechnicianAttendance(
   currentUser: User | null,
   onToast?: (msg: string) => void
 ): LiveAttendanceState {
-  const isTechnician = Boolean(currentUser && currentUser.role === 'technician');
+  const isEligible = isUserAttendanceEligible(currentUser);
 
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -148,7 +160,7 @@ export function useTechnicianAttendance(
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!isTechnician) return;
+    if (!isEligible) return;
     try {
       const [res, tasks] = await Promise.all([
         api.getMyAttendanceStatus(),
@@ -159,10 +171,10 @@ export function useTechnicianAttendance(
     } catch {
       // Silent poll error
     }
-  }, [isTechnician, applyServerStatus]);
+  }, [isEligible, applyServerStatus]);
 
   useEffect(() => {
-    if (!isTechnician) {
+    if (!isEligible) {
       setCurrentStatus('not_started');
       setActiveSession(null);
       setTodaySessions([]);
@@ -175,17 +187,17 @@ export function useTechnicianAttendance(
 
     const poll = setInterval(refresh, 15000);
     return () => clearInterval(poll);
-  }, [isTechnician, refresh]);
+  }, [isEligible, refresh]);
 
   // 1-second local ticker whenever working or on break
   useEffect(() => {
-    if (!isTechnician) return;
+    if (!isEligible) return;
     if (currentStatus !== 'working' && currentStatus !== 'on_break') return;
     const ticker = setInterval(() => {
       setNowMs(Date.now());
     }, 1000);
     return () => clearInterval(ticker);
-  }, [isTechnician, currentStatus]);
+  }, [isEligible, currentStatus]);
 
   const startTimer = async (notes?: string) => {
     setActionLoading(true);
@@ -286,6 +298,7 @@ export function useTechnicianAttendance(
   const computed = computeLiveFromSessions(activeSession, todaySessions, assignedWorkHoursPerDay, nowMs);
 
   return {
+    isEligible,
     loading,
     actionLoading,
     currentStatus,
@@ -465,7 +478,7 @@ export const TechnicianFirstLoginTimerModal: React.FC<{
               Start Your Shift Working Timer
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Welcome back, <strong className="text-slate-800 dark:text-slate-200">{user.name}</strong> ({user.employeeCode || 'Technician'})
+              Welcome back, <strong className="text-slate-800 dark:text-slate-200">{user.name}</strong> ({user.employeeCode || user.role.replace('_', ' ')})
             </p>
           </div>
         </div>
@@ -587,7 +600,7 @@ export const TechnicianShiftCard: React.FC<{
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                Technician Shift Attendance &amp; Break Tracker
+                Staff &amp; Technician Shift Attendance &amp; Break Tracker
               </h2>
               <span
                 className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase font-mono border ${

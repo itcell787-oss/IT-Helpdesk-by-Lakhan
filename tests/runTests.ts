@@ -13,6 +13,7 @@ import {
   getTechnicianAttendanceOverview,
   getLocalDateKey,
   getLocalMonthKey,
+  isUserAttendanceEligible,
 } from '../server/attendanceEngine';
 
 async function runTestSuite() {
@@ -658,15 +659,41 @@ async function runTestSuite() {
     db.set('attendanceSessions', []);
     const allUsers = db.get('users') || [];
     const tech = allUsers.find((u: User) => u.role === 'technician');
+    const mgr = allUsers.find((u: User) => u.role === 'manager');
+    const invMgr = allUsers.find((u: User) => u.role === 'inventory_manager');
     assert('Found technician user for attendance test', Boolean(tech));
+    assert('Default Attendance & OT applies to all Staff & Technicians (superadmin, technician, manager = 3)', (() => {
+      const defOv = getTechnicianAttendanceOverview({ period: 'daily' });
+      return defOv.technicians.length === 3 &&
+        defOv.technicians.some((t) => t.role === 'superadmin') &&
+        defOv.technicians.some((t) => t.role === 'technician') &&
+        defOv.technicians.some((t) => t.role === 'manager') &&
+        Boolean(mgr && isUserAttendanceEligible(mgr)) &&
+        Boolean(invMgr && !isUserAttendanceEligible(invMgr));
+    })());
     if (!tech) return;
 
-    // Assign custom 6h/day shift to test overtime threshold cleanly
+    // Assign custom 6h/day shift to test overtime threshold cleanly + enroll Inventory Manager
     const updatedUsers = allUsers.map((u: User) =>
-      u.id === tech.id ? { ...u, assignedWorkHoursPerDay: 6, assignedShiftLabel: 'Early Support (6h)' } : u
+      u.id === tech.id
+        ? { ...u, assignedWorkHoursPerDay: 6, assignedShiftLabel: 'Early Support (6h)' }
+        : u.role === 'inventory_manager'
+          ? { ...u, attendanceEnabled: true, assignedWorkHoursPerDay: 9 }
+          : u
     );
     db.set('users', updatedUsers);
     const customTech = updatedUsers.find((u: User) => u.id === tech.id)!;
+    const enrolledInvMgr = updatedUsers.find((u: User) => u.role === 'inventory_manager')!;
+
+    assert('Superadmin can enroll Inventory Manager into Tech Attendance & OT (4 enrolled staff)', (() => {
+      const ov = getTechnicianAttendanceOverview({ period: 'daily' });
+      const invStatus = getMyAttendanceStatus(enrolledInvMgr);
+      return isUserAttendanceEligible(enrolledInvMgr) &&
+        invStatus.needsFirstLoginStart === true &&
+        invStatus.assignedWorkHoursPerDay === 9 &&
+        ov.technicians.length === 4 &&
+        ov.technicians.some((t) => t.role === 'inventory_manager');
+    })());
 
     // Check first-login requirement before shift starts
     const preStatus = getMyAttendanceStatus(customTech);
@@ -801,17 +828,31 @@ async function runTestSuite() {
     const monthlyOverview = getTechnicianAttendanceOverview({ period: 'monthly', month: monthKey });
     const techMonthlyRow = monthlyOverview.technicians.find((t) => t.technicianId === customTech.id);
     assert('Monthly overview totals match daily overtime accurately', Boolean(techMonthlyRow && techMonthlyRow.overtimeSeconds === 5400 && techMonthlyRow.daysWorked === 1));
+    assert('Monthly overview includes day-by-day breakdown rows per staff', Boolean(
+      techMonthlyRow &&
+      Array.isArray(techMonthlyRow.dailyBreakdown) &&
+      techMonthlyRow.dailyBreakdown.length === 1 &&
+      techMonthlyRow.dailyBreakdown[0].date === todayKey &&
+      techMonthlyRow.dailyBreakdown[0].overtimeSeconds === 5400
+    ));
 
-    // Send Daily & Monthly attendance report emails with CC recipients (simulated mode when SMTP is unconfigured)
+    const singleStaffMonthly = getTechnicianAttendanceOverview({ period: 'monthly', month: monthKey, technicianId: customTech.id });
+    assert('Single-staff overview returns only the selected staff work report', Boolean(
+      singleStaffMonthly.technicians.length === 1 &&
+      singleStaffMonthly.technicians[0].technicianId === customTech.id
+    ));
+
+    // Send Daily & Monthly attendance report emails with CC recipients & particular ticked staff
     const dailyEmail = await emailService.sendAttendanceReportEmail({
       frequency: 'daily',
       recipientEmail: 'admin@lakhanglobal.com',
       ccEmails: ['ops-lead@lakhanglobal.com', 'hr@lakhanglobal.com'],
+      technicianIds: [customTech.id],
       date: todayKey,
       isScheduled: false,
     });
     const scheduleAfterDaily = db.get('attendanceSchedule');
-    assert('Daily attendance & task status report email recorded cleanly with CC recipients', Boolean(
+    assert('Daily attendance & task status report email filters to ticked staff with CC recipients', Boolean(
       dailyEmail &&
       dailyEmail.success &&
       dailyEmail.subject.includes('Daily') &&
@@ -819,6 +860,8 @@ async function runTestSuite() {
       Array.isArray(dailyEmail.cc) &&
       dailyEmail.cc.includes('ops-lead@lakhanglobal.com') &&
       dailyEmail.cc.includes('hr@lakhanglobal.com') &&
+      dailyEmail.summary.technicians.length === 1 &&
+      dailyEmail.summary.technicians[0].technicianId === customTech.id &&
       scheduleAfterDaily?.lastDailySentDate === todayKey
     ));
 
@@ -826,17 +869,20 @@ async function runTestSuite() {
       frequency: 'monthly',
       recipientEmail: 'admin@lakhanglobal.com',
       ccEmails: ['ops-lead@lakhanglobal.com'],
+      technicianIds: [customTech.id],
       month: monthKey,
       isScheduled: true,
     });
     const scheduleAfterMonthly = db.get('attendanceSchedule');
-    assert('Monthly attendance & task status report email recorded cleanly with CC recipients', Boolean(
+    assert('Monthly attendance & task status report email filters to ticked staff cleanly', Boolean(
       monthlyEmail &&
       monthlyEmail.success &&
       monthlyEmail.subject.includes('Monthly') &&
       monthlyEmail.recipient === 'admin@lakhanglobal.com' &&
       Array.isArray(monthlyEmail.cc) &&
       monthlyEmail.cc.includes('ops-lead@lakhanglobal.com') &&
+      monthlyEmail.summary.technicians.length === 1 &&
+      monthlyEmail.summary.technicians[0].technicianId === customTech.id &&
       scheduleAfterMonthly?.lastMonthlySentMonth === monthKey
     ));
 

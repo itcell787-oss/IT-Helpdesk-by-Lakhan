@@ -46,10 +46,13 @@ import { Asset, User as UserType, UserRole } from '../types';
 import { AssetFormModal } from './AssetFormModal';
 import { SearchableEmployeeSelect } from './SearchableEmployeeSelect';
 import { CmdbStatisticsPanel } from './CmdbStatisticsPanel';
+import { TechnicianShiftCard, LiveAttendanceState } from './TechnicianShiftTimer';
 
 interface AssetListViewProps {
   assets: Asset[];
   users: UserType[];
+  currentUser?: UserType | null;
+  technicianAttendance?: LiveAttendanceState | null;
   onCreateAsset: (data: Partial<Asset>) => void;
   onUpdateAsset?: (id: string, data: Partial<Asset>) => void;
   onDeleteAsset?: (assetId: string) => void;
@@ -64,6 +67,8 @@ interface AssetListViewProps {
 export const AssetListView: React.FC<AssetListViewProps> = ({
   assets,
   users,
+  currentUser,
+  technicianAttendance,
   onCreateAsset,
   onUpdateAsset,
   onDeleteAsset,
@@ -907,6 +912,11 @@ export const AssetListView: React.FC<AssetListViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Shift Timer & Assigned Tasks Card for Enrolled Inventory Managers */}
+      {currentUser && currentUser.role === 'inventory_manager' && technicianAttendance?.isEligible && (
+        <TechnicianShiftCard user={currentUser} attendance={technicianAttendance} />
       )}
 
       {/* Top Header */}
