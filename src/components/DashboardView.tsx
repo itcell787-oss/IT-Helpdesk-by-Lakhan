@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { Ticket, AuditLog, User, DefaultEmailGatewayConfig } from '../types';
 import { api } from '../services/api';
+import { TechnicianShiftCard, LiveAttendanceState } from './TechnicianShiftTimer';
 
 interface DashboardViewProps {
   metrics: {
@@ -47,6 +48,8 @@ interface DashboardViewProps {
   tickets: Ticket[];
   auditLogs: AuditLog[];
   users?: User[];
+  currentUser?: User | null;
+  technicianAttendance?: LiveAttendanceState | null;
   defaultGatewayConfig?: DefaultEmailGatewayConfig | null;
   onSelectTicket: (ticketId: string) => void;
   onNavigate: (view: string) => void;
@@ -59,6 +62,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   tickets,
   auditLogs,
   users = [],
+  currentUser,
+  technicianAttendance,
   defaultGatewayConfig,
   onSelectTicket,
   onNavigate,
@@ -571,6 +576,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Technician Live Shift Timer, Break Control & Overtime Tracker */}
+      {currentUser?.role === 'technician' && technicianAttendance && (
+        <TechnicianShiftCard user={currentUser} attendance={technicianAttendance} />
+      )}
 
       {/* =========================================================================
           LIVE CONNECTED HELPDESK EMAIL GATEWAY WIDGET

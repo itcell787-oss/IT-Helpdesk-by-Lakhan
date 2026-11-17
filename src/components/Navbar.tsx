@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { User, Organization, DefaultEmailGatewayConfig } from '../types';
 import { ChangePasswordModal } from './ChangePasswordModal';
+import { LiveAttendanceState, TechnicianNavbarTimerWidget } from './TechnicianShiftTimer';
 
 interface NavbarProps {
   currentUser: User | null;
@@ -35,6 +36,7 @@ interface NavbarProps {
   onOpenLogin: (type?: 'user' | 'admin') => void;
   onLogout: () => void;
   defaultGatewayConfig?: DefaultEmailGatewayConfig | null;
+  technicianAttendance?: LiveAttendanceState | null;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -52,6 +54,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenLogin,
   onLogout,
   defaultGatewayConfig,
+  technicianAttendance,
 }) => {
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showSignInDropdown, setShowSignInDropdown] = useState(false);
@@ -248,6 +251,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             ZONE 3: RIGHT SECTION (Search... ⌘K, Theme, Profile / Lakhan Prajapati CBPL2045)
            ========================================================================= */}
         <div className="flex items-center gap-2.5 shrink-0">
+          {/* Technician Shift & Break Live Timer Widget */}
+          {currentUser && currentUser.role === 'technician' && technicianAttendance && (
+            <TechnicianNavbarTimerWidget attendance={technicianAttendance} />
+          )}
+
           {/* Helpdesk Email Connector quick badge for Superadmin & Admin */}
           {currentUser && (currentUser.role === 'superadmin' || currentUser.role === 'admin') && (
             <button

@@ -24,6 +24,8 @@ import {
   MailboxConnectionConfig,
   DefaultEmailGatewayConfig,
   OtpVerificationRecord,
+  TechnicianAttendanceSession,
+  AttendanceReportSchedule,
 } from '../src/types';
 
 import {
@@ -71,6 +73,8 @@ export interface DatabaseSchema {
   adminMailboxes: MailboxConnectionConfig[];
   defaultGatewayConfig: DefaultEmailGatewayConfig;
   otpRecords: OtpVerificationRecord[];
+  attendanceSessions: TechnicianAttendanceSession[];
+  attendanceSchedule: AttendanceReportSchedule;
   currentUserId: string;
   nextTicketSequence: number;
 }
@@ -246,6 +250,20 @@ class DatabaseEngine {
           }
         }
         if (!parsed.otpRecords) parsed.otpRecords = [];
+        if (!Array.isArray(parsed.attendanceSessions)) parsed.attendanceSessions = [];
+        if (!parsed.attendanceSchedule) {
+          parsed.attendanceSchedule = {
+            enabled: false,
+            frequency: 'daily',
+            recipientEmail: 'admin@lakhanglobal.com',
+            dailySendTime: '19:00',
+            monthlyDayOfMonth: 1,
+            monthlySendTime: '09:00',
+            includeTaskStatus: true,
+            includeOvertimeDetails: true,
+            lastSendStatus: 'Not sent yet',
+          };
+        }
         
         // Ensure organizations have systemSettings and preSharedKey
         if (parsed.organizations) {
@@ -317,6 +335,9 @@ class DatabaseEngine {
                   canManageKnowledgeBase: u.role !== 'technician',
                   canManageApprovals: u.role !== 'technician',
                 };
+              }
+              if (u.role === 'technician' && (u.assignedWorkHoursPerDay === undefined || u.assignedWorkHoursPerDay === null)) {
+                u.assignedWorkHoursPerDay = 8;
               }
               return u;
             })
@@ -451,6 +472,18 @@ class DatabaseEngine {
       adminMailboxes: initialAdminMailboxes,
       defaultGatewayConfig: initialDefaultGateway,
       otpRecords: [],
+      attendanceSessions: [],
+      attendanceSchedule: {
+        enabled: false,
+        frequency: 'daily',
+        recipientEmail: 'admin@lakhanglobal.com',
+        dailySendTime: '19:00',
+        monthlyDayOfMonth: 1,
+        monthlySendTime: '09:00',
+        includeTaskStatus: true,
+        includeOvertimeDetails: true,
+        lastSendStatus: 'Not sent yet',
+      },
       currentUserId: '', // By default: guest session (landing on End User Portal)
       nextTicketSequence: 110,
     };

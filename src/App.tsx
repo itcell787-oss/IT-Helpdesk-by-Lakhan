@@ -18,6 +18,7 @@ import { NewTicketModal } from './components/NewTicketModal';
 import { CommandPalette } from './components/CommandPalette';
 import { AuthLoginModal } from './components/AuthLoginModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { useTechnicianAttendance, TechnicianFirstLoginTimerModal } from './components/TechnicianShiftTimer';
 import { api } from './services/api';
 import {
   Ticket,
@@ -170,10 +171,14 @@ export default function App() {
   const [isRefreshingTickets, setIsRefreshingTickets] = useState(false);
   const knownTicketIdsRef = useRef<Set<string>>(new Set());
 
+  const [firstLoginTimerDismissed, setFirstLoginTimerDismissed] = useState(false);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
+
+  const technicianAttendance = useTechnicianAttendance(currentUser, showToast);
 
   const handleRefreshTickets = async () => {
     setIsRefreshingTickets(true);
@@ -391,6 +396,7 @@ export default function App() {
   const handleSwitchUser = async (userId: string) => {
     try {
       const res = await api.switchUser(userId);
+      setFirstLoginTimerDismissed(false);
       setCurrentUser(res.user);
       setOrganization(res.organization);
       showToast(`Impersonating ${res.user.name} (${res.user.role.toUpperCase()})`);
@@ -407,6 +413,7 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await api.logout();
+      setFirstLoginTimerDismissed(false);
       setCurrentUser(null);
       setActiveView('portal');
       setPortalInitialTab('home');
@@ -414,6 +421,7 @@ export default function App() {
       loadData();
     } catch (err: any) {
       console.error('Logout error:', err);
+      setFirstLoginTimerDismissed(false);
       setCurrentUser(null);
       setActiveView('portal');
       setPortalInitialTab('home');
@@ -1180,6 +1188,7 @@ export default function App() {
         }}
         onLogout={handleLogout}
         defaultGatewayConfig={defaultGateway}
+        technicianAttendance={technicianAttendance}
       />
 
       {/* Main Layout Area - Static Left Sidebar & Scrollable Main Canvas */}
@@ -1246,6 +1255,8 @@ export default function App() {
                 metrics={metrics}
                 tickets={tickets}
                 users={availableUsers}
+                currentUser={currentUser}
+                technicianAttendance={technicianAttendance}
                 auditLogs={auditLogs}
                 defaultGatewayConfig={defaultGateway}
                 onSelectTicket={handleSelectTicket}
@@ -1619,6 +1630,7 @@ export default function App() {
                 onCreateCatalogItem={handleCreateCatalogItem}
                 onUpdateCatalogItem={handleUpdateCatalogItem}
                 onDeleteCatalogItem={handleDeleteCatalogItem}
+                onRefreshUsers={() => loadData()}
               />
             )}
           </div>
@@ -1645,6 +1657,7 @@ export default function App() {
         onClose={() => setIsLoginModalOpen(false)}
         initialPortalType={loginModalPortalType}
         onLoginSuccess={(user) => {
+          setFirstLoginTimerDismissed(false);
           setCurrentUser(user);
           setIsLoginModalOpen(false);
           if (user.mustChangePassword) {
@@ -1688,6 +1701,20 @@ export default function App() {
             setActiveView('dashboard');
             loadData();
           }}
+        />
+      )}
+
+      {/* First-Login Shift Timer Prompt for Technicians */}
+      {currentUser?.role === 'technician' && (
+        <TechnicianFirstLoginTimerModal
+          isOpen={Boolean(
+            !currentUser.mustChangePassword &&
+            technicianAttendance.needsFirstLoginStart &&
+            !firstLoginTimerDismissed
+          )}
+          user={currentUser}
+          attendance={technicianAttendance}
+          onDismiss={() => setFirstLoginTimerDismissed(true)}
         />
       )}
 

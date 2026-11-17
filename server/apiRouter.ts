@@ -7,6 +7,16 @@ import { emailService } from './emailService';
 import { calculateSlaDeadlines, evaluateSlaStatus } from './slaEngine';
 import { runAutomations } from './automationEngine';
 import {
+  startShiftTimer,
+  stopShiftTimer,
+  startBreakTimer,
+  stopBreakTimer,
+  getMyAttendanceStatus,
+  getTechnicianAttendanceOverview,
+  formatDurationHM,
+  computeSessionDurations,
+} from './attendanceEngine';
+import {
   Ticket,
   TicketComment,
   AuditLog,
@@ -594,6 +604,10 @@ apiRouter.post('/users', (req: Request, res: Response) => {
     locationId: req.body.locationId,
     phone: req.body.phone,
     status: 'active',
+    assignedWorkHoursPerDay: req.body.assignedWorkHoursPerDay
+      ? Number(req.body.assignedWorkHoursPerDay)
+      : (targetRole === 'technician' ? 8 : undefined),
+    assignedShiftLabel: req.body.assignedShiftLabel,
     createdAt: new Date().toISOString(),
   };
 
@@ -4054,3 +4068,257 @@ apiRouter.post('/system/restore', (req: Request, res: Response) => {
     res.status(500).json({ error: err.message || 'Failed to restore database.' });
   }
 });
+
+// =============================================================
+// Technician Shift Timer, Attendance, Overtime & Scheduled Reports
+// =============================================================
+apiRouter.get('/attendance/my-status', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  const dateParam = typeof req.query.date === 'string' ? req.query.date : undefined;
+  const status = getMyAttendanceStatus(actor, dateParam);
+  res.json(status);
+});
+
+apiRouter.post('/attendance/start', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  if (actor.role === 'requester') {
+    return res.status(403).json({ error: 'Attendance shift timer is reserved for support technicians and staff.' });
+  }
+  try {
+    const session = startShiftTimer(actor, req.body?.notes);
+    logAudit(actor, 'attendance.timer_started', 'auth', session.id, `${actor.name} (${actor.role}) started shift working timer (Assigned: ${session.assignedWorkHours}h/day)`);
+    res.json({
+      success: true,
+      session,
+      status: getMyAttendanceStatus(actor),
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Could not start shift timer' });
+  }
+});
+
+apiRouter.post('/attendance/stop', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  try {
+    const session = stopShiftTimer(actor, req.body?.notes);
+    logAudit(
+      actor,
+      'attendance.timer_stopped',
+      'auth',
+      session.id,
+      `${actor.name} stopped shift timer. Worked: ${formatDurationHM(session.totalWorkSeconds)}, Break: ${formatDurationHM(session.totalBreakSeconds)}, Overtime: ${formatDurationHM(session.overtimeSeconds)}`
+    );
+    res.json({
+      success: true,
+      session,
+      status: getMyAttendanceStatus(actor),
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Could not stop shift timer' });
+  }
+});
+
+apiRouter.post('/attendance/break/start', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  try {
+    const session = startBreakTimer(actor, req.body?.reason);
+    logAudit(actor, 'attendance.break_started', 'auth', session.id, `${actor.name} started break timer (${req.body?.reason || 'Break'})`);
+    res.json({
+      success: true,
+      session,
+      status: getMyAttendanceStatus(actor),
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Could not start break timer' });
+  }
+});
+
+apiRouter.post('/attendance/break/stop', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  try {
+    const session = stopBreakTimer(actor);
+    logAudit(actor, 'attendance.break_stopped', 'auth', session.id, `${actor.name} resumed work from break (Total break: ${formatDurationHM(session.totalBreakSeconds)})`);
+    res.json({
+      success: true,
+      session,
+      status: getMyAttendanceStatus(actor),
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Could not stop break timer' });
+  }
+});
+
+apiRouter.get('/attendance/overview', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const isPrivileged = actor.role === 'superadmin' || actor.role === 'admin' || actor.role === 'manager' || actor.role === 'auditor';
+  const period = req.query.period === 'monthly' ? 'monthly' : 'daily';
+  const date = typeof req.query.date === 'string' ? req.query.date : undefined;
+  const month = typeof req.query.month === 'string' ? req.query.month : undefined;
+  const requestedTechId = typeof req.query.technicianId === 'string' ? req.query.technicianId : undefined;
+
+  const overview = getTechnicianAttendanceOverview({
+    period,
+    date,
+    month,
+    technicianId: isPrivileged ? requestedTechId : actor.id,
+  });
+
+  res.json(overview);
+});
+
+apiRouter.patch('/attendance/technician/:id/work-hours', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin')) {
+    return res.status(403).json({ error: 'Permission denied: Only Super Admin can assign custom work hours.' });
+  }
+
+  const { id } = req.params;
+  const hours = Number(req.body.assignedWorkHoursPerDay);
+  if (isNaN(hours) || hours < 0.5 || hours > 24) {
+    return res.status(400).json({ error: 'Assigned daily work hours must be between 0.5 and 24 hours.' });
+  }
+
+  const users = db.get('users');
+  const idx = users.findIndex((u) => u.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Technician user not found' });
+  }
+
+  users[idx] = {
+    ...users[idx],
+    assignedWorkHoursPerDay: Math.round(hours * 100) / 100,
+    ...(req.body.assignedShiftLabel !== undefined ? { assignedShiftLabel: String(req.body.assignedShiftLabel).trim() || undefined } : {}),
+  };
+  db.set('users', users);
+
+  // Recalculate overtime on active/today's attendance sessions for this technician
+  const sessions = db.get('attendanceSessions') || [];
+  const updatedSessions = sessions.map((s) => {
+    if (s.technicianId === id) {
+      const durations = computeSessionDurations(s, Date.now(), users[idx].assignedWorkHoursPerDay);
+      return {
+        ...s,
+        assignedWorkHours: users[idx].assignedWorkHoursPerDay || 8,
+        totalWorkSeconds: durations.totalWorkSeconds,
+        totalBreakSeconds: durations.totalBreakSeconds,
+        overtimeSeconds: durations.overtimeSeconds,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    return s;
+  });
+  db.set('attendanceSessions', updatedSessions);
+
+  logAudit(
+    actor,
+    'attendance.work_hours_assigned',
+    'user',
+    id,
+    `Super Admin assigned ${users[idx].assignedWorkHoursPerDay} hrs/day custom shift target to ${users[idx].name}`
+  );
+
+  res.json({
+    success: true,
+    user: users[idx],
+    message: `Assigned ${users[idx].assignedWorkHoursPerDay} hrs/day to ${users[idx].name}`,
+  });
+});
+
+apiRouter.get('/attendance/schedule', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || (actor.role !== 'superadmin' && actor.role !== 'admin')) {
+    return res.status(403).json({ error: 'Only Super Admin or Admin can view attendance email schedule.' });
+  }
+  const schedule = db.get('attendanceSchedule');
+  res.json(schedule);
+});
+
+apiRouter.put('/attendance/schedule', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only Super Admin can configure automated attendance email schedules.' });
+  }
+
+  const current = db.get('attendanceSchedule');
+  const next = {
+    ...current,
+    enabled: Boolean(req.body.enabled),
+    frequency: (['daily', 'monthly', 'both'].includes(req.body.frequency) ? req.body.frequency : current.frequency || 'daily') as 'daily' | 'monthly' | 'both',
+    recipientEmail: typeof req.body.recipientEmail === 'string' && req.body.recipientEmail.trim()
+      ? req.body.recipientEmail.trim()
+      : (current.recipientEmail || actor.email),
+    dailySendTime: typeof req.body.dailySendTime === 'string' && /^\d{2}:\d{2}$/.test(req.body.dailySendTime)
+      ? req.body.dailySendTime
+      : (current.dailySendTime || '19:00'),
+    monthlyDayOfMonth: req.body.monthlyDayOfMonth
+      ? Math.min(28, Math.max(1, Number(req.body.monthlyDayOfMonth)))
+      : (current.monthlyDayOfMonth || 1),
+    monthlySendTime: typeof req.body.monthlySendTime === 'string' && /^\d{2}:\d{2}$/.test(req.body.monthlySendTime)
+      ? req.body.monthlySendTime
+      : (current.monthlySendTime || '09:00'),
+    includeTaskStatus: req.body.includeTaskStatus !== undefined ? Boolean(req.body.includeTaskStatus) : true,
+    includeOvertimeDetails: req.body.includeOvertimeDetails !== undefined ? Boolean(req.body.includeOvertimeDetails) : true,
+  };
+
+  db.set('attendanceSchedule', next);
+  logAudit(
+    actor,
+    'attendance.schedule_updated',
+    'setting',
+    'attendanceSchedule',
+    `Updated Attendance & Task Status email schedule: Enabled=${next.enabled}, Frequency=${next.frequency}, Recipient=${next.recipientEmail}`
+  );
+  res.json(next);
+});
+
+apiRouter.post('/attendance/report/send-now', async (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only Super Admin can dispatch attendance reports.' });
+  }
+
+  const frequency = req.body.frequency === 'monthly' ? 'monthly' : 'daily';
+  const recipientEmail = typeof req.body.recipientEmail === 'string' ? req.body.recipientEmail.trim() : undefined;
+  const date = typeof req.body.date === 'string' ? req.body.date : undefined;
+  const month = typeof req.body.month === 'string' ? req.body.month : undefined;
+
+  try {
+    const result = await emailService.sendAttendanceReportEmail({
+      frequency,
+      recipientEmail,
+      date,
+      month,
+      isScheduled: false,
+    });
+    logAudit(
+      actor,
+      'attendance.report_sent',
+      'setting',
+      `report-${frequency}`,
+      `Dispatched ${frequency} technician attendance & task status report to ${result.recipient} (${result.status})`
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed sending attendance report email' });
+  }
+});
+

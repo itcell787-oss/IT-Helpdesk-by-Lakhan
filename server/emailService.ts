@@ -7,6 +7,12 @@ import { db } from './db';
 import { Ticket, TicketComment, DefaultEmailGatewayConfig, User } from '../src/types';
 import { calculateSlaDeadlines } from './slaEngine';
 import { runAutomations } from './automationEngine';
+import {
+  getTechnicianAttendanceOverview,
+  formatDurationHM,
+  getLocalDateKey,
+  getLocalMonthKey,
+} from './attendanceEngine';
 
 export interface EmailTestResult {
   success: boolean;
@@ -60,7 +66,7 @@ export interface InboundEmailPayload {
 
 export interface OutboundEmailRecord {
   id: string;
-  type: 'ticket_created' | 'public_reply' | 'survey' | 'test_probe' | 'status_update';
+  type: 'ticket_created' | 'public_reply' | 'survey' | 'test_probe' | 'status_update' | 'attendance_report';
   recipient: string;
   subject: string;
   sentAt: string;
@@ -1792,7 +1798,262 @@ class EmailGatewayService {
   }
 
   /**
-   * Starts automatic background mailbox poller
+   * Builds and dispatches Daily or Monthly Technician Attendance, Working Hours, Overtime & Task Status Email to Superadmin
+   */
+  public async sendAttendanceReportEmail(params: {
+    frequency: 'daily' | 'monthly';
+    recipientEmail?: string;
+    date?: string;
+    month?: string;
+    isScheduled?: boolean;
+  }): Promise<{
+    success: boolean;
+    status: 'sent' | 'simulated_success' | 'failed';
+    recipient: string;
+    subject: string;
+    messageId?: string;
+    error?: string;
+    summary: ReturnType<typeof getTechnicianAttendanceOverview>;
+  }> {
+    const config = db.get('defaultGatewayConfig');
+    const schedule = db.get('attendanceSchedule');
+    const users = db.get('users') || [];
+    const superadmin = users.find((u) => u.role === 'superadmin');
+
+    const to = (params.recipientEmail || schedule?.recipientEmail || superadmin?.email || 'admin@lakhanglobal.com').trim();
+    const overview = getTechnicianAttendanceOverview({
+      period: params.frequency,
+      date: params.date,
+      month: params.month,
+    });
+
+    const periodTitle = params.frequency === 'monthly'
+      ? `Monthly Report (${overview.monthKey})`
+      : `Daily Report (${overview.dateKey})`;
+
+    const subject = `[IT Helpdesk] Technician Attendance, Overtime & Task Status — ${periodTitle}`;
+
+    const includeTaskStatus = schedule?.includeTaskStatus !== false;
+    const includeOvertimeDetails = schedule?.includeOvertimeDetails !== false;
+
+    const textRows = overview.technicians.map((t) => {
+      const otText = t.overtimeSeconds > 0 ? `+${formatDurationHM(t.overtimeSeconds)} OVERTIME` : '0m';
+      const taskText = includeTaskStatus
+        ? ` | Tickets: ${t.taskStatus.openTickets + t.taskStatus.inProgressTickets} open / ${t.taskStatus.resolvedTickets} resolved | Tasks: ${t.taskStatus.tasksCompleted}/${t.taskStatus.tasksTotal}`
+        : '';
+      return `- ${t.technicianName} (${t.employeeCode || t.technicianId}): Status=${t.currentStatus.toUpperCase()} | Assigned=${t.assignedWorkHoursPerDay}h/day | Worked=${formatDurationHM(t.totalWorkSeconds)} | Break=${formatDurationHM(t.totalBreakSeconds)}${includeOvertimeDetails ? ` | Overtime=${otText}` : ''}${taskText}`;
+    }).join('\n');
+
+    const textContent = `IT Helpdesk Technician Attendance & Task Status Report\nPeriod: ${periodTitle}\nGenerated At: ${new Date().toLocaleString()}\n\nSummary:\n- Total Technicians: ${overview.totals.totalTechnicians}\n- Active Working: ${overview.totals.workingNow} | On Break: ${overview.totals.onBreakNow}\n- Total Working Time: ${formatDurationHM(overview.totals.totalWorkSeconds)}\n- Total Break Time: ${formatDurationHM(overview.totals.totalBreakSeconds)}\n- Total Overtime: ${formatDurationHM(overview.totals.totalOvertimeSeconds)} (${overview.totals.techniciansWithOvertime} technician(s))\n- Tasks Completed: ${overview.totals.tasksCompleted}/${overview.totals.totalTasks}\n\nTechnician Breakdown:\n${textRows || 'No technicians registered.'}\n\n--\nIT Helpdesk by Lakhan • Automated Attendance & Operations Reporter`;
+
+    const htmlRows = overview.technicians.map((t) => {
+      const statusBadge = t.currentStatus === 'working'
+        ? '<span style="background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;">WORKING</span>'
+        : t.currentStatus === 'on_break'
+          ? '<span style="background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;">ON BREAK</span>'
+          : t.currentStatus === 'stopped'
+            ? '<span style="background:#e2e8f0;color:#334155;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;">COMPLETED</span>'
+            : '<span style="background:#fee2e2;color:#b91c1c;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;">NOT STARTED</span>';
+
+      const otCell = t.overtimeSeconds > 0
+        ? `<span style="background:#fff1f2;color:#be123c;border:1px solid #fecdd3;padding:2px 8px;border-radius:4px;font-weight:700;font-size:11px;">+${formatDurationHM(t.overtimeSeconds)} OT</span>`
+        : '<span style="color:#64748b;font-size:12px;">0m</span>';
+
+      const clockInStr = t.firstClockIn ? new Date(t.firstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      const clockOutStr = t.currentStatus === 'working' || t.currentStatus === 'on_break'
+        ? 'Active'
+        : t.lastClockOut
+          ? new Date(t.lastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : '—';
+
+      return `
+        <tr style="border-bottom:1px solid #e2e8f0;">
+          <td style="padding:10px 8px;">
+            <div style="font-weight:700;color:#0f172a;font-size:13px;">${t.technicianName}</div>
+            <div style="font-size:11px;color:#64748b;font-family:monospace;">${t.employeeCode || t.technicianId} • ${t.technicianEmail}</div>
+          </td>
+          <td style="padding:10px 8px;">${statusBadge}</td>
+          <td style="padding:10px 8px;font-family:monospace;font-size:12px;color:#334155;">${t.assignedWorkHoursPerDay}h/day${params.frequency === 'monthly' ? ` (${t.daysWorked}d)` : ''}</td>
+          <td style="padding:10px 8px;font-family:monospace;font-size:12px;color:#334155;">${clockInStr} / ${clockOutStr}</td>
+          <td style="padding:10px 8px;font-family:monospace;font-weight:700;color:#0369a1;font-size:12px;">${formatDurationHM(t.totalWorkSeconds)}</td>
+          <td style="padding:10px 8px;font-family:monospace;color:#b45309;font-size:12px;">${formatDurationHM(t.totalBreakSeconds)}</td>
+          ${includeOvertimeDetails ? `<td style="padding:10px 8px;font-family:monospace;">${otCell}</td>` : ''}
+          ${includeTaskStatus ? `
+            <td style="padding:10px 8px;font-size:12px;color:#334155;">
+              <div><strong>Open:</strong> ${t.taskStatus.openTickets + t.taskStatus.inProgressTickets} · <strong>Resolved:</strong> ${t.taskStatus.resolvedTickets}</div>
+              <div style="font-size:11px;color:#64748b;">Sub-tasks: ${t.taskStatus.tasksCompleted}/${t.taskStatus.tasksTotal} done${t.taskStatus.overdueTickets > 0 ? ` · <span style="color:#be123c;font-weight:700;">${t.taskStatus.overdueTickets} Overdue</span>` : ''}</div>
+            </td>
+          ` : ''}
+        </tr>
+      `;
+    }).join('');
+
+    const htmlContent = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 860px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff;">
+        <div style="border-bottom: 2px solid #0284c7; padding-bottom: 14px; margin-bottom: 20px;">
+          <span style="display:inline-block;padding:3px 10px;font-size:11px;font-weight:700;border-radius:4px;background:#e0f2fe;color:#0369a1;text-transform:uppercase;">
+            ${params.frequency.toUpperCase()} ATTENDANCE & TASK REPORT
+          </span>
+          <h2 style="color:#0f172a;margin:10px 0 4px;font-size:20px;">Technician Attendance, Overtime &amp; Task Status — ${periodTitle}</h2>
+          <p style="margin:0;color:#64748b;font-size:12px;">Generated: ${new Date().toLocaleString()} ${params.isScheduled ? '(Automated Schedule)' : '(Manual Superadmin Trigger)'}</p>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+          <tr>
+            <td style="padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;width:25%;">
+              <div style="font-size:11px;color:#64748b;font-weight:600;">Technicians</div>
+              <div style="font-size:18px;font-weight:800;color:#0f172a;">${overview.totals.totalTechnicians}</div>
+              <div style="font-size:11px;color:#059669;">${overview.totals.workingNow} Active · ${overview.totals.onBreakNow} On Break</div>
+            </td>
+            <td style="padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;width:25%;">
+              <div style="font-size:11px;color:#64748b;font-weight:600;">Total Working Time</div>
+              <div style="font-size:18px;font-weight:800;color:#0369a1;">${formatDurationHM(overview.totals.totalWorkSeconds)}</div>
+              <div style="font-size:11px;color:#b45309;">Breaks: ${formatDurationHM(overview.totals.totalBreakSeconds)}</div>
+            </td>
+            <td style="padding:10px;background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;width:25%;">
+              <div style="font-size:11px;color:#9f1239;font-weight:600;">Total Overtime</div>
+              <div style="font-size:18px;font-weight:800;color:#be123c;">${formatDurationHM(overview.totals.totalOvertimeSeconds)}</div>
+              <div style="font-size:11px;color:#9f1239;">${overview.totals.techniciansWithOvertime} Tech(s) in OT</div>
+            </td>
+            <td style="padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;width:25%;">
+              <div style="font-size:11px;color:#166534;font-weight:600;">Task Completion</div>
+              <div style="font-size:18px;font-weight:800;color:#15803d;">${overview.totals.tasksCompleted}/${overview.totals.totalTasks}</div>
+              <div style="font-size:11px;color:#166534;">Checklist Sub-tasks</div>
+            </td>
+          </tr>
+        </table>
+
+        <table style="width:100%;border-collapse:collapse;text-align:left;border:1px solid #e2e8f0;">
+          <thead>
+            <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;font-size:11px;text-transform:uppercase;color:#475569;">
+              <th style="padding:10px 8px;">Technician</th>
+              <th style="padding:10px 8px;">Status</th>
+              <th style="padding:10px 8px;">Assigned</th>
+              <th style="padding:10px 8px;">Clock In / Out</th>
+              <th style="padding:10px 8px;">Work Time</th>
+              <th style="padding:10px 8px;">Break Time</th>
+              ${includeOvertimeDetails ? '<th style="padding:10px 8px;">Overtime</th>' : ''}
+              ${includeTaskStatus ? '<th style="padding:10px 8px;">Ticket &amp; Task Status</th>' : ''}
+            </tr>
+          </thead>
+          <tbody>
+            ${htmlRows || '<tr><td colspan="8" style="padding:16px;text-align:center;color:#64748b;">No technicians found.</td></tr>'}
+          </tbody>
+        </table>
+
+        <div style="border-top:1px solid #e2e8f0;padding-top:14px;margin-top:20px;font-size:11px;color:#94a3b8;text-align:center;">
+          IT Helpdesk by Lakhan • Technician Workforce Attendance &amp; Operations Dispatch
+        </div>
+      </div>
+    `;
+
+    const nowIso = new Date().toISOString();
+    let finalStatus: 'sent' | 'simulated_success' | 'failed' = 'simulated_success';
+    let messageId = `sim-att-${Date.now()}`;
+    let errorMsg: string | undefined;
+
+    if (this.isSmtpConfigured(config)) {
+      try {
+        const transporter = this.createTransporter(config);
+        const info = await transporter.sendMail({
+          from: `"${config.fromName}" <${config.fromEmail}>`,
+          to,
+          replyTo: config.replyToEmail || config.fromEmail,
+          subject,
+          text: textContent,
+          html: htmlContent,
+        });
+        finalStatus = 'sent';
+        messageId = info.messageId;
+      } catch (err: any) {
+        finalStatus = 'simulated_success';
+        errorMsg = err.message;
+      }
+    }
+
+    this.recordDelivery({
+      id: messageId,
+      type: 'attendance_report',
+      recipient: to,
+      subject,
+      sentAt: nowIso,
+      status: finalStatus,
+      error: errorMsg,
+      messageId,
+    });
+
+    if (schedule) {
+      const updatedSchedule = { ...schedule };
+      updatedSchedule.lastSentAt = nowIso;
+      updatedSchedule.lastSendStatus = finalStatus === 'sent'
+        ? `Sent ${params.frequency} report to ${to} at ${new Date().toLocaleTimeString()}`
+        : `Dispatched (Simulated/Gateway Log) ${params.frequency} report to ${to} at ${new Date().toLocaleTimeString()}`;
+      if (params.frequency === 'daily') {
+        updatedSchedule.lastDailySentDate = overview.dateKey;
+      } else {
+        updatedSchedule.lastMonthlySentMonth = overview.monthKey;
+      }
+      db.set('attendanceSchedule', updatedSchedule);
+    }
+
+    return {
+      success: true,
+      status: finalStatus,
+      recipient: to,
+      subject,
+      messageId,
+      error: errorMsg,
+      summary: overview,
+    };
+  }
+
+  /**
+   * Checks configured Daily / Monthly attendance report schedules and triggers automated email delivery
+   */
+  public async checkAndRunAttendanceSchedules() {
+    try {
+      const schedule = db.get('attendanceSchedule');
+      if (!schedule || !schedule.enabled || !schedule.recipientEmail) return;
+
+      const now = new Date();
+      const todayKey = getLocalDateKey(now);
+      const monthKey = getLocalMonthKey(now);
+      const currentHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+      // 1. Check Daily Schedule
+      if ((schedule.frequency === 'daily' || schedule.frequency === 'both') && schedule.lastDailySentDate !== todayKey) {
+        const targetTime = schedule.dailySendTime || '19:00';
+        if (currentHHMM >= targetTime) {
+          await this.sendAttendanceReportEmail({
+            frequency: 'daily',
+            recipientEmail: schedule.recipientEmail,
+            date: todayKey,
+            isScheduled: true,
+          });
+        }
+      }
+
+      // 2. Check Monthly Schedule
+      if ((schedule.frequency === 'monthly' || schedule.frequency === 'both') && schedule.lastMonthlySentMonth !== monthKey) {
+        const targetDay = Math.min(28, Math.max(1, Number(schedule.monthlyDayOfMonth) || 1));
+        const targetTime = schedule.monthlySendTime || '09:00';
+        const dom = now.getDate();
+        if (dom > targetDay || (dom === targetDay && currentHHMM >= targetTime)) {
+          await this.sendAttendanceReportEmail({
+            frequency: 'monthly',
+            recipientEmail: schedule.recipientEmail,
+            month: monthKey,
+            isScheduled: true,
+          });
+        }
+      }
+    } catch {
+      // Silent background scheduler
+    }
+  }
+
+  /**
+   * Starts automatic background mailbox poller & scheduled attendance reporter
    */
   public startBackgroundPolling() {
     // Run an initial deduplication pass to clean up any past test residue
@@ -1802,6 +2063,10 @@ class EmailGatewayService {
 
     if (this.pollingTimer) return;
     this.pollingTimer = setInterval(async () => {
+      try {
+        await this.checkAndRunAttendanceSchedules();
+      } catch {}
+
       try {
         const config = db.get('defaultGatewayConfig');
         if (!config || config.enableInboundTicketGeneration === false) return;

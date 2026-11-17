@@ -4,6 +4,16 @@ import { calculateSlaDeadlines, evaluateSlaStatus } from '../server/slaEngine';
 import { runAutomations } from '../server/automationEngine';
 import { Ticket, SlaPolicy, AutomationRule, User } from '../src/types';
 import { emailService } from '../server/emailService';
+import {
+  startShiftTimer,
+  startBreakTimer,
+  stopBreakTimer,
+  stopShiftTimer,
+  getMyAttendanceStatus,
+  getTechnicianAttendanceOverview,
+  getLocalDateKey,
+  getLocalMonthKey,
+} from '../server/attendanceEngine';
 
 async function runTestSuite() {
   console.log('🧪 Starting IT Helpdesk Production Test Suite...\n');
@@ -639,6 +649,150 @@ async function runTestSuite() {
   };
 
   await testEmailIntake();
+
+  // -------------------------------------------------------------
+  // Test 7: Technician Shift Timer, Break Timer, Overtime & Reports
+  // -------------------------------------------------------------
+  const testTechnicianAttendanceAndOvertime = async () => {
+    console.log('\n⏱️  Running Technician Shift Timer, Overtime & Attendance Report Tests...');
+    db.set('attendanceSessions', []);
+    const allUsers = db.get('users') || [];
+    const tech = allUsers.find((u: User) => u.role === 'technician');
+    assert('Found technician user for attendance test', Boolean(tech));
+    if (!tech) return;
+
+    // Assign custom 6h/day shift to test overtime threshold cleanly
+    const updatedUsers = allUsers.map((u: User) =>
+      u.id === tech.id ? { ...u, assignedWorkHoursPerDay: 6, assignedShiftLabel: 'Early Support (6h)' } : u
+    );
+    db.set('users', updatedUsers);
+    const customTech = updatedUsers.find((u: User) => u.id === tech.id)!;
+
+    // Check first-login requirement before shift starts
+    const preStatus = getMyAttendanceStatus(customTech);
+    assert('Technician needsFirstLoginStart is true before clocking in', preStatus.needsFirstLoginStart === true);
+    assert('Custom work hours reflected in attendance status (6h)', preStatus.assignedWorkHoursPerDay === 6);
+
+    // Start shift at 09:00:00 today
+    const baseDay = new Date();
+    baseDay.setHours(9, 0, 0, 0);
+    const s1 = startShiftTimer(customTech, 'Morning shift start', baseDay);
+    assert('Shift timer starts with status working', s1.status === 'working');
+
+    // Start break at 13:00:00 (4 hours worked)
+    const breakStart = new Date(baseDay.getTime() + 4 * 3600 * 1000);
+    const s2 = startBreakTimer(customTech, 'Lunch Break', breakStart);
+    assert('Break timer pauses work and sets status to on_break', s2.status === 'on_break');
+    assert('Work seconds frozen at 4h (14400s) when break starts', s2.totalWorkSeconds === 14400);
+
+    // Stop break at 14:00:00 (1 hour break)
+    const breakEnd = new Date(breakStart.getTime() + 1 * 3600 * 1000);
+    const s3 = stopBreakTimer(customTech, breakEnd);
+    assert('Stopping break resumes status to working', s3.status === 'working');
+    assert('Break duration accurately recorded as 1h (3600s)', s3.totalBreakSeconds === 3600);
+    assert('Net work duration remains 4h (14400s) immediately after break', s3.totalWorkSeconds === 14400);
+
+    // Stop shift at 17:30:00 (additional 3.5h worked => total 7.5h net work, 1h break => 1.5h overtime over 6h target)
+    const shiftEnd = new Date(breakEnd.getTime() + 3.5 * 3600 * 1000);
+    const s4 = stopShiftTimer(customTech, 'Shift wrapped up cleanly', shiftEnd);
+    assert('Stopping shift sets status to stopped', s4.status === 'stopped');
+    assert('Net work duration equals 7.5h (27000s), excluding 1h break', s4.totalWorkSeconds === 27000);
+    assert('Overtime accurately calculated as 1.5h (5400s) over 6h assigned hours', s4.overtimeSeconds === 5400);
+
+    // Add a ticket & task for technician to verify task status aggregation in Superadmin overview
+    const testTicket: Ticket = {
+      id: `ITL-ATT-${Date.now()}`,
+      organizationId: customTech.organizationId,
+      subject: 'VPN Workstation Patch',
+      description: 'Verify technician task status reporting in attendance overview',
+      status: 'in_progress',
+      priority: 'high',
+      type: 'incident',
+      impact: 'medium',
+      urgency: 'medium',
+      channel: 'portal',
+      category: 'Network & Connectivity',
+      requesterId: customTech.id,
+      requesterName: 'Requester Demo',
+      requesterEmail: 'requester@example.com',
+      assignedTechnicianId: customTech.id,
+      assignedTechnicianName: customTech.name,
+      followers: [],
+      ccRecipients: [],
+      relatedAssetIds: [],
+      tags: [],
+      estimatedMinutes: 60,
+      customFields: {},
+      slaFirstResponseDeadline: new Date(Date.now() + 3600000).toISOString(),
+      slaResolutionDeadline: new Date(Date.now() + 7200000).toISOString(),
+      slaStatus: 'within_target',
+      actualMinutesSpent: 45,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    db.set('tickets', [testTicket]);
+    db.set('tasks', [
+      { id: 'tsk-att-1', ticketId: testTicket.id, title: 'Inspect VPN Tunnel', completed: true, assignedTo: customTech.id },
+      { id: 'tsk-att-2', ticketId: testTicket.id, title: 'Update Endpoint Cert', completed: false, assignedTo: customTech.id },
+    ]);
+
+    const todayKey = getLocalDateKey(baseDay);
+    const monthKey = getLocalMonthKey(baseDay);
+
+    const dailyOverview = getTechnicianAttendanceOverview({ period: 'daily', date: todayKey });
+    const techDailyRow = dailyOverview.technicians.find((t) => t.technicianId === customTech.id);
+    assert('Daily overview includes technician with overtime flag true', Boolean(techDailyRow && techDailyRow.isOvertime && techDailyRow.overtimeSeconds === 5400));
+    assert('Daily overview aggregates technician ticket & task status (1 ticket, 1/2 tasks done)', Boolean(
+      techDailyRow &&
+      techDailyRow.taskStatus.assignedTickets === 1 &&
+      techDailyRow.taskStatus.tasksTotal === 2 &&
+      techDailyRow.taskStatus.tasksCompleted === 1 &&
+      techDailyRow.taskStatus.tasksPending === 1
+    ));
+
+    const monthlyOverview = getTechnicianAttendanceOverview({ period: 'monthly', month: monthKey });
+    const techMonthlyRow = monthlyOverview.technicians.find((t) => t.technicianId === customTech.id);
+    assert('Monthly overview totals match daily overtime accurately', Boolean(techMonthlyRow && techMonthlyRow.overtimeSeconds === 5400 && techMonthlyRow.daysWorked === 1));
+
+    // Send Daily & Monthly attendance report emails (simulated mode when SMTP is unconfigured)
+    const dailyEmail = await emailService.sendAttendanceReportEmail({
+      frequency: 'daily',
+      recipientEmail: 'admin@lakhanglobal.com',
+      date: todayKey,
+      isScheduled: false,
+    });
+    const scheduleAfterDaily = db.get('attendanceSchedule');
+    assert('Daily attendance & task status report email recorded cleanly', Boolean(
+      dailyEmail &&
+      dailyEmail.success &&
+      dailyEmail.subject.includes('Daily') &&
+      dailyEmail.recipient === 'admin@lakhanglobal.com' &&
+      scheduleAfterDaily?.lastDailySentDate === todayKey
+    ));
+
+    const monthlyEmail = await emailService.sendAttendanceReportEmail({
+      frequency: 'monthly',
+      recipientEmail: 'admin@lakhanglobal.com',
+      month: monthKey,
+      isScheduled: true,
+    });
+    const scheduleAfterMonthly = db.get('attendanceSchedule');
+    assert('Monthly attendance & task status report email recorded cleanly', Boolean(
+      monthlyEmail &&
+      monthlyEmail.success &&
+      monthlyEmail.subject.includes('Monthly') &&
+      monthlyEmail.recipient === 'admin@lakhanglobal.com' &&
+      scheduleAfterMonthly?.lastMonthlySentMonth === monthKey
+    ));
+
+    // Restore pristine state
+    db.set('attendanceSessions', []);
+    db.set('tickets', []);
+    db.set('tasks', []);
+    db.set('users', pristineUsers);
+  };
+
+  await testTechnicianAttendanceAndOvertime();
 
   try {
     fs.copyFileSync('data/database.seed.json', 'data/database.json');

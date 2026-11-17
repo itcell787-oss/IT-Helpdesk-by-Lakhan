@@ -50,6 +50,7 @@ import {
 } from 'lucide-react';
 import { Organization, AuditLog, User as UserType, UserRole, ServiceCatalogItem, SatisfactionSurvey, SlaPolicy, DefaultEmailGatewayConfig, Ticket } from '../types';
 import { api } from '../services/api';
+import { SuperadminAttendancePanel } from './SuperadminAttendancePanel';
 
 interface SuperadminViewProps {
   organizations: Organization[];
@@ -81,6 +82,7 @@ interface SuperadminViewProps {
   onDeleteCatalogItem?: (id: string) => void;
   systemSettings?: any;
   onUpdateSystemSettings?: (settings: any) => void;
+  onRefreshUsers?: () => void;
 }
 
 export const SuperadminView: React.FC<SuperadminViewProps> = ({
@@ -103,8 +105,9 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   onDeleteCatalogItem,
   systemSettings,
   onUpdateSystemSettings,
+  onRefreshUsers,
 }) => {
-  const [activeTab, setActiveTab] = useState<'tenants' | 'agents' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway'>('policies');
+  const [activeTab, setActiveTab] = useState<'tenants' | 'agents' | 'attendance' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway'>('policies');
   const [searchAudit, setSearchAudit] = useState('');
   const [searchCatalog, setSearchCatalog] = useState('');
 
@@ -751,6 +754,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   const [agentTitle, setAgentTitle] = useState('IT Support Specialist');
   const [agentPhone, setAgentPhone] = useState('');
   const [agentOrgId, setAgentOrgId] = useState(organizations[0]?.id || '');
+  const [agentWorkHours, setAgentWorkHours] = useState<number>(8);
 
   // Filtered lists
   const filteredOrganizations = organizations.filter((org) => {
@@ -806,11 +810,13 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
       title: agentTitle,
       phone: agentPhone,
       organizationId: agentOrgId || organizations[0]?.id,
+      assignedWorkHoursPerDay: agentRole === 'technician' ? Math.max(1, Math.min(24, Number(agentWorkHours) || 8)) : undefined,
     });
     setShowAgentModal(false);
     setAgentName('');
     setAgentEmail('');
     setAgentPhone('');
+    setAgentWorkHours(8);
   };
 
   return (
@@ -1053,6 +1059,17 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
           >
             <Users className="w-3.5 h-3.5" />
             <span>Staff &amp; Technicians ({agentsList.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('attendance')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              activeTab === 'attendance'
+                ? 'neu-pressed bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40 shadow-inner'
+                : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-emerald-700 dark:hover:text-emerald-300'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span>Tech Attendance &amp; Overtime</span>
           </button>
           <button
             onClick={() => setActiveTab('tenants')}
@@ -2580,6 +2597,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                     <th className="py-3 px-3">Email</th>
                     <th className="py-3 px-3">Job Post / Title</th>
                     <th className="py-3 px-3">System Role</th>
+                    <th className="py-3 px-3">Work Hours / Day</th>
                     <th className="py-3 px-3">Status</th>
                     <th className="py-3 px-3 text-right">Actions</th>
                   </tr>
@@ -2604,6 +2622,9 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
                         <span className="capitalize px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-100 dark:bg-cyan-950/50 text-cyan-800 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800/40">
                           {agent.role}
                         </span>
+                      </td>
+                      <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-300">
+                        {agent.role === 'technician' ? `${agent.assignedWorkHoursPerDay ?? 8} hrs/day` : '—'}
                       </td>
                       <td className="py-3 px-3">
                         <span className="text-emerald-600 dark:text-emerald-400 font-semibold capitalize font-mono text-[11px]">
@@ -2636,6 +2657,15 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB: Technician Attendance, Work Hours, Overtime & Scheduled Email Reports */}
+      {activeTab === 'attendance' && (
+        <SuperadminAttendancePanel
+          users={users}
+          superadminEmail={users.find((u) => u.role === 'superadmin')?.email || 'admin@lakhanglobal.com'}
+          onUserWorkHoursUpdated={onRefreshUsers}
+        />
       )}
 
       {/* TAB: Service Catalogs Management */}
@@ -4264,6 +4294,23 @@ sudo nginx -t && sudo systemctl reload nginx`}
                   className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
                 />
               </div>
+
+              {agentRole === 'technician' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Assigned Work Hours / Day (Overtime Threshold)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    max="24"
+                    value={agentWorkHours}
+                    onChange={(e) => setAgentWorkHours(Number(e.target.value) || 8)}
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-white/10">
                 <button

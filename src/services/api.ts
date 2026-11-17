@@ -18,6 +18,9 @@ import {
   MailboxConnectionConfig,
   DefaultEmailGatewayConfig,
   Team,
+  TechnicianAttendanceSession,
+  AttendanceReportSchedule,
+  TechnicianAttendanceOverviewItem,
 } from '../types';
 
 function getSessionToken(): string {
@@ -778,6 +781,123 @@ export const api = {
 
   async sendInboundEmailWebhook(payload: { from: string; subject: string; body: string; cc?: string; managerEmail?: string; attachments?: any[] }): Promise<any> {
     return request('/api/email/inbound', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // Technician Shift Timer, Attendance, Custom Work Hours & Scheduled Reports
+  async getMyAttendanceStatus(date?: string): Promise<{
+    technicianId: string;
+    technicianName: string;
+    role: string;
+    date: string;
+    currentStatus: 'working' | 'on_break' | 'stopped' | 'not_started';
+    activeSession: TechnicianAttendanceSession | null;
+    todaySessions: TechnicianAttendanceSession[];
+    assignedWorkHoursPerDay: number;
+    assignedShiftLabel?: string;
+    totalWorkSecondsToday: number;
+    totalBreakSecondsToday: number;
+    overtimeSecondsToday: number;
+    isOvertime: boolean;
+    needsFirstLoginStart: boolean;
+  }> {
+    const qs = date ? `?date=${encodeURIComponent(date)}` : '';
+    return request(`/api/attendance/my-status${qs}`);
+  },
+
+  async startShiftTimer(notes?: string): Promise<{ success: boolean; session: TechnicianAttendanceSession; status: any }> {
+    return request('/api/attendance/start', {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    });
+  },
+
+  async stopShiftTimer(notes?: string): Promise<{ success: boolean; session: TechnicianAttendanceSession; status: any }> {
+    return request('/api/attendance/stop', {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    });
+  },
+
+  async startBreakTimer(reason?: string): Promise<{ success: boolean; session: TechnicianAttendanceSession; status: any }> {
+    return request('/api/attendance/break/start', {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  async stopBreakTimer(): Promise<{ success: boolean; session: TechnicianAttendanceSession; status: any }> {
+    return request('/api/attendance/break/stop', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  },
+
+  async getAttendanceOverview(params?: {
+    period?: 'daily' | 'monthly';
+    date?: string;
+    month?: string;
+    technicianId?: string;
+  }): Promise<{
+    period: 'daily' | 'monthly';
+    dateKey: string;
+    monthKey: string;
+    generatedAt: string;
+    totals: {
+      totalTechnicians: number;
+      workingNow: number;
+      onBreakNow: number;
+      stoppedToday: number;
+      notStarted: number;
+      totalWorkSeconds: number;
+      totalBreakSeconds: number;
+      totalOvertimeSeconds: number;
+      techniciansWithOvertime: number;
+      totalTasks: number;
+      tasksCompleted: number;
+    };
+    technicians: TechnicianAttendanceOverviewItem[];
+  }> {
+    const sp = new URLSearchParams();
+    if (params?.period) sp.set('period', params.period);
+    if (params?.date) sp.set('date', params.date);
+    if (params?.month) sp.set('month', params.month);
+    if (params?.technicianId) sp.set('technicianId', params.technicianId);
+    const qs = sp.toString();
+    return request(`/api/attendance/overview${qs ? `?${qs}` : ''}`);
+  },
+
+  async assignTechnicianWorkHours(
+    userId: string,
+    assignedWorkHoursPerDay: number,
+    assignedShiftLabel?: string
+  ): Promise<{ success: boolean; user: User; message: string }> {
+    return request(`/api/attendance/technician/${userId}/work-hours`, {
+      method: 'PATCH',
+      body: JSON.stringify({ assignedWorkHoursPerDay, assignedShiftLabel }),
+    });
+  },
+
+  async getAttendanceSchedule(): Promise<AttendanceReportSchedule> {
+    return request('/api/attendance/schedule');
+  },
+
+  async updateAttendanceSchedule(payload: Partial<AttendanceReportSchedule>): Promise<AttendanceReportSchedule> {
+    return request('/api/attendance/schedule', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async sendAttendanceReportNow(payload: {
+    frequency: 'daily' | 'monthly';
+    recipientEmail?: string;
+    date?: string;
+    month?: string;
+  }): Promise<any> {
+    return request('/api/attendance/report/send-now', {
       method: 'POST',
       body: JSON.stringify(payload),
     });

@@ -50,6 +50,8 @@ export interface User {
   phone?: string;
   status: 'active' | 'suspended' | 'invited';
   privileges?: AdminPrivileges;
+  assignedWorkHoursPerDay?: number; // Custom daily work hours assigned by Super Admin (default 8)
+  assignedShiftLabel?: string; // Optional shift schedule note (e.g. "09:00 AM - 06:00 PM")
   createdAt: string;
 }
 
@@ -515,3 +517,86 @@ export function formatUserBadge(
   const empCode = existingCode || fallbackEmpCode || (rawName.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010');
   return `[${empCode}]${rawName}`.trim();
 }
+
+export interface BreakInterval {
+  id: string;
+  startTime: string; // ISO string
+  endTime?: string; // ISO string (undefined if currently on break)
+  durationSeconds: number;
+  reason?: string;
+}
+
+export interface TechnicianAttendanceSession {
+  id: string;
+  technicianId: string;
+  technicianName: string;
+  technicianEmail: string;
+  employeeCode?: string;
+  date: string; // YYYY-MM-DD
+  status: 'working' | 'on_break' | 'stopped';
+  startTime: string; // ISO string
+  stopTime?: string; // ISO string
+  breaks: BreakInterval[];
+  totalWorkSeconds: number; // Net working seconds excluding breaks
+  totalBreakSeconds: number; // Total break seconds
+  assignedWorkHours: number; // Custom daily work hours assigned by Super Admin
+  overtimeSeconds: number; // Net work seconds above assignedWorkHours * 3600
+  notes?: string;
+  updatedAt: string;
+}
+
+export interface AttendanceReportSchedule {
+  enabled: boolean;
+  frequency: 'daily' | 'monthly' | 'both';
+  recipientEmail: string;
+  dailySendTime: string; // HH:mm 24h
+  monthlyDayOfMonth: number; // 1 - 28
+  monthlySendTime: string; // HH:mm 24h
+  includeTaskStatus: boolean;
+  includeOvertimeDetails: boolean;
+  lastDailySentDate?: string; // YYYY-MM-DD
+  lastMonthlySentMonth?: string; // YYYY-MM
+  lastSentAt?: string;
+  lastSendStatus?: string;
+}
+
+export interface TechnicianAttendanceOverviewItem {
+  technicianId: string;
+  technicianName: string;
+  technicianEmail: string;
+  employeeCode?: string;
+  role: UserRole;
+  title?: string;
+  assignedWorkHoursPerDay: number;
+  assignedShiftLabel?: string;
+  currentStatus: 'working' | 'on_break' | 'stopped' | 'not_started';
+  activeSession: TechnicianAttendanceSession | null;
+  sessions: TechnicianAttendanceSession[];
+  daysWorked: number;
+  firstClockIn?: string;
+  lastClockOut?: string;
+  totalWorkSeconds: number;
+  totalBreakSeconds: number;
+  expectedTargetSeconds: number;
+  overtimeSeconds: number;
+  isOvertime: boolean;
+  taskStatus: {
+    assignedTickets: number;
+    openTickets: number;
+    inProgressTickets: number;
+    resolvedTickets: number;
+    overdueTickets: number;
+    tasksTotal: number;
+    tasksCompleted: number;
+    tasksPending: number;
+    recentTickets: Array<{
+      id: string;
+      subject: string;
+      status: TicketStatus;
+      priority: TicketPriority;
+      tasksCompleted: number;
+      tasksTotal: number;
+    }>;
+  };
+}
+
