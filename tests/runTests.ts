@@ -2,7 +2,7 @@ import fs from 'fs';
 import { db } from '../server/db';
 import { calculateSlaDeadlines, evaluateSlaStatus } from '../server/slaEngine';
 import { runAutomations } from '../server/automationEngine';
-import { Ticket, SlaPolicy, AutomationRule, User } from '../src/types';
+import { Ticket, SlaPolicy, AutomationRule, User, TechnicianAssignedTask } from '../src/types';
 import { emailService } from '../server/emailService';
 import {
   startShiftTimer,
@@ -736,6 +736,42 @@ async function runTestSuite() {
       { id: 'tsk-att-2', ticketId: testTicket.id, title: 'Update Endpoint Cert', completed: false, assignedTo: customTech.id },
     ]);
 
+    // Superadmin-assigned operational tasks: Perform Maintainance + Cancelled task with Reason
+    const nowIso = new Date().toISOString();
+    const superAdmin = allUsers.find((u: User) => u.role === 'superadmin') || customTech;
+    const opTask1: TechnicianAssignedTask = {
+      id: 'ttask-test-1',
+      technicianId: customTech.id,
+      technicianName: customTech.name,
+      technicianEmail: customTech.email,
+      subject: 'Perform Maintainance',
+      description: 'Perform Server maintainance on saturday',
+      status: 'completed',
+      priority: 'high',
+      assignedById: superAdmin.id,
+      assignedByName: superAdmin.name,
+      assignedAt: nowIso,
+      completedAt: nowIso,
+      updatedAt: nowIso,
+    };
+    const opTask2: TechnicianAssignedTask = {
+      id: 'ttask-test-2',
+      technicianId: customTech.id,
+      technicianName: customTech.name,
+      technicianEmail: customTech.email,
+      subject: 'Audit Rack UPS Battery',
+      description: 'Inspect backup battery voltage in server rack B',
+      status: 'cancelled',
+      priority: 'normal',
+      assignedById: superAdmin.id,
+      assignedByName: superAdmin.name,
+      assignedAt: nowIso,
+      cancelledAt: nowIso,
+      cancelReason: 'Vendor rescheduled maintenance window to Monday',
+      updatedAt: nowIso,
+    };
+    db.set('technicianTasks', [opTask1, opTask2]);
+
     const todayKey = getLocalDateKey(baseDay);
     const monthKey = getLocalMonthKey(baseDay);
 
@@ -749,39 +785,58 @@ async function runTestSuite() {
       techDailyRow.taskStatus.tasksCompleted === 1 &&
       techDailyRow.taskStatus.tasksPending === 1
     ));
+    assert('Daily overview aggregates Superadmin-assigned tasks (1 completed, 1 cancelled with reason)', Boolean(
+      techDailyRow &&
+      techDailyRow.taskStatus.assignedTasksTotal === 2 &&
+      techDailyRow.taskStatus.assignedTasksCompleted === 1 &&
+      techDailyRow.taskStatus.assignedTasksCancelled === 1 &&
+      techDailyRow.taskStatus.assignedTasksList.some(
+        (at) => at.subject === 'Perform Maintainance' && at.status === 'completed'
+      ) &&
+      techDailyRow.taskStatus.assignedTasksList.some(
+        (at) => at.status === 'cancelled' && at.cancelReason === 'Vendor rescheduled maintenance window to Monday'
+      )
+    ));
 
     const monthlyOverview = getTechnicianAttendanceOverview({ period: 'monthly', month: monthKey });
     const techMonthlyRow = monthlyOverview.technicians.find((t) => t.technicianId === customTech.id);
     assert('Monthly overview totals match daily overtime accurately', Boolean(techMonthlyRow && techMonthlyRow.overtimeSeconds === 5400 && techMonthlyRow.daysWorked === 1));
 
-    // Send Daily & Monthly attendance report emails (simulated mode when SMTP is unconfigured)
+    // Send Daily & Monthly attendance report emails with CC recipients (simulated mode when SMTP is unconfigured)
     const dailyEmail = await emailService.sendAttendanceReportEmail({
       frequency: 'daily',
       recipientEmail: 'admin@lakhanglobal.com',
+      ccEmails: ['ops-lead@lakhanglobal.com', 'hr@lakhanglobal.com'],
       date: todayKey,
       isScheduled: false,
     });
     const scheduleAfterDaily = db.get('attendanceSchedule');
-    assert('Daily attendance & task status report email recorded cleanly', Boolean(
+    assert('Daily attendance & task status report email recorded cleanly with CC recipients', Boolean(
       dailyEmail &&
       dailyEmail.success &&
       dailyEmail.subject.includes('Daily') &&
       dailyEmail.recipient === 'admin@lakhanglobal.com' &&
+      Array.isArray(dailyEmail.cc) &&
+      dailyEmail.cc.includes('ops-lead@lakhanglobal.com') &&
+      dailyEmail.cc.includes('hr@lakhanglobal.com') &&
       scheduleAfterDaily?.lastDailySentDate === todayKey
     ));
 
     const monthlyEmail = await emailService.sendAttendanceReportEmail({
       frequency: 'monthly',
       recipientEmail: 'admin@lakhanglobal.com',
+      ccEmails: ['ops-lead@lakhanglobal.com'],
       month: monthKey,
       isScheduled: true,
     });
     const scheduleAfterMonthly = db.get('attendanceSchedule');
-    assert('Monthly attendance & task status report email recorded cleanly', Boolean(
+    assert('Monthly attendance & task status report email recorded cleanly with CC recipients', Boolean(
       monthlyEmail &&
       monthlyEmail.success &&
       monthlyEmail.subject.includes('Monthly') &&
       monthlyEmail.recipient === 'admin@lakhanglobal.com' &&
+      Array.isArray(monthlyEmail.cc) &&
+      monthlyEmail.cc.includes('ops-lead@lakhanglobal.com') &&
       scheduleAfterMonthly?.lastMonthlySentMonth === monthKey
     ));
 
@@ -789,6 +844,11 @@ async function runTestSuite() {
     db.set('attendanceSessions', []);
     db.set('tickets', []);
     db.set('tasks', []);
+    db.set('technicianTasks', []);
+    const sch = db.get('attendanceSchedule');
+    if (sch) {
+      db.set('attendanceSchedule', { ...sch, ccEmails: [] });
+    }
     db.set('users', pristineUsers);
   };
 

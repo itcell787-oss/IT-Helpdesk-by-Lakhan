@@ -242,6 +242,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
           <div className="space-y-1.5">
             {navItem('settings', 'Helpdesk Settings', <Settings className="w-4 h-4" />)}
+            {userRole === 'superadmin' && navItem('superadmin-attendance', 'Tech Attendance & OT', <Clock className="w-4 h-4" />)}
             {userRole === 'superadmin' && navItem('superadmin', 'Superadmin Console', <ShieldCheck className="w-4 h-4" />)}
             {navItem('portal', 'End-User Portal', <ExternalLink className="w-4 h-4" />)}
           </div>

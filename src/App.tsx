@@ -443,7 +443,7 @@ export default function App() {
       } else if (activeView === 'assets') {
         setActiveView('portal');
         setPortalInitialTab('my-assets');
-      } else if (['settings', 'superadmin', 'approvals', 'reports', 'email-channels', 'settings-profile', 'settings-mailbox'].includes(activeView)) {
+      } else if (['settings', 'superadmin', 'superadmin-attendance', 'approvals', 'reports', 'email-channels', 'settings-profile', 'settings-mailbox'].includes(activeView)) {
         setActiveView('portal');
         setPortalInitialTab('home');
       }
@@ -452,7 +452,7 @@ export default function App() {
 
     // Inventory manager cannot view or manage tickets; only ITSM & resources
     if (currentUser.role === 'inventory_manager') {
-      if (['dashboard', 'tickets', 'tickets-my', 'tickets-unassigned', 'tickets-critical', 'ticket-detail', 'approvals', 'reports', 'email-channels', 'superadmin'].includes(activeView)) {
+      if (['dashboard', 'tickets', 'tickets-my', 'tickets-unassigned', 'tickets-critical', 'ticket-detail', 'approvals', 'reports', 'email-channels', 'superadmin', 'superadmin-attendance'].includes(activeView)) {
         setActiveView('assets');
       }
       return;
@@ -460,7 +460,7 @@ export default function App() {
 
     // Manager cannot access reports, email gateway, or superadmin
     if (currentUser.role === 'manager') {
-      if (['reports', 'email-channels', 'superadmin'].includes(activeView)) {
+      if (['reports', 'email-channels', 'superadmin', 'superadmin-attendance'].includes(activeView)) {
         setActiveView('dashboard');
       }
       return;
@@ -1167,7 +1167,7 @@ export default function App() {
                 setSelectedTicketId(null);
                 return;
               }
-              if (['dashboard', 'settings', 'superadmin', 'approvals', 'reports', 'email-channels'].includes(view)) {
+              if (['dashboard', 'settings', 'superadmin', 'superadmin-attendance', 'approvals', 'reports', 'email-channels'].includes(view)) {
                 setPortalInitialTab('home');
                 setActiveView('portal');
                 setSelectedTicketId(null);
@@ -1589,7 +1589,7 @@ export default function App() {
               />
             )}
 
-            {currentUser && activeView === 'superadmin' && currentUser.role !== 'superadmin' && (
+            {currentUser && (activeView === 'superadmin' || activeView === 'superadmin-attendance') && currentUser.role !== 'superadmin' && (
               <div className="max-w-md mx-auto my-12 p-8 neu-flat rounded-2xl border border-rose-300 dark:border-rose-900/60 text-center space-y-4">
                 <div className="w-12 h-12 rounded-xl bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-700/50 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400">
                   <ShieldAlert className="w-6 h-6" />
@@ -1597,7 +1597,7 @@ export default function App() {
                 <div>
                   <h3 className="text-base font-bold text-slate-900 dark:text-white">Super Admin Access Required</h3>
                   <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                    The Super Admin Console is strictly reserved for the Super Administrator. Technicians, managers, and standard administrators do not have access to multi-tenant tenant controls or system-wide purge capabilities.
+                    The Super Admin Console and Technician Attendance &amp; Overtime controls are strictly reserved for the Super Administrator. Technicians, managers, and standard administrators do not have access.
                   </p>
                 </div>
                 <button
@@ -1609,7 +1609,7 @@ export default function App() {
               </div>
             )}
 
-            {currentUser && activeView === 'superadmin' && currentUser.role === 'superadmin' && superadminStats && (
+            {currentUser && (activeView === 'superadmin' || activeView === 'superadmin-attendance') && currentUser.role === 'superadmin' && superadminStats && (
               <SuperadminView
                 organizations={organizations}
                 auditLogs={auditLogs}
@@ -1631,6 +1631,10 @@ export default function App() {
                 onUpdateCatalogItem={handleUpdateCatalogItem}
                 onDeleteCatalogItem={handleDeleteCatalogItem}
                 onRefreshUsers={() => loadData()}
+                initialTab={activeView === 'superadmin-attendance' ? 'attendance' : 'policies'}
+                onTabChange={(tab) => {
+                  setActiveView(tab === 'attendance' ? 'superadmin-attendance' : 'superadmin');
+                }}
               />
             )}
           </div>

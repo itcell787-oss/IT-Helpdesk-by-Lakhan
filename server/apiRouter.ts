@@ -32,6 +32,7 @@ import {
   Asset,
   AutomationRule,
   Team,
+  TechnicianAssignedTask,
 } from '../src/types';
 
 export const apiRouter = Router();
@@ -4259,6 +4260,21 @@ apiRouter.put('/attendance/schedule', (req: Request, res: Response) => {
   }
 
   const current = db.get('attendanceSchedule');
+  const parseEmails = (raw: unknown): string[] => {
+    const arr = Array.isArray(raw)
+      ? raw
+      : typeof raw === 'string'
+        ? raw.split(/[,;\n]+/)
+        : [];
+    return Array.from(
+      new Set(
+        arr
+          .map((e) => String(e || '').trim().toLowerCase())
+          .filter((e) => e.includes('@'))
+      )
+    );
+  };
+
   const next = {
     ...current,
     enabled: Boolean(req.body.enabled),
@@ -4266,6 +4282,7 @@ apiRouter.put('/attendance/schedule', (req: Request, res: Response) => {
     recipientEmail: typeof req.body.recipientEmail === 'string' && req.body.recipientEmail.trim()
       ? req.body.recipientEmail.trim()
       : (current.recipientEmail || actor.email),
+    ccEmails: req.body.ccEmails !== undefined ? parseEmails(req.body.ccEmails) : (current.ccEmails || []),
     dailySendTime: typeof req.body.dailySendTime === 'string' && /^\d{2}:\d{2}$/.test(req.body.dailySendTime)
       ? req.body.dailySendTime
       : (current.dailySendTime || '19:00'),
@@ -4285,7 +4302,7 @@ apiRouter.put('/attendance/schedule', (req: Request, res: Response) => {
     'attendance.schedule_updated',
     'setting',
     'attendanceSchedule',
-    `Updated Attendance & Task Status email schedule: Enabled=${next.enabled}, Frequency=${next.frequency}, Recipient=${next.recipientEmail}`
+    `Updated Attendance & Task Status email schedule: Enabled=${next.enabled}, Frequency=${next.frequency}, Recipient=${next.recipientEmail}${next.ccEmails.length ? `, CC=${next.ccEmails.join(',')}` : ''}`
   );
   res.json(next);
 });
@@ -4298,6 +4315,16 @@ apiRouter.post('/attendance/report/send-now', async (req: Request, res: Response
 
   const frequency = req.body.frequency === 'monthly' ? 'monthly' : 'daily';
   const recipientEmail = typeof req.body.recipientEmail === 'string' ? req.body.recipientEmail.trim() : undefined;
+  const rawCc = req.body.ccEmails;
+  const ccEmails = rawCc === undefined
+    ? undefined
+    : Array.from(
+        new Set(
+          (Array.isArray(rawCc) ? rawCc : typeof rawCc === 'string' ? rawCc.split(/[,;\n]+/) : [])
+            .map((e) => String(e || '').trim().toLowerCase())
+            .filter((e) => e.includes('@'))
+        )
+      );
   const date = typeof req.body.date === 'string' ? req.body.date : undefined;
   const month = typeof req.body.month === 'string' ? req.body.month : undefined;
 
@@ -4305,6 +4332,7 @@ apiRouter.post('/attendance/report/send-now', async (req: Request, res: Response
     const result = await emailService.sendAttendanceReportEmail({
       frequency,
       recipientEmail,
+      ccEmails,
       date,
       month,
       isScheduled: false,
@@ -4314,11 +4342,187 @@ apiRouter.post('/attendance/report/send-now', async (req: Request, res: Response
       'attendance.report_sent',
       'setting',
       `report-${frequency}`,
-      `Dispatched ${frequency} technician attendance & task status report to ${result.recipient} (${result.status})`
+      `Dispatched ${frequency} technician attendance & task status report to ${result.recipient}${result.cc.length ? ` (CC: ${result.cc.join(', ')})` : ''} (${result.status})`
     );
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed sending attendance report email' });
   }
 });
+
+// =============================================================
+// Superadmin -> Technician Assigned Operational Tasks
+// =============================================================
+apiRouter.get('/technician-tasks', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  if (actor.role === 'requester') {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  let tasks = db.get('technicianTasks') || [];
+  if (actor.role === 'technician') {
+    tasks = tasks.filter((t) => t.technicianId === actor.id);
+  } else {
+    const techFilter = typeof req.query.technicianId === 'string' ? req.query.technicianId : '';
+    if (techFilter) {
+      tasks = tasks.filter((t) => t.technicianId === techFilter);
+    }
+  }
+
+  const statusFilter = typeof req.query.status === 'string' ? req.query.status : '';
+  if (statusFilter && ['pending', 'completed', 'cancelled'].includes(statusFilter)) {
+    tasks = tasks.filter((t) => t.status === statusFilter);
+  }
+
+  const sorted = [...tasks].sort((a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime());
+  res.json(sorted);
+});
+
+apiRouter.post('/technician-tasks', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only Super Admin can assign operational tasks to technicians.' });
+  }
+
+  const { technicianId, subject, description, dueDate, priority } = req.body || {};
+  if (!technicianId || !subject || !String(subject).trim()) {
+    return res.status(400).json({ error: 'Technician and Task Subject are required.' });
+  }
+  if (!description || !String(description).trim()) {
+    return res.status(400).json({ error: 'Task Description is required.' });
+  }
+
+  const users = db.get('users') || [];
+  const tech = users.find((u) => u.id === technicianId);
+  if (!tech) {
+    return res.status(404).json({ error: 'Selected technician not found.' });
+  }
+
+  const nowIso = new Date().toISOString();
+  const validPriority = ['low', 'normal', 'high', 'urgent'].includes(priority) ? priority : 'normal';
+  const newTask: TechnicianAssignedTask = {
+    id: `ttask-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    technicianId: tech.id,
+    technicianName: tech.name,
+    technicianEmail: tech.email,
+    subject: String(subject).trim(),
+    description: String(description).trim(),
+    status: 'pending',
+    priority: validPriority,
+    dueDate: typeof dueDate === 'string' && dueDate.trim() ? dueDate.trim() : undefined,
+    assignedById: actor.id,
+    assignedByName: actor.name,
+    assignedAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  const existing = db.get('technicianTasks') || [];
+  db.set('technicianTasks', [newTask, ...existing]);
+
+  logAudit(
+    actor,
+    'technician_task.assigned',
+    'user',
+    tech.id,
+    `Super Admin assigned task "${newTask.subject}" to ${tech.name}`
+  );
+
+  res.status(201).json(newTask);
+});
+
+apiRouter.patch('/technician-tasks/:id', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const { id } = req.params;
+  const tasks = db.get('technicianTasks') || [];
+  const idx = tasks.findIndex((t) => t.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Assigned task not found' });
+  }
+
+  const task = tasks[idx];
+  const isSuperadmin = actor.role === 'superadmin';
+  const isAssignedTech = task.technicianId === actor.id;
+  if (!isSuperadmin && !isAssignedTech) {
+    return res.status(403).json({ error: 'Permission denied: You can only update tasks assigned to you.' });
+  }
+
+  const { status, cancelReason, subject, description, dueDate, priority } = req.body || {};
+  const nowIso = new Date().toISOString();
+  const updated: TechnicianAssignedTask = {
+    ...task,
+    updatedAt: nowIso,
+  };
+
+  if (isSuperadmin) {
+    if (typeof subject === 'string' && subject.trim()) updated.subject = subject.trim();
+    if (typeof description === 'string' && description.trim()) updated.description = description.trim();
+    if (dueDate !== undefined) updated.dueDate = typeof dueDate === 'string' && dueDate.trim() ? dueDate.trim() : undefined;
+    if (priority && ['low', 'normal', 'high', 'urgent'].includes(priority)) updated.priority = priority;
+  }
+
+  if (status !== undefined) {
+    if (!['pending', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status. Must be pending, completed, or cancelled.' });
+    }
+    if (status === 'cancelled') {
+      const reasonStr = typeof cancelReason === 'string' ? cancelReason.trim() : '';
+      if (!reasonStr) {
+        return res.status(400).json({ error: 'Cancel reason is required when cancelling a task.' });
+      }
+      updated.status = 'cancelled';
+      updated.cancelledAt = nowIso;
+      updated.cancelReason = reasonStr;
+      updated.completedAt = undefined;
+    } else if (status === 'completed') {
+      updated.status = 'completed';
+      updated.completedAt = nowIso;
+      updated.cancelledAt = undefined;
+      updated.cancelReason = undefined;
+    } else {
+      updated.status = 'pending';
+      updated.completedAt = undefined;
+      updated.cancelledAt = undefined;
+      updated.cancelReason = undefined;
+    }
+  }
+
+  tasks[idx] = updated;
+  db.set('technicianTasks', tasks);
+
+  logAudit(
+    actor,
+    `technician_task.${updated.status}`,
+    'user',
+    updated.technicianId,
+    `${actor.name} updated task "${updated.subject}" status to ${updated.status.toUpperCase()}${updated.cancelReason ? ` (Reason: ${updated.cancelReason})` : ''}`
+  );
+
+  res.json(updated);
+});
+
+apiRouter.delete('/technician-tasks/:id', (req: Request, res: Response) => {
+  const actor = getOptionalActor(req);
+  if (!actor || actor.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only Super Admin can delete assigned technician tasks.' });
+  }
+
+  const { id } = req.params;
+  const tasks = db.get('technicianTasks') || [];
+  const target = tasks.find((t) => t.id === id);
+  if (!target) {
+    return res.status(404).json({ error: 'Assigned task not found' });
+  }
+
+  db.set('technicianTasks', tasks.filter((t) => t.id !== id));
+  logAudit(actor, 'technician_task.deleted', 'user', target.technicianId, `Deleted assigned task "${target.subject}"`);
+  res.json({ success: true, deletedTaskId: id });
+});
+
 

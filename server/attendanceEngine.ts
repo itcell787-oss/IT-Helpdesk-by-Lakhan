@@ -369,6 +369,10 @@ export function getTechnicianAttendanceOverview(params?: {
     techniciansWithOvertime: number;
     totalTasks: number;
     tasksCompleted: number;
+    assignedTasksTotal: number;
+    assignedTasksCompleted: number;
+    assignedTasksPending: number;
+    assignedTasksCancelled: number;
   };
   technicians: TechnicianAttendanceOverviewItem[];
 } {
@@ -382,6 +386,7 @@ export function getTechnicianAttendanceOverview(params?: {
   const allSessions = db.get('attendanceSessions') || [];
   const tickets = db.get('tickets') || [];
   const tasks = db.get('tasks') || [];
+  const technicianTasks = db.get('technicianTasks') || [];
 
   // Target technicians (include all users with role === 'technician', plus any staff user who has attendance records)
   const techUserIdsWithLogs = new Set(allSessions.map((s) => s.technicianId));
@@ -482,6 +487,14 @@ export function getTechnicianAttendanceOverview(params?: {
     );
     const tasksCompleted = techTasks.filter((tk) => tk.completed).length;
 
+    // Superadmin-assigned operational tasks for this technician
+    const techAssignedTasks = technicianTasks
+      .filter((t) => t.technicianId === tech.id)
+      .sort((a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime());
+    const assignedTasksCompleted = techAssignedTasks.filter((t) => t.status === 'completed').length;
+    const assignedTasksPending = techAssignedTasks.filter((t) => t.status === 'pending').length;
+    const assignedTasksCancelled = techAssignedTasks.filter((t) => t.status === 'cancelled').length;
+
     const openStatuses = new Set([
       'new',
       'open',
@@ -546,6 +559,11 @@ export function getTechnicianAttendanceOverview(params?: {
         tasksTotal: techTasks.length,
         tasksCompleted,
         tasksPending: techTasks.length - tasksCompleted,
+        assignedTasksTotal: techAssignedTasks.length,
+        assignedTasksCompleted,
+        assignedTasksPending,
+        assignedTasksCancelled,
+        assignedTasksList: techAssignedTasks,
         recentTickets,
       },
     };
@@ -563,6 +581,10 @@ export function getTechnicianAttendanceOverview(params?: {
     techniciansWithOvertime: items.filter((i) => i.overtimeSeconds > 0).length,
     totalTasks: items.reduce((acc, i) => acc + i.taskStatus.tasksTotal, 0),
     tasksCompleted: items.reduce((acc, i) => acc + i.taskStatus.tasksCompleted, 0),
+    assignedTasksTotal: items.reduce((acc, i) => acc + i.taskStatus.assignedTasksTotal, 0),
+    assignedTasksCompleted: items.reduce((acc, i) => acc + i.taskStatus.assignedTasksCompleted, 0),
+    assignedTasksPending: items.reduce((acc, i) => acc + i.taskStatus.assignedTasksPending, 0),
+    assignedTasksCancelled: items.reduce((acc, i) => acc + i.taskStatus.assignedTasksCancelled, 0),
   };
 
   return {

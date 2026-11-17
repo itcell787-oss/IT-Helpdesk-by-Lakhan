@@ -26,6 +26,7 @@ import {
   OtpVerificationRecord,
   TechnicianAttendanceSession,
   AttendanceReportSchedule,
+  TechnicianAssignedTask,
 } from '../src/types';
 
 import {
@@ -75,6 +76,7 @@ export interface DatabaseSchema {
   otpRecords: OtpVerificationRecord[];
   attendanceSessions: TechnicianAttendanceSession[];
   attendanceSchedule: AttendanceReportSchedule;
+  technicianTasks: TechnicianAssignedTask[];
   currentUserId: string;
   nextTicketSequence: number;
 }
@@ -251,11 +253,13 @@ class DatabaseEngine {
         }
         if (!parsed.otpRecords) parsed.otpRecords = [];
         if (!Array.isArray(parsed.attendanceSessions)) parsed.attendanceSessions = [];
+        if (!Array.isArray(parsed.technicianTasks)) parsed.technicianTasks = [];
         if (!parsed.attendanceSchedule) {
           parsed.attendanceSchedule = {
             enabled: false,
             frequency: 'daily',
             recipientEmail: 'admin@lakhanglobal.com',
+            ccEmails: [],
             dailySendTime: '19:00',
             monthlyDayOfMonth: 1,
             monthlySendTime: '09:00',
@@ -263,6 +267,8 @@ class DatabaseEngine {
             includeOvertimeDetails: true,
             lastSendStatus: 'Not sent yet',
           };
+        } else if (!Array.isArray(parsed.attendanceSchedule.ccEmails)) {
+          parsed.attendanceSchedule.ccEmails = [];
         }
         
         // Ensure organizations have systemSettings and preSharedKey
@@ -477,6 +483,7 @@ class DatabaseEngine {
         enabled: false,
         frequency: 'daily',
         recipientEmail: 'admin@lakhanglobal.com',
+        ccEmails: [],
         dailySendTime: '19:00',
         monthlyDayOfMonth: 1,
         monthlySendTime: '09:00',
@@ -484,6 +491,7 @@ class DatabaseEngine {
         includeOvertimeDetails: true,
         lastSendStatus: 'Not sent yet',
       },
+      technicianTasks: [],
       currentUserId: '', // By default: guest session (landing on End User Portal)
       nextTicketSequence: 110,
     };

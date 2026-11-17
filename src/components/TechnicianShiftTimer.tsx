@@ -9,8 +9,12 @@ import {
   Flame,
   Timer,
   X,
+  CheckSquare,
+  Ban,
+  ClipboardList,
+  RotateCcw,
 } from 'lucide-react';
-import { User, TechnicianAttendanceSession } from '../types';
+import { User, TechnicianAttendanceSession, TechnicianAssignedTask } from '../types';
 import { api } from '../services/api';
 
 export function formatHMS(totalSeconds: number): string {
@@ -43,12 +47,15 @@ export interface LiveAttendanceState {
   liveOvertimeSeconds: number;
   isOvertime: boolean;
   needsFirstLoginStart: boolean;
+  assignedTasks: TechnicianAssignedTask[];
   error: string | null;
   refresh: () => Promise<void>;
   startTimer: (notes?: string) => Promise<void>;
   stopTimer: (notes?: string) => Promise<void>;
   startBreak: (reason?: string) => Promise<void>;
   stopBreak: () => Promise<void>;
+  toggleAssignedTaskComplete: (task: TechnicianAssignedTask) => Promise<void>;
+  cancelAssignedTask: (taskId: string, cancelReason: string) => Promise<void>;
 }
 
 function computeLiveFromSessions(
@@ -124,6 +131,7 @@ export function useTechnicianAttendance(
   const [todaySessions, setTodaySessions] = useState<TechnicianAttendanceSession[]>([]);
   const [assignedWorkHoursPerDay, setAssignedWorkHoursPerDay] = useState<number>(8);
   const [assignedShiftLabel, setAssignedShiftLabel] = useState<string | undefined>(undefined);
+  const [assignedTasks, setAssignedTasks] = useState<TechnicianAssignedTask[]>([]);
   const [needsFirstLoginStart, setNeedsFirstLoginStart] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number>(Date.now());
@@ -142,8 +150,12 @@ export function useTechnicianAttendance(
   const refresh = useCallback(async () => {
     if (!isTechnician) return;
     try {
-      const res = await api.getMyAttendanceStatus();
+      const [res, tasks] = await Promise.all([
+        api.getMyAttendanceStatus(),
+        api.getTechnicianTasks().catch(() => [] as TechnicianAssignedTask[]),
+      ]);
       applyServerStatus(res);
+      if (Array.isArray(tasks)) setAssignedTasks(tasks);
     } catch {
       // Silent poll error
     }
@@ -154,6 +166,7 @@ export function useTechnicianAttendance(
       setCurrentStatus('not_started');
       setActiveSession(null);
       setTodaySessions([]);
+      setAssignedTasks([]);
       setNeedsFirstLoginStart(false);
       return;
     }
@@ -230,6 +243,46 @@ export function useTechnicianAttendance(
     }
   };
 
+  const toggleAssignedTaskComplete = async (task: TechnicianAssignedTask) => {
+    const nextStatus = task.status === 'completed' ? 'pending' : 'completed';
+    setActionLoading(true);
+    setError(null);
+    try {
+      const updated = await api.updateTechnicianTask(task.id, { status: nextStatus });
+      setAssignedTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      onToast?.(
+        nextStatus === 'completed'
+          ? `Task "${task.subject}" marked COMPLETED!`
+          : `Task "${task.subject}" marked PENDING.`
+      );
+    } catch (err: any) {
+      setError(err.message || 'Failed to update task status');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const cancelAssignedTask = async (taskId: string, cancelReason: string) => {
+    if (!cancelReason.trim()) {
+      setError('Please provide a reason before cancelling a task.');
+      return;
+    }
+    setActionLoading(true);
+    setError(null);
+    try {
+      const updated = await api.updateTechnicianTask(taskId, {
+        status: 'cancelled',
+        cancelReason: cancelReason.trim(),
+      });
+      setAssignedTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      onToast?.(`Task "${updated.subject}" cancelled with reason logged.`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to cancel task');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const computed = computeLiveFromSessions(activeSession, todaySessions, assignedWorkHoursPerDay, nowMs);
 
   return {
@@ -245,12 +298,15 @@ export function useTechnicianAttendance(
     liveOvertimeSeconds: computed.overtime,
     isOvertime: computed.overtime > 0,
     needsFirstLoginStart,
+    assignedTasks,
     error,
     refresh,
     startTimer,
     stopTimer,
     startBreak,
     stopBreak,
+    toggleAssignedTaskComplete,
+    cancelAssignedTask,
   };
 }
 
@@ -488,6 +544,9 @@ export const TechnicianShiftCard: React.FC<{
 }> = ({ attendance, user }) => {
   const [breakReason, setBreakReason] = useState('Lunch / Tea Break');
   const [showBreakInput, setShowBreakInput] = useState(false);
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
+  const [cancelReasonText, setCancelReasonText] = useState('');
+  const [taskFilter, setTaskFilter] = useState<'all' | 'pending' | 'completed' | 'cancelled'>('all');
 
   const {
     currentStatus,
@@ -759,6 +818,201 @@ export const TechnicianShiftCard: React.FC<{
           <span>{attendance.error}</span>
         </div>
       )}
+
+      {/* Superadmin-Assigned Operational Tasks Checklist */}
+      <div className="pt-3 border-t border-slate-200 dark:border-white/10 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <ClipboardList className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+              Assigned Tasks from Superadmin
+            </h3>
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+              {attendance.assignedTasks.filter((t) => t.status === 'pending').length} Pending
+            </span>
+            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+              {attendance.assignedTasks.filter((t) => t.status === 'completed').length} Completed
+            </span>
+          </div>
+
+          {attendance.assignedTasks.length > 0 && (
+            <div className="flex items-center gap-1 text-[10px] font-bold">
+              {(['all', 'pending', 'completed', 'cancelled'] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setTaskFilter(f)}
+                  className={`px-2 py-1 rounded-lg capitalize cursor-pointer transition-colors ${
+                    taskFilter === f
+                      ? 'bg-cyan-600 text-white'
+                      : 'neu-btn text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {attendance.assignedTasks.length === 0 ? (
+          <div className="p-3 rounded-xl neu-pressed text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
+            <CheckSquare className="w-4 h-4 text-slate-400" />
+            <span>No extra operational tasks assigned by Superadmin right now.</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {attendance.assignedTasks
+              .filter((t) => taskFilter === 'all' || t.status === taskFilter)
+              .map((task) => {
+                const isCancelling = cancellingTaskId === task.id;
+                const isCompleted = task.status === 'completed';
+                const isCancelled = task.status === 'cancelled';
+
+                return (
+                  <div
+                    key={task.id}
+                    className={`p-3.5 rounded-xl border transition-all space-y-2.5 ${
+                      isCompleted
+                        ? 'neu-pressed border-emerald-500/30 bg-emerald-500/5'
+                        : isCancelled
+                          ? 'neu-pressed border-rose-500/30 bg-rose-500/5'
+                          : 'neu-card border-cyan-500/30'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={isCompleted}
+                        disabled={attendance.actionLoading}
+                        onChange={() => attendance.toggleAssignedTaskComplete(task)}
+                        className="mt-0.5 w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                        title={isCompleted ? 'Mark task as Pending' : 'Tick to mark task as Completed'}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span
+                            className={`text-xs font-extrabold ${
+                              isCompleted
+                                ? 'line-through text-slate-500 dark:text-slate-400'
+                                : isCancelled
+                                  ? 'line-through text-rose-700 dark:text-rose-300'
+                                  : 'text-slate-900 dark:text-white'
+                            }`}
+                          >
+                            {task.subject}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {task.priority && task.priority !== 'normal' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase font-mono bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30">
+                                {task.priority}
+                              </span>
+                            )}
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase font-mono border ${
+                                isCompleted
+                                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700/50'
+                                  : isCancelled
+                                    ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700/50'
+                                    : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700/50'
+                              }`}
+                            >
+                              {isCompleted ? '✓ Completed' : isCancelled ? '✕ Cancelled' : '⏳ Pending'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 whitespace-pre-wrap">
+                          {task.description}
+                        </p>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 mt-2 text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                          <span>
+                            Assigned by {task.assignedByName} · {new Date(task.assignedAt).toLocaleDateString()}
+                            {task.dueDate ? ` · Due: ${task.dueDate}` : ''}
+                          </span>
+                          {!isCancelled && !isCancelling && (
+                            <button
+                              type="button"
+                              disabled={attendance.actionLoading}
+                              onClick={() => {
+                                setCancellingTaskId(task.id);
+                                setCancelReasonText('');
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 font-bold cursor-pointer"
+                              title="Cancel this task with a mandatory reason"
+                            >
+                              <Ban className="w-3 h-3" />
+                              <span>Cancel</span>
+                            </button>
+                          )}
+                          {isCancelled && (
+                            <button
+                              type="button"
+                              disabled={attendance.actionLoading}
+                              onClick={() => attendance.toggleAssignedTaskComplete(task)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30 font-bold cursor-pointer"
+                              title="Reopen as Completed"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>Mark Completed</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {isCancelled && task.cancelReason && (
+                          <div className="mt-2 p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-700 dark:text-rose-300">
+                            <strong>Cancel Reason:</strong> {task.cancelReason}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {isCancelling && (
+                      <div className="pt-2 border-t border-rose-500/20 space-y-2 animate-in fade-in">
+                        <label className="block text-[11px] font-bold text-rose-700 dark:text-rose-300">
+                          Cancellation Reason *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={cancelReasonText}
+                          onChange={(e) => setCancelReasonText(e.target.value)}
+                          placeholder="Enter mandatory reason for cancelling this task..."
+                          className="w-full px-2.5 py-1.5 text-xs neu-input rounded-lg focus:outline-none"
+                        />
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCancellingTaskId(null);
+                              setCancelReasonText('');
+                            }}
+                            className="neu-btn px-2.5 py-1 text-[11px] rounded-lg cursor-pointer"
+                          >
+                            Back
+                          </button>
+                          <button
+                            type="button"
+                            disabled={attendance.actionLoading || !cancelReasonText.trim()}
+                            onClick={async () => {
+                              await attendance.cancelAssignedTask(task.id, cancelReasonText);
+                              setCancellingTaskId(null);
+                              setCancelReasonText('');
+                            }}
+                            className="px-3 py-1 text-[11px] font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white cursor-pointer disabled:opacity-50"
+                          >
+                            Confirm Cancel Task
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

@@ -549,6 +549,7 @@ export interface AttendanceReportSchedule {
   enabled: boolean;
   frequency: 'daily' | 'monthly' | 'both';
   recipientEmail: string;
+  ccEmails?: string[]; // Additional CC recipients
   dailySendTime: string; // HH:mm 24h
   monthlyDayOfMonth: number; // 1 - 28
   monthlySendTime: string; // HH:mm 24h
@@ -558,6 +559,27 @@ export interface AttendanceReportSchedule {
   lastMonthlySentMonth?: string; // YYYY-MM
   lastSentAt?: string;
   lastSendStatus?: string;
+}
+
+export type TechnicianTaskStatus = 'pending' | 'completed' | 'cancelled';
+
+export interface TechnicianAssignedTask {
+  id: string;
+  technicianId: string;
+  technicianName: string;
+  technicianEmail?: string;
+  subject: string;
+  description: string;
+  status: TechnicianTaskStatus;
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
+  dueDate?: string; // YYYY-MM-DD
+  assignedById: string;
+  assignedByName: string;
+  assignedAt: string;
+  completedAt?: string;
+  cancelledAt?: string;
+  cancelReason?: string;
+  updatedAt: string;
 }
 
 export interface TechnicianAttendanceOverviewItem {
@@ -589,6 +611,11 @@ export interface TechnicianAttendanceOverviewItem {
     tasksTotal: number;
     tasksCompleted: number;
     tasksPending: number;
+    assignedTasksTotal: number;
+    assignedTasksCompleted: number;
+    assignedTasksPending: number;
+    assignedTasksCancelled: number;
+    assignedTasksList: TechnicianAssignedTask[];
     recentTickets: Array<{
       id: string;
       subject: string;
@@ -599,4 +626,5 @@ export interface TechnicianAttendanceOverviewItem {
     }>;
   };
 }
+
 

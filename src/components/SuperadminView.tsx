@@ -83,6 +83,8 @@ interface SuperadminViewProps {
   systemSettings?: any;
   onUpdateSystemSettings?: (settings: any) => void;
   onRefreshUsers?: () => void;
+  initialTab?: 'tenants' | 'agents' | 'attendance' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway';
+  onTabChange?: (tab: 'tenants' | 'agents' | 'attendance' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway') => void;
 }
 
 export const SuperadminView: React.FC<SuperadminViewProps> = ({
@@ -106,8 +108,23 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   systemSettings,
   onUpdateSystemSettings,
   onRefreshUsers,
+  initialTab,
+  onTabChange,
 }) => {
-  const [activeTab, setActiveTab] = useState<'tenants' | 'agents' | 'attendance' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway'>('policies');
+  type SuperadminTab = 'tenants' | 'agents' | 'attendance' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway';
+  const [activeTab, setActiveTab] = useState<SuperadminTab>(initialTab || 'policies');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  const handleSelectTab = (tab: SuperadminTab) => {
+    setActiveTab(tab);
+    onTabChange?.(tab);
+  };
+
   const [searchAudit, setSearchAudit] = useState('');
   const [searchCatalog, setSearchCatalog] = useState('');
 
@@ -984,7 +1001,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
           className="flex-1 flex items-center gap-1.5 overflow-x-auto custom-scrollbar py-1 px-1 scroll-smooth min-w-0"
         >
           <button
-            onClick={() => setActiveTab('policies')}
+            onClick={() => handleSelectTab('policies')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'policies'
                 ? 'neu-pressed bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-violet-500/40 shadow-inner'
@@ -995,7 +1012,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Policies &amp; Toggles</span>
           </button>
           <button
-            onClick={() => setActiveTab('sla')}
+            onClick={() => handleSelectTab('sla')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'sla'
                 ? 'neu-pressed bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'
@@ -1006,7 +1023,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>SLA Timers (Superadmin)</span>
           </button>
           <button
-            onClick={() => setActiveTab('branding')}
+            onClick={() => handleSelectTab('branding')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'branding'
                 ? 'neu-pressed bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 shadow-inner'
@@ -1017,7 +1034,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Branding &amp; Logo</span>
           </button>
           <button
-            onClick={() => setActiveTab('email-gateway')}
+            onClick={() => handleSelectTab('email-gateway')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'email-gateway'
                 ? 'neu-pressed bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'
@@ -1028,7 +1045,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Email Gateway (POP3/IMAP/SMTP)</span>
           </button>
           <button
-            onClick={() => setActiveTab('storage')}
+            onClick={() => handleSelectTab('storage')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'storage'
                 ? 'neu-pressed bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/40 shadow-inner'
@@ -1039,7 +1056,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Purge Old Tickets</span>
           </button>
           <button
-            onClick={() => setActiveTab('ratings')}
+            onClick={() => handleSelectTab('ratings')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'ratings'
                 ? 'neu-pressed bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 shadow-inner'
@@ -1050,7 +1067,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>CSAT Ratings ({surveys.length})</span>
           </button>
           <button
-            onClick={() => setActiveTab('agents')}
+            onClick={() => handleSelectTab('agents')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'agents'
                 ? 'neu-pressed bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'
@@ -1061,7 +1078,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Staff &amp; Technicians ({agentsList.length})</span>
           </button>
           <button
-            onClick={() => setActiveTab('attendance')}
+            onClick={() => handleSelectTab('attendance')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'attendance'
                 ? 'neu-pressed bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40 shadow-inner'
@@ -1072,7 +1089,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Tech Attendance &amp; Overtime</span>
           </button>
           <button
-            onClick={() => setActiveTab('tenants')}
+            onClick={() => handleSelectTab('tenants')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'tenants'
                 ? 'neu-pressed bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-violet-500/40 shadow-inner'
@@ -1083,7 +1100,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Organizations ({organizations.length})</span>
           </button>
           <button
-            onClick={() => setActiveTab('catalogs')}
+            onClick={() => handleSelectTab('catalogs')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'catalogs'
                 ? 'neu-pressed bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/40 shadow-inner'
@@ -1094,7 +1111,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Service Catalogs ({catalogItems.length})</span>
           </button>
           <button
-            onClick={() => setActiveTab('audit')}
+            onClick={() => handleSelectTab('audit')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'audit'
                 ? 'neu-pressed bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40 shadow-inner'
@@ -1105,7 +1122,7 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
             <span>Security Audit Trail ({auditLogs.length})</span>
           </button>
           <button
-            onClick={() => setActiveTab('system')}
+            onClick={() => handleSelectTab('system')}
             className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               activeTab === 'system'
                 ? 'neu-pressed bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'

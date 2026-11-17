@@ -21,6 +21,8 @@ import {
   TechnicianAttendanceSession,
   AttendanceReportSchedule,
   TechnicianAttendanceOverviewItem,
+  TechnicianAssignedTask,
+  TechnicianTaskStatus,
 } from '../types';
 
 function getSessionToken(): string {
@@ -857,6 +859,10 @@ export const api = {
       techniciansWithOvertime: number;
       totalTasks: number;
       tasksCompleted: number;
+      assignedTasksTotal: number;
+      assignedTasksCompleted: number;
+      assignedTasksPending: number;
+      assignedTasksCancelled: number;
     };
     technicians: TechnicianAttendanceOverviewItem[];
   }> {
@@ -894,12 +900,58 @@ export const api = {
   async sendAttendanceReportNow(payload: {
     frequency: 'daily' | 'monthly';
     recipientEmail?: string;
+    ccEmails?: string[];
     date?: string;
     month?: string;
   }): Promise<any> {
     return request('/api/attendance/report/send-now', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  },
+
+  // Superadmin -> Technician Assigned Operational Tasks
+  async getTechnicianTasks(params?: { technicianId?: string; status?: string }): Promise<TechnicianAssignedTask[]> {
+    const sp = new URLSearchParams();
+    if (params?.technicianId) sp.set('technicianId', params.technicianId);
+    if (params?.status) sp.set('status', params.status);
+    const qs = sp.toString();
+    return request(`/api/technician-tasks${qs ? `?${qs}` : ''}`);
+  },
+
+  async createTechnicianTask(payload: {
+    technicianId: string;
+    subject: string;
+    description: string;
+    dueDate?: string;
+    priority?: 'low' | 'normal' | 'high' | 'urgent';
+  }): Promise<TechnicianAssignedTask> {
+    return request('/api/technician-tasks', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateTechnicianTask(
+    id: string,
+    payload: {
+      status?: TechnicianTaskStatus;
+      cancelReason?: string;
+      subject?: string;
+      description?: string;
+      dueDate?: string;
+      priority?: 'low' | 'normal' | 'high' | 'urgent';
+    }
+  ): Promise<TechnicianAssignedTask> {
+    return request(`/api/technician-tasks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteTechnicianTask(id: string): Promise<{ success: boolean; deletedTaskId: string }> {
+    return request(`/api/technician-tasks/${id}`, {
+      method: 'DELETE',
     });
   },
 };

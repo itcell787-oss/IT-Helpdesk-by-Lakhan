@@ -1803,6 +1803,7 @@ class EmailGatewayService {
   public async sendAttendanceReportEmail(params: {
     frequency: 'daily' | 'monthly';
     recipientEmail?: string;
+    ccEmails?: string[];
     date?: string;
     month?: string;
     isScheduled?: boolean;
@@ -1810,6 +1811,7 @@ class EmailGatewayService {
     success: boolean;
     status: 'sent' | 'simulated_success' | 'failed';
     recipient: string;
+    cc: string[];
     subject: string;
     messageId?: string;
     error?: string;
@@ -1821,6 +1823,15 @@ class EmailGatewayService {
     const superadmin = users.find((u) => u.role === 'superadmin');
 
     const to = (params.recipientEmail || schedule?.recipientEmail || superadmin?.email || 'admin@lakhanglobal.com').trim();
+    const rawCc = params.ccEmails !== undefined ? params.ccEmails : (schedule?.ccEmails || []);
+    const ccList = Array.from(
+      new Set(
+        (Array.isArray(rawCc) ? rawCc : [])
+          .map((e) => String(e || '').trim().toLowerCase())
+          .filter((e) => e.includes('@') && e !== to.toLowerCase())
+      )
+    );
+
     const overview = getTechnicianAttendanceOverview({
       period: params.frequency,
       date: params.date,
@@ -1838,13 +1849,16 @@ class EmailGatewayService {
 
     const textRows = overview.technicians.map((t) => {
       const otText = t.overtimeSeconds > 0 ? `+${formatDurationHM(t.overtimeSeconds)} OVERTIME` : '0m';
+      const assignedTaskSummary = t.taskStatus.assignedTasksList.length > 0
+        ? ` | Assigned Tasks: ${t.taskStatus.assignedTasksCompleted}/${t.taskStatus.assignedTasksTotal} Completed, ${t.taskStatus.assignedTasksPending} Pending, ${t.taskStatus.assignedTasksCancelled} Cancelled [${t.taskStatus.assignedTasksList.map((at) => `${at.subject}: ${at.status.toUpperCase()}${at.status === 'cancelled' && at.cancelReason ? ` (Reason: ${at.cancelReason})` : ''}`).join('; ')}]`
+        : '';
       const taskText = includeTaskStatus
-        ? ` | Tickets: ${t.taskStatus.openTickets + t.taskStatus.inProgressTickets} open / ${t.taskStatus.resolvedTickets} resolved | Tasks: ${t.taskStatus.tasksCompleted}/${t.taskStatus.tasksTotal}`
+        ? ` | Tickets: ${t.taskStatus.openTickets + t.taskStatus.inProgressTickets} open / ${t.taskStatus.resolvedTickets} resolved | Sub-tasks: ${t.taskStatus.tasksCompleted}/${t.taskStatus.tasksTotal}${assignedTaskSummary}`
         : '';
       return `- ${t.technicianName} (${t.employeeCode || t.technicianId}): Status=${t.currentStatus.toUpperCase()} | Assigned=${t.assignedWorkHoursPerDay}h/day | Worked=${formatDurationHM(t.totalWorkSeconds)} | Break=${formatDurationHM(t.totalBreakSeconds)}${includeOvertimeDetails ? ` | Overtime=${otText}` : ''}${taskText}`;
     }).join('\n');
 
-    const textContent = `IT Helpdesk Technician Attendance & Task Status Report\nPeriod: ${periodTitle}\nGenerated At: ${new Date().toLocaleString()}\n\nSummary:\n- Total Technicians: ${overview.totals.totalTechnicians}\n- Active Working: ${overview.totals.workingNow} | On Break: ${overview.totals.onBreakNow}\n- Total Working Time: ${formatDurationHM(overview.totals.totalWorkSeconds)}\n- Total Break Time: ${formatDurationHM(overview.totals.totalBreakSeconds)}\n- Total Overtime: ${formatDurationHM(overview.totals.totalOvertimeSeconds)} (${overview.totals.techniciansWithOvertime} technician(s))\n- Tasks Completed: ${overview.totals.tasksCompleted}/${overview.totals.totalTasks}\n\nTechnician Breakdown:\n${textRows || 'No technicians registered.'}\n\n--\nIT Helpdesk by Lakhan • Automated Attendance & Operations Reporter`;
+    const textContent = `IT Helpdesk Technician Attendance & Task Status Report\nPeriod: ${periodTitle}\nGenerated At: ${new Date().toLocaleString()}${ccList.length > 0 ? `\nCC Recipients: ${ccList.join(', ')}` : ''}\n\nSummary:\n- Total Technicians: ${overview.totals.totalTechnicians}\n- Active Working: ${overview.totals.workingNow} | On Break: ${overview.totals.onBreakNow}\n- Total Working Time: ${formatDurationHM(overview.totals.totalWorkSeconds)}\n- Total Break Time: ${formatDurationHM(overview.totals.totalBreakSeconds)}\n- Total Overtime: ${formatDurationHM(overview.totals.totalOvertimeSeconds)} (${overview.totals.techniciansWithOvertime} technician(s))\n- Assigned Operational Tasks: ${overview.totals.assignedTasksCompleted}/${overview.totals.assignedTasksTotal} completed (${overview.totals.assignedTasksPending} pending, ${overview.totals.assignedTasksCancelled} cancelled)\n- Ticket Sub-tasks Completed: ${overview.totals.tasksCompleted}/${overview.totals.totalTasks}\n\nTechnician Breakdown:\n${textRows || 'No technicians registered.'}\n\n--\nIT Helpdesk by Lakhan • Automated Attendance & Operations Reporter`;
 
     const htmlRows = overview.technicians.map((t) => {
       const statusBadge = t.currentStatus === 'working'
@@ -1866,22 +1880,37 @@ class EmailGatewayService {
           ? new Date(t.lastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           : '—';
 
+      const assignedTasksHtml = t.taskStatus.assignedTasksList.length > 0
+        ? `<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #cbd5e1;font-size:11px;">
+            <div style="font-weight:700;color:#0f172a;">Assigned Tasks (${t.taskStatus.assignedTasksCompleted}/${t.taskStatus.assignedTasksTotal} Done):</div>
+            ${t.taskStatus.assignedTasksList.slice(0, 6).map((at) => {
+              const badge = at.status === 'completed'
+                ? '<span style="color:#15803d;font-weight:700;">[✓ Completed]</span>'
+                : at.status === 'cancelled'
+                  ? `<span style="color:#be123c;font-weight:700;">[✕ Cancelled${at.cancelReason ? `: ${at.cancelReason}` : ''}]</span>`
+                  : '<span style="color:#b45309;font-weight:700;">[⏳ Pending]</span>';
+              return `<div style="margin-top:2px;color:#334155;">• ${at.subject} ${badge}</div>`;
+            }).join('')}
+          </div>`
+        : '';
+
       return `
         <tr style="border-bottom:1px solid #e2e8f0;">
-          <td style="padding:10px 8px;">
+          <td style="padding:10px 8px;vertical-align:top;">
             <div style="font-weight:700;color:#0f172a;font-size:13px;">${t.technicianName}</div>
             <div style="font-size:11px;color:#64748b;font-family:monospace;">${t.employeeCode || t.technicianId} • ${t.technicianEmail}</div>
           </td>
-          <td style="padding:10px 8px;">${statusBadge}</td>
-          <td style="padding:10px 8px;font-family:monospace;font-size:12px;color:#334155;">${t.assignedWorkHoursPerDay}h/day${params.frequency === 'monthly' ? ` (${t.daysWorked}d)` : ''}</td>
-          <td style="padding:10px 8px;font-family:monospace;font-size:12px;color:#334155;">${clockInStr} / ${clockOutStr}</td>
-          <td style="padding:10px 8px;font-family:monospace;font-weight:700;color:#0369a1;font-size:12px;">${formatDurationHM(t.totalWorkSeconds)}</td>
-          <td style="padding:10px 8px;font-family:monospace;color:#b45309;font-size:12px;">${formatDurationHM(t.totalBreakSeconds)}</td>
-          ${includeOvertimeDetails ? `<td style="padding:10px 8px;font-family:monospace;">${otCell}</td>` : ''}
+          <td style="padding:10px 8px;vertical-align:top;">${statusBadge}</td>
+          <td style="padding:10px 8px;vertical-align:top;font-family:monospace;font-size:12px;color:#334155;">${t.assignedWorkHoursPerDay}h/day${params.frequency === 'monthly' ? ` (${t.daysWorked}d)` : ''}</td>
+          <td style="padding:10px 8px;vertical-align:top;font-family:monospace;font-size:12px;color:#334155;">${clockInStr} / ${clockOutStr}</td>
+          <td style="padding:10px 8px;vertical-align:top;font-family:monospace;font-weight:700;color:#0369a1;font-size:12px;">${formatDurationHM(t.totalWorkSeconds)}</td>
+          <td style="padding:10px 8px;vertical-align:top;font-family:monospace;color:#b45309;font-size:12px;">${formatDurationHM(t.totalBreakSeconds)}</td>
+          ${includeOvertimeDetails ? `<td style="padding:10px 8px;vertical-align:top;font-family:monospace;">${otCell}</td>` : ''}
           ${includeTaskStatus ? `
-            <td style="padding:10px 8px;font-size:12px;color:#334155;">
+            <td style="padding:10px 8px;vertical-align:top;font-size:12px;color:#334155;">
               <div><strong>Open:</strong> ${t.taskStatus.openTickets + t.taskStatus.inProgressTickets} · <strong>Resolved:</strong> ${t.taskStatus.resolvedTickets}</div>
               <div style="font-size:11px;color:#64748b;">Sub-tasks: ${t.taskStatus.tasksCompleted}/${t.taskStatus.tasksTotal} done${t.taskStatus.overdueTickets > 0 ? ` · <span style="color:#be123c;font-weight:700;">${t.taskStatus.overdueTickets} Overdue</span>` : ''}</div>
+              ${assignedTasksHtml}
             </td>
           ` : ''}
         </tr>
@@ -1889,13 +1918,13 @@ class EmailGatewayService {
     }).join('');
 
     const htmlContent = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 860px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff;">
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff;">
         <div style="border-bottom: 2px solid #0284c7; padding-bottom: 14px; margin-bottom: 20px;">
           <span style="display:inline-block;padding:3px 10px;font-size:11px;font-weight:700;border-radius:4px;background:#e0f2fe;color:#0369a1;text-transform:uppercase;">
             ${params.frequency.toUpperCase()} ATTENDANCE & TASK REPORT
           </span>
           <h2 style="color:#0f172a;margin:10px 0 4px;font-size:20px;">Technician Attendance, Overtime &amp; Task Status — ${periodTitle}</h2>
-          <p style="margin:0;color:#64748b;font-size:12px;">Generated: ${new Date().toLocaleString()} ${params.isScheduled ? '(Automated Schedule)' : '(Manual Superadmin Trigger)'}</p>
+          <p style="margin:0;color:#64748b;font-size:12px;">Generated: ${new Date().toLocaleString()} ${params.isScheduled ? '(Automated Schedule)' : '(Manual Superadmin Trigger)'}${ccList.length > 0 ? ` • CC: ${ccList.join(', ')}` : ''}</p>
         </div>
 
         <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
@@ -1916,9 +1945,9 @@ class EmailGatewayService {
               <div style="font-size:11px;color:#9f1239;">${overview.totals.techniciansWithOvertime} Tech(s) in OT</div>
             </td>
             <td style="padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;width:25%;">
-              <div style="font-size:11px;color:#166534;font-weight:600;">Task Completion</div>
-              <div style="font-size:18px;font-weight:800;color:#15803d;">${overview.totals.tasksCompleted}/${overview.totals.totalTasks}</div>
-              <div style="font-size:11px;color:#166534;">Checklist Sub-tasks</div>
+              <div style="font-size:11px;color:#166534;font-weight:600;">Assigned Task Progress</div>
+              <div style="font-size:18px;font-weight:800;color:#15803d;">${overview.totals.assignedTasksCompleted}/${overview.totals.assignedTasksTotal}</div>
+              <div style="font-size:11px;color:#166534;">Ticket Sub-tasks: ${overview.totals.tasksCompleted}/${overview.totals.totalTasks}</div>
             </td>
           </tr>
         </table>
@@ -1958,6 +1987,7 @@ class EmailGatewayService {
         const info = await transporter.sendMail({
           from: `"${config.fromName}" <${config.fromEmail}>`,
           to,
+          cc: ccList.length > 0 ? ccList : undefined,
           replyTo: config.replyToEmail || config.fromEmail,
           subject,
           text: textContent,
@@ -1971,10 +2001,12 @@ class EmailGatewayService {
       }
     }
 
+    const recipientLabel = ccList.length > 0 ? `${to} (CC: ${ccList.join(', ')})` : to;
+
     this.recordDelivery({
       id: messageId,
       type: 'attendance_report',
-      recipient: to,
+      recipient: recipientLabel,
       subject,
       sentAt: nowIso,
       status: finalStatus,
@@ -1986,8 +2018,8 @@ class EmailGatewayService {
       const updatedSchedule = { ...schedule };
       updatedSchedule.lastSentAt = nowIso;
       updatedSchedule.lastSendStatus = finalStatus === 'sent'
-        ? `Sent ${params.frequency} report to ${to} at ${new Date().toLocaleTimeString()}`
-        : `Dispatched (Simulated/Gateway Log) ${params.frequency} report to ${to} at ${new Date().toLocaleTimeString()}`;
+        ? `Sent ${params.frequency} report to ${recipientLabel} at ${new Date().toLocaleTimeString()}`
+        : `Dispatched (Simulated/Gateway Log) ${params.frequency} report to ${recipientLabel} at ${new Date().toLocaleTimeString()}`;
       if (params.frequency === 'daily') {
         updatedSchedule.lastDailySentDate = overview.dateKey;
       } else {
@@ -2000,6 +2032,7 @@ class EmailGatewayService {
       success: true,
       status: finalStatus,
       recipient: to,
+      cc: ccList,
       subject,
       messageId,
       error: errorMsg,
@@ -2027,6 +2060,7 @@ class EmailGatewayService {
           await this.sendAttendanceReportEmail({
             frequency: 'daily',
             recipientEmail: schedule.recipientEmail,
+            ccEmails: schedule.ccEmails || [],
             date: todayKey,
             isScheduled: true,
           });
@@ -2042,6 +2076,7 @@ class EmailGatewayService {
           await this.sendAttendanceReportEmail({
             frequency: 'monthly',
             recipientEmail: schedule.recipientEmail,
+            ccEmails: schedule.ccEmails || [],
             month: monthKey,
             isScheduled: true,
           });
