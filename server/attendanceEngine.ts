@@ -12,7 +12,7 @@ export const DEFAULT_ATTENDANCE_ROLES = ['superadmin', 'admin', 'manager', 'tech
 export function isUserAttendanceEligible(
   user?: Pick<User, 'role' | 'attendanceEnabled'> | null
 ): boolean {
-  if (!user) return false;
+  if (!user || user.role === 'requester') return false;
   if (user.attendanceEnabled === true) return true;
   if (user.attendanceEnabled === false) return false;
   return (DEFAULT_ATTENDANCE_ROLES as readonly string[]).includes(user.role);
@@ -402,10 +402,12 @@ export function getTechnicianAttendanceOverview(params?: {
   const tasks = db.get('tasks') || [];
   const technicianTasks = db.get('technicianTasks') || [];
 
-  // Target all Staff & Technicians by default plus any Superadmin-enrolled users (e.g. inventory_manager, auditor)
+  // Target all Staff & Technicians by default plus any Superadmin-enrolled users (never Requesters)
   const techUserIdsWithLogs = new Set(allSessions.map((s) => s.technicianId));
   let targetTechnicians = users.filter(
-    (u) => isUserAttendanceEligible(u) || (techUserIdsWithLogs.has(u.id) && u.attendanceEnabled !== false)
+    (u) =>
+      u.role !== 'requester' &&
+      (isUserAttendanceEligible(u) || (techUserIdsWithLogs.has(u.id) && u.attendanceEnabled !== false))
   );
   if (params?.technicianId) {
     targetTechnicians = targetTechnicians.filter((u) => u.id === params.technicianId);

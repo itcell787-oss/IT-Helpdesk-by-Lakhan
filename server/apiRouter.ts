@@ -4264,13 +4264,15 @@ apiRouter.patch('/attendance/users/:id/enrollment', (req: Request, res: Response
     return res.status(404).json({ error: 'User not found' });
   }
 
+  const currentUserRecord = users[idx];
   const enabled = Boolean(req.body?.attendanceEnabled);
+  if (enabled && currentUserRecord.role === 'requester') {
+    return res.status(400).json({ error: 'Requester accounts cannot be added to Staff & Technician Attendance & OT.' });
+  }
   const requestedHours = req.body?.assignedWorkHoursPerDay !== undefined ? Number(req.body.assignedWorkHoursPerDay) : undefined;
   if (requestedHours !== undefined && (isNaN(requestedHours) || requestedHours < 0.5 || requestedHours > 24)) {
     return res.status(400).json({ error: 'Assigned daily work hours must be between 0.5 and 24 hours.' });
   }
-
-  const currentUserRecord = users[idx];
   const nextHours = requestedHours !== undefined
     ? Math.round(requestedHours * 100) / 100
     : (currentUserRecord.assignedWorkHoursPerDay && currentUserRecord.assignedWorkHoursPerDay > 0

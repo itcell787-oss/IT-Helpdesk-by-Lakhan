@@ -695,6 +695,11 @@ async function runTestSuite() {
         ov.technicians.some((t) => t.role === 'inventory_manager');
     })());
 
+    const reqUser = pristineUsers.find((u) => u.role === 'requester');
+    if (reqUser) {
+      assert('Requester accounts are strictly excluded from Tech Attendance & OT', !isUserAttendanceEligible({ ...reqUser, attendanceEnabled: true }));
+    }
+
     // Check first-login requirement before shift starts
     const preStatus = getMyAttendanceStatus(customTech);
     assert('Technician needsFirstLoginStart is true before clocking in', preStatus.needsFirstLoginStart === true);

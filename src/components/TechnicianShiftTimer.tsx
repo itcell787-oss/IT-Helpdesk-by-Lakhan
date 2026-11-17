@@ -39,7 +39,7 @@ export const DEFAULT_ATTENDANCE_ROLES = ['superadmin', 'admin', 'manager', 'tech
 export function isUserAttendanceEligible(
   user?: Pick<User, 'role' | 'attendanceEnabled'> | null
 ): boolean {
-  if (!user) return false;
+  if (!user || user.role === 'requester') return false;
   if (user.attendanceEnabled === true) return true;
   if (user.attendanceEnabled === false) return false;
   return (DEFAULT_ATTENDANCE_ROLES as readonly string[]).includes(user.role);

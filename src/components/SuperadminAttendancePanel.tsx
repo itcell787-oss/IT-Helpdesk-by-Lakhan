@@ -28,6 +28,8 @@ import {
   UserMinus,
   Download,
   FileSpreadsheet,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 import {
   AttendanceReportSchedule,
@@ -56,6 +58,7 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
   const [selectedStaffFilter, setSelectedStaffFilter] = useState<string>('all');
+  const [monitorViewMode, setMonitorViewMode] = useState<'tiles' | 'table'>('tiles');
   const [reportViewMode, setReportViewMode] = useState<'summary' | 'detailed'>('summary');
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
@@ -236,7 +239,7 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
     requester: 7,
   };
   const nonEnrolledUsers = [...users]
-    .filter((u) => !enrolledIds.has(u.id))
+    .filter((u) => u.role !== 'requester' && !enrolledIds.has(u.id))
     .sort((a, b) => (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99));
 
   useEffect(() => {
@@ -560,6 +563,11 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
       acc.assignedCancelled += t.taskStatus.assignedTasksCancelled ?? 0;
       acc.ticketsOpen += t.taskStatus.openTickets + t.taskStatus.inProgressTickets;
       acc.ticketsResolved += t.taskStatus.resolvedTickets;
+      acc.ticketSubDone += t.taskStatus.tasksCompleted ?? 0;
+      acc.ticketSubTotal += t.taskStatus.tasksTotal ?? 0;
+      if (t.currentStatus === 'working') acc.workingCount += 1;
+      if (t.currentStatus === 'on_break') acc.breakCount += 1;
+      if (t.currentStatus === 'not_started') acc.offlineCount += 1;
       return acc;
     },
     {
@@ -575,6 +583,11 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
       assignedCancelled: 0,
       ticketsOpen: 0,
       ticketsResolved: 0,
+      ticketSubDone: 0,
+      ticketSubTotal: 0,
+      workingCount: 0,
+      breakCount: 0,
+      offlineCount: 0,
     }
   );
 
@@ -785,11 +798,11 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
             <span>Working Now</span>
           </div>
           <div className="text-2xl font-extrabold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-            {overview?.totals.workingNow ?? 0}
-            <span className="text-xs font-semibold text-slate-400"> / {overview?.totals.totalTechnicians ?? 0}</span>
+            {liveTotals.workingCount}
+            <span className="text-xs font-semibold text-slate-400"> / {filteredTechs.length}</span>
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400">
-            {overview?.totals.onBreakNow ?? 0} on break · {overview?.totals.notStarted ?? 0} offline
+            {liveTotals.breakCount} on break · {liveTotals.offlineCount} offline
           </div>
         </div>
 
@@ -834,7 +847,7 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
             {liveTotals.ot > 0 ? `+${formatHM(liveTotals.ot)}` : '0m'}
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400">
-            {liveTotals.otCount} technician(s) exceeded target
+            {liveTotals.otCount} staff exceeded target
           </div>
         </div>
 
@@ -844,11 +857,11 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
             <span>Assigned &amp; Ticket Tasks</span>
           </div>
           <div className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white tabular-nums">
-            {overview?.totals.assignedTasksCompleted ?? 0}
-            <span className="text-xs font-semibold text-slate-400"> / {overview?.totals.assignedTasksTotal ?? 0}</span>
+            {liveTotals.assignedDone}
+            <span className="text-xs font-semibold text-slate-400"> / {liveTotals.assignedTotal}</span>
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400">
-            {overview?.totals.assignedTasksPending ?? 0} pending · {overview?.totals.assignedTasksCancelled ?? 0} cancelled · Tickets: {overview?.totals.tasksCompleted ?? 0}/{overview?.totals.totalTasks ?? 0}
+            {liveTotals.assignedPending} pending · {liveTotals.assignedCancelled} cancelled · Tickets: {liveTotals.ticketSubDone}/{liveTotals.ticketSubTotal}
           </div>
         </div>
       </div>
@@ -951,7 +964,7 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
         </div>
       </div>
 
-      {/* Main Staff & Technician Working Time, Custom Work Hours & Overtime Table */}
+      {/* Main Staff & Technician Working Time, Custom Work Hours & Overtime Monitor */}
       <div className="neu-flat rounded-2xl border border-slate-200 dark:border-white/10 overflow-hidden shadow-xl">
         <div className="px-5 py-4 border-b border-slate-200 dark:border-white/10 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
           <div>
@@ -959,49 +972,442 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
               Staff &amp; Technician Working Time, Custom Work Hours &amp; Overtime Monitor
             </h3>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Applies to all Staff &amp; Technicians by default, plus any additional users added by Super Admin (Inventory Manager, Team Manager, Auditor, etc.).
+              Applies to all Staff &amp; Technicians by default, plus additional staff roles (Inventory Manager, Team Manager, Auditor, etc.) added by Super Admin.
             </p>
           </div>
 
-          {nonEnrolledUsers.length > 0 && (
-            <form onSubmit={handleEnrollUser} className="flex flex-wrap items-center gap-2 text-xs">
-              <select
-                value={selectedEnrollUserId}
-                onChange={(e) => setSelectedEnrollUserId(e.target.value)}
-                className="px-2.5 py-1.5 text-xs neu-select rounded-xl focus:outline-none font-semibold max-w-[260px]"
-                title="Select another user (e.g. Inventory Manager, Team Manager, Auditor) to add to Tech Attendance & OT"
-              >
-                {nonEnrolledUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} — {u.role.replace(/_/g, ' ')} ({u.email})
-                  </option>
-                ))}
-              </select>
-              <div className="flex items-center gap-1">
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0.5"
-                  max="24"
-                  value={enrollWorkHours}
-                  onChange={(e) => setEnrollWorkHours(e.target.value)}
-                  className="w-16 px-2 py-1.5 text-xs neu-input rounded-xl font-mono font-bold"
-                  title="Assigned daily work hours"
-                />
-                <span className="text-[10px] text-slate-500 font-semibold">h/day</span>
-              </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            {nonEnrolledUsers.length > 0 && (
+              <form onSubmit={handleEnrollUser} className="flex flex-wrap items-center gap-2 text-xs">
+                <select
+                  value={selectedEnrollUserId}
+                  onChange={(e) => setSelectedEnrollUserId(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs neu-select rounded-xl focus:outline-none font-semibold max-w-[260px]"
+                  title="Select another staff user (e.g. Inventory Manager, Team Manager, Auditor) to add to Tech Attendance & OT"
+                >
+                  {nonEnrolledUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} — {u.role.replace(/_/g, ' ')} ({u.email})
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    max="24"
+                    value={enrollWorkHours}
+                    onChange={(e) => setEnrollWorkHours(e.target.value)}
+                    className="w-16 px-2 py-1.5 text-xs neu-input rounded-xl font-mono font-bold"
+                    title="Assigned daily work hours"
+                  />
+                  <span className="text-[10px] text-slate-500 font-semibold">h/day</span>
+                </div>
+                <button
+                  type="submit"
+                  disabled={enrollingUser || !selectedEnrollUserId}
+                  className="neu-btn-primary px-3 py-1.5 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>{enrollingUser ? 'Adding...' : 'Add Staff to Attendance & OT'}</span>
+                </button>
+              </form>
+            )}
+
+            <div className="flex p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900/70 border border-slate-300 dark:border-white/10 text-[11px]">
               <button
-                type="submit"
-                disabled={enrollingUser || !selectedEnrollUserId}
-                className="neu-btn-primary px-3 py-1.5 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                type="button"
+                onClick={() => setMonitorViewMode('tiles')}
+                className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap ${
+                  monitorViewMode === 'tiles'
+                    ? 'neu-btn-primary shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
               >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>{enrollingUser ? 'Adding...' : 'Add User to Attendance & OT'}</span>
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Tiles</span>
               </button>
-            </form>
-          )}
+              <button
+                type="button"
+                onClick={() => setMonitorViewMode('table')}
+                className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap ${
+                  monitorViewMode === 'table'
+                    ? 'neu-btn-primary shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <List className="w-3.5 h-3.5" />
+                <span>Table</span>
+              </button>
+            </div>
+          </div>
         </div>
 
+        {monitorViewMode === 'tiles' ? (
+          <div className="p-5">
+            {filteredTechs.length === 0 ? (
+              <div className="py-10 text-center text-xs text-slate-500 dark:text-slate-400">
+                No staff or technicians match your search criteria.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filteredTechs.map((tech) => {
+                  const live = getLiveTechMetrics(tech);
+                  const isEditing = editingTechId === tech.technicianId;
+                  const isExpanded = expandedTechId === tech.technicianId;
+                  const targetSec = Math.max(1, tech.expectedTargetSeconds || (tech.assignedWorkHoursPerDay || 8) * 3600);
+                  const progressPct = Math.min(100, Math.round((live.workSec / targetSec) * 100));
+                  const hasDetails =
+                    tech.taskStatus.recentTickets.length > 0 ||
+                    (tech.taskStatus.assignedTasksList && tech.taskStatus.assignedTasksList.length > 0);
+
+                  const cardBorderClass =
+                    tech.currentStatus === 'working'
+                      ? 'border-emerald-400/60 dark:border-emerald-500/40'
+                      : tech.currentStatus === 'on_break'
+                        ? 'border-amber-400/60 dark:border-amber-500/40'
+                        : live.isOvertime
+                          ? 'border-rose-400/60 dark:border-rose-500/40'
+                          : 'border-slate-200 dark:border-white/10';
+
+                  return (
+                    <div
+                      key={tech.technicianId}
+                      className={`neu-card rounded-2xl border p-4 flex flex-col justify-between gap-3.5 transition-all ${cardBorderClass}`}
+                    >
+                      {/* Tile Header: Identity + Live Status */}
+                      <div className="flex items-start justify-between gap-2.5">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-600 text-white font-extrabold text-sm flex items-center justify-center shrink-0 shadow-sm">
+                            {tech.technicianName.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                              {tech.technicianName}
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 flex-wrap">
+                              <span className="capitalize font-semibold text-cyan-700 dark:text-cyan-400">
+                                {tech.role.replace(/_/g, ' ')}
+                              </span>
+                              {tech.employeeCode && (
+                                <>
+                                  <span aria-hidden="true">·</span>
+                                  <span className="font-mono">{tech.employeeCode}</span>
+                                </>
+                              )}
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                              {tech.technicianEmail}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="shrink-0">
+                          {tech.currentStatus === 'working' && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/50">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                              Working
+                            </span>
+                          )}
+                          {tech.currentStatus === 'on_break' && (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-extrabold uppercase font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/50">
+                              <Coffee className="w-3 h-3" />
+                              On Break
+                            </span>
+                          )}
+                          {tech.currentStatus === 'stopped' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase font-mono bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                              Shift Done
+                            </span>
+                          )}
+                          {tech.currentStatus === 'not_started' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase font-mono bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-white/10">
+                              Not Started
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Telemetry Strip: Worked / Break / Overtime */}
+                      <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-slate-200/80 dark:border-white/10">
+                        <div>
+                          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Working Time</div>
+                          <div className="font-mono text-sm font-extrabold tabular-nums text-cyan-700 dark:text-cyan-400 mt-0.5">
+                            {tech.currentStatus === 'working' ? formatHMS(live.workSec) : formatHM(live.workSec)}
+                          </div>
+                          {period === 'monthly' && (
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                              {tech.daysWorked} day(s)
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Break Time</div>
+                          <div className="font-mono text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400 mt-0.5">
+                            {tech.currentStatus === 'on_break' ? formatHMS(live.breakSec) : formatHM(live.breakSec)}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Overtime</div>
+                          <div className="font-mono text-sm font-extrabold tabular-nums mt-0.5">
+                            {live.isOvertime ? (
+                              <span className="text-rose-600 dark:text-rose-400">+{formatHM(live.otSec)}</span>
+                            ) : (
+                              <span className="text-slate-500 dark:text-slate-400 text-xs font-semibold">On Target</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Shift Progress Bar & Clock In/Out */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+                          <span>
+                            In:{' '}
+                            <strong>
+                              {tech.firstClockIn
+                                ? new Date(tech.firstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                : '—'}
+                            </strong>
+                            {' · Out: '}
+                            <strong>
+                              {tech.currentStatus === 'working' || tech.currentStatus === 'on_break'
+                                ? 'Active'
+                                : tech.lastClockOut
+                                  ? new Date(tech.lastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                  : '—'}
+                            </strong>
+                          </span>
+                          <span className="font-bold text-slate-500 dark:text-slate-400">{progressPct}%</span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              live.isOvertime
+                                ? 'bg-rose-500'
+                                : tech.currentStatus === 'on_break'
+                                  ? 'bg-amber-500'
+                                  : 'bg-cyan-600 dark:bg-cyan-400'
+                            }`}
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Assigned Hours & Inline Editor */}
+                      <div className="pt-2 border-t border-slate-200/80 dark:border-white/10">
+                        {isEditing ? (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                step="0.5"
+                                min="0.5"
+                                max="24"
+                                value={editWorkHours}
+                                onChange={(e) => setEditWorkHours(e.target.value)}
+                                className="w-20 px-2.5 py-1 text-xs neu-input rounded-lg font-mono font-bold"
+                              />
+                              <span className="text-[11px] text-slate-500 dark:text-slate-400">hrs/day</span>
+                              <input
+                                type="text"
+                                value={editShiftLabel}
+                                onChange={(e) => setEditShiftLabel(e.target.value)}
+                                placeholder="Shift label (e.g. 9AM-6PM)"
+                                className="flex-1 min-w-0 px-2.5 py-1 text-[11px] neu-input rounded-lg"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={savingHours}
+                                onClick={() => handleSaveCustomHours(tech.technicianId)}
+                                className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold cursor-pointer"
+                              >
+                                {savingHours ? 'Saving...' : 'Save Hours'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingTechId(null)}
+                                className="px-3 py-1 rounded-lg neu-btn text-[11px] font-semibold cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <div className="min-w-0">
+                              <span className="text-slate-500 dark:text-slate-400">Daily Target: </span>
+                              <span className="font-mono font-bold text-slate-900 dark:text-white">
+                                {tech.assignedWorkHoursPerDay} hrs/day
+                              </span>
+                              {tech.assignedShiftLabel && (
+                                <span className="text-cyan-700 dark:text-cyan-400 ml-1.5 font-medium">
+                                  · {tech.assignedShiftLabel}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingTechId(tech.technicianId);
+                                  setEditWorkHours(String(tech.assignedWorkHoursPerDay || 8));
+                                  setEditShiftLabel(tech.assignedShiftLabel || '');
+                                }}
+                                className="p-1.5 rounded-lg neu-btn text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 cursor-pointer"
+                                title="Edit Custom Work Hours"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={enrollingUser}
+                                onClick={() => handleRemoveEnrolledUser(tech)}
+                                className="p-1.5 rounded-lg neu-btn text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer disabled:opacity-50"
+                                title={`Remove ${tech.technicianName} from Tech Attendance & OT`}
+                              >
+                                <UserMinus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Tasks & Tickets Summary + Action Footer */}
+                      <div className="pt-2.5 border-t border-slate-200/80 dark:border-white/10 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                          <span className="text-slate-700 dark:text-slate-300 font-medium">
+                            Tasks:{' '}
+                            <strong className="font-mono text-emerald-600 dark:text-emerald-400">
+                              {tech.taskStatus.assignedTasksCompleted ?? 0}/{tech.taskStatus.assignedTasksTotal ?? 0}
+                            </strong>
+                            {(tech.taskStatus.assignedTasksPending ?? 0) > 0 && (
+                              <span className="text-amber-600 dark:text-amber-400 font-mono">
+                                {' '}· {tech.taskStatus.assignedTasksPending} pending
+                              </span>
+                            )}
+                            {(tech.taskStatus.assignedTasksCancelled ?? 0) > 0 && (
+                              <span className="text-rose-600 dark:text-rose-400 font-mono">
+                                {' '}· {tech.taskStatus.assignedTasksCancelled} cancelled
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                            Tickets: {tech.taskStatus.openTickets + tech.taskStatus.inProgressTickets} open · {tech.taskStatus.resolvedTickets} done
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenStaffReport(tech.technicianId)}
+                            className="flex-1 neu-btn py-1.5 px-3 rounded-xl text-[11px] font-bold text-cyan-700 dark:text-cyan-400 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          >
+                            <FileSpreadsheet className="w-3.5 h-3.5" />
+                            <span>Work Report</span>
+                          </button>
+                          {hasDetails && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedTechId(isExpanded ? null : tech.technicianId)}
+                              className="flex-1 neu-btn py-1.5 px-3 rounded-xl text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                            >
+                              <ClipboardList className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                              <span>{isExpanded ? 'Hide Details' : 'Tasks & Tickets'}</span>
+                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Expandable Tasks & Tickets Breakdown inside Tile */}
+                      {isExpanded && (
+                        <div className="pt-3 border-t border-slate-200 dark:border-white/10 space-y-3">
+                          {tech.taskStatus.assignedTasksList && tech.taskStatus.assignedTasksList.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                                Assigned Operational Tasks ({tech.taskStatus.assignedTasksList.length})
+                              </div>
+                              <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                                {tech.taskStatus.assignedTasksList.map((at) => (
+                                  <div
+                                    key={at.id}
+                                    className="p-2.5 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50/60 dark:bg-slate-900/40 text-[11px] space-y-1"
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <label className="flex items-start gap-2 cursor-pointer font-bold text-slate-900 dark:text-white">
+                                        <input
+                                          type="checkbox"
+                                          checked={at.status === 'completed'}
+                                          disabled={taskBusyId === at.id}
+                                          onChange={() => handleToggleAssignedTask(at)}
+                                          className="mt-0.5 rounded border-slate-300 text-emerald-600 cursor-pointer"
+                                        />
+                                        <span className={at.status === 'completed' ? 'line-through text-slate-500 dark:text-slate-400' : ''}>
+                                          {at.subject}
+                                        </span>
+                                      </label>
+                                      <span
+                                        className={`text-[10px] font-bold capitalize shrink-0 ${
+                                          at.status === 'completed'
+                                            ? 'text-emerald-600 dark:text-emerald-400'
+                                            : at.status === 'cancelled'
+                                              ? 'text-rose-600 dark:text-rose-400'
+                                              : 'text-amber-600 dark:text-amber-400'
+                                        }`}
+                                      >
+                                        {at.status}
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-600 dark:text-slate-400 whitespace-pre-wrap">
+                                      {at.description}
+                                    </div>
+                                    {at.status === 'cancelled' && at.cancelReason && (
+                                      <div className="text-[10px] text-rose-700 dark:text-rose-300">
+                                        <strong>Cancel Reason:</strong> {at.cancelReason}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {tech.taskStatus.recentTickets.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                                Recent Tickets ({tech.taskStatus.recentTickets.length})
+                              </div>
+                              <div className="space-y-1">
+                                {tech.taskStatus.recentTickets.map((tk) => (
+                                  <div
+                                    key={tk.id}
+                                    className="flex items-center justify-between gap-2 text-[10px] py-1 border-b border-slate-200/60 dark:border-white/5 last:border-0"
+                                  >
+                                    <span className="truncate text-slate-800 dark:text-slate-200">
+                                      <strong className="font-mono text-cyan-700 dark:text-cyan-400 mr-1">{tk.id}</strong>
+                                      {tk.subject}
+                                    </span>
+                                    <span className="font-mono text-slate-500 dark:text-slate-400 shrink-0 capitalize">
+                                      {tk.status.replace(/_/g, ' ')}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
         <div className="overflow-x-auto custom-scrollbar">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-100 dark:bg-slate-900/90 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/10 uppercase tracking-wider font-semibold text-[10px]">
@@ -1374,6 +1780,7 @@ export const SuperadminAttendancePanel: React.FC<SuperadminAttendancePanelProps>
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {/* Staff Daily & Monthly Work Report (Table Format) */}
