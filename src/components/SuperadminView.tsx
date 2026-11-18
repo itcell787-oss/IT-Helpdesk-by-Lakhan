@@ -47,11 +47,14 @@ import {
   Network,
   BookOpen,
   FileText,
+  Megaphone,
 } from 'lucide-react';
-import { Organization, AuditLog, User as UserType, UserRole, ServiceCatalogItem, SatisfactionSurvey, SlaPolicy, DefaultEmailGatewayConfig, Ticket } from '../types';
+import { Organization, AuditLog, User as UserType, UserRole, ServiceCatalogItem, SatisfactionSurvey, SlaPolicy, DefaultEmailGatewayConfig, Ticket, CustomFieldDefinition, PortalAnnouncement, AnnouncementSeverity } from '../types';
 import { api } from '../services/api';
 import { SuperadminAttendancePanel } from './SuperadminAttendancePanel';
 import { isUserAttendanceEligible } from './TechnicianShiftTimer';
+import { TicketFormEditorPanel } from './TicketFormEditorPanel';
+import { AnnouncementsManager } from './AnnouncementsManager';
 
 interface SuperadminViewProps {
   organizations: Organization[];
@@ -61,6 +64,8 @@ interface SuperadminViewProps {
   onTestDefaultGateway?: (email?: string) => Promise<any>;
   users?: UserType[];
   catalogItems?: ServiceCatalogItem[];
+  customFields?: CustomFieldDefinition[];
+  announcements?: PortalAnnouncement[];
   stats: {
     totalOrganizations: number;
     activeTenants: number;
@@ -81,11 +86,33 @@ interface SuperadminViewProps {
   onCreateCatalogItem?: (data: Partial<ServiceCatalogItem>) => void;
   onUpdateCatalogItem?: (id: string, data: Partial<ServiceCatalogItem>) => void;
   onDeleteCatalogItem?: (id: string) => void;
+  onCreateCustomField?: (payload: Partial<CustomFieldDefinition>) => Promise<any> | void;
+  onUpdateCustomField?: (id: string, payload: Partial<CustomFieldDefinition>) => Promise<any> | void;
+  onDeleteCustomField?: (id: string) => Promise<any> | void;
+  onReorderCustomFields?: (orderedIds: string[]) => Promise<any> | void;
+  onCreateAnnouncement?: (payload: {
+    title: string;
+    message: string;
+    severity: AnnouncementSeverity;
+    isActive: boolean;
+    expiresAt?: string;
+  }) => Promise<any>;
+  onUpdateAnnouncement?: (
+    id: string,
+    payload: {
+      title?: string;
+      message?: string;
+      severity?: AnnouncementSeverity;
+      isActive?: boolean;
+      expiresAt?: string;
+    }
+  ) => Promise<any>;
+  onDeleteAnnouncement?: (id: string) => Promise<any>;
   systemSettings?: any;
   onUpdateSystemSettings?: (settings: any) => void;
   onRefreshUsers?: () => void;
-  initialTab?: 'tenants' | 'agents' | 'attendance' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway';
-  onTabChange?: (tab: 'tenants' | 'agents' | 'attendance' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway') => void;
+  initialTab?: 'tenants' | 'agents' | 'attendance' | 'policies' | 'ticket-form' | 'announcements' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway';
+  onTabChange?: (tab: 'tenants' | 'agents' | 'attendance' | 'policies' | 'ticket-form' | 'announcements' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway') => void;
 }
 
 export const SuperadminView: React.FC<SuperadminViewProps> = ({
@@ -96,6 +123,8 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   onTestDefaultGateway,
   users = [],
   catalogItems = [],
+  customFields = [],
+  announcements = [],
   stats,
   onCreateOrganization,
   onUpdateOrganization,
@@ -106,13 +135,20 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
   onCreateCatalogItem,
   onUpdateCatalogItem,
   onDeleteCatalogItem,
+  onCreateCustomField,
+  onUpdateCustomField,
+  onDeleteCustomField,
+  onReorderCustomFields,
+  onCreateAnnouncement,
+  onUpdateAnnouncement,
+  onDeleteAnnouncement,
   systemSettings,
   onUpdateSystemSettings,
   onRefreshUsers,
   initialTab,
   onTabChange,
 }) => {
-  type SuperadminTab = 'tenants' | 'agents' | 'attendance' | 'policies' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway';
+  type SuperadminTab = 'tenants' | 'agents' | 'attendance' | 'policies' | 'ticket-form' | 'announcements' | 'sla' | 'branding' | 'storage' | 'ratings' | 'catalogs' | 'audit' | 'system' | 'email-gateway';
   const [activeTab, setActiveTab] = useState<SuperadminTab>(initialTab || 'policies');
 
   useEffect(() => {
@@ -1012,6 +1048,28 @@ export const SuperadminView: React.FC<SuperadminViewProps> = ({
           >
             <Sliders className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
             <span>Policies &amp; Toggles</span>
+          </button>
+          <button
+            onClick={() => handleSelectTab('ticket-form')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              activeTab === 'ticket-form'
+                ? 'neu-pressed bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'
+                : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+            <span>Submit Ticket Form</span>
+          </button>
+          <button
+            onClick={() => handleSelectTab('announcements')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              activeTab === 'announcements'
+                ? 'neu-pressed bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 shadow-inner'
+                : 'neu-btn text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+            }`}
+          >
+            <Megaphone className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+            <span>Portal Announcements ({announcements.length})</span>
           </button>
           <button
             onClick={() => handleSelectTab('sla')}
@@ -3431,22 +3489,35 @@ server {
 
                   {/* STEP 2: Firewall Security (UFW) */}
                   <div className="p-4 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-white/10 space-y-2.5 shadow-xs">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">2</span>
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Enable Linux Firewall (UFW) for SSH, HTTP &amp; HTTPS</h4>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Enable Linux Firewall (UFW) for SSH, HTTP, HTTPS &amp; Optional LAN :3000</h4>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyCode('ufw', 'sudo ufw default deny incoming && sudo ufw default allow outgoing && sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw --force enable')}
-                        className="neu-btn px-2.5 py-1 text-[11px] font-medium rounded-lg flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-indigo-600 cursor-pointer"
-                      >
-                        {copiedSnippet === 'ufw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                        <span>{copiedSnippet === 'ufw' ? 'Copied!' : 'Copy Command'}</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyCode('ufw-lan', 'sudo ufw default deny incoming && sudo ufw default allow outgoing && sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw allow from 192.168.0.0/16 to any port 3000 proto tcp && sudo ufw --force enable')}
+                          className="neu-btn px-2.5 py-1 text-[11px] font-medium rounded-lg flex items-center gap-1 text-emerald-700 dark:text-emerald-300 hover:text-emerald-600 cursor-pointer"
+                        >
+                          {copiedSnippet === 'ufw-lan' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedSnippet === 'ufw-lan' ? 'Copied!' : 'Copy (Allow LAN :3000)'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyCode('ufw', 'sudo ufw default deny incoming && sudo ufw default allow outgoing && sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw --force enable')}
+                          className="neu-btn px-2.5 py-1 text-[11px] font-medium rounded-lg flex items-center gap-1 text-slate-700 dark:text-slate-300 hover:text-indigo-600 cursor-pointer"
+                        >
+                          {copiedSnippet === 'ufw' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedSnippet === 'ufw' ? 'Copied!' : 'Copy (Proxy Only)'}</span>
+                        </button>
+                      </div>
                     </div>
+                    <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700/40 rounded-lg px-2.5 py-1.5">
+                      <strong>LAN Access Note:</strong> Enabling UFW without port <code>3000</code> immediately blocks direct LAN URLs like <code>http://192.168.x.x:3000</code>. If your team accesses the server on the local network via <code>:3000</code>, use <strong>Copy (Allow LAN :3000)</strong>.
+                    </p>
                     <pre className="p-2.5 rounded-lg bg-slate-950 text-cyan-400 font-mono text-[11px] overflow-x-auto">
-                      sudo ufw default deny incoming &amp;&amp; sudo ufw default allow outgoing &amp;&amp; sudo ufw allow 22/tcp &amp;&amp; sudo ufw allow 80/tcp &amp;&amp; sudo ufw allow 443/tcp &amp;&amp; sudo ufw --force enable
+                      sudo ufw default deny incoming &amp;&amp; sudo ufw default allow outgoing &amp;&amp; sudo ufw allow 22/tcp &amp;&amp; sudo ufw allow 80/tcp &amp;&amp; sudo ufw allow 443/tcp &amp;&amp; sudo ufw allow from 192.168.0.0/16 to any port 3000 proto tcp &amp;&amp; sudo ufw --force enable
                     </pre>
                   </div>
 
@@ -3455,7 +3526,7 @@ server {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">3</span>
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Create 24/7 Systemd Background Service (/etc/systemd/system/it-helpdesk.service)</h4>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">Create 24/7 Systemd Background Service (Skip if using PM2)</h4>
                       </div>
                       <button
                         type="button"
@@ -3467,7 +3538,7 @@ server {
                       </button>
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-400">
-                      Ensures the helpdesk stays running permanently, restarts automatically on reboot, and logs all events to systemd journal.
+                      Ensures the helpdesk stays running permanently on boot. <strong>Skip this step if you installed via <code>./install-ubuntu.sh</code> (PM2)</strong> — running both PM2 and systemd causes a port <code>3000</code> conflict (verify with <code>pm2 status</code>). Also update <code>WorkingDirectory</code> to match your actual clone path.
                     </p>
                     <pre className="p-2.5 rounded-lg bg-slate-950 text-slate-300 font-mono text-[11px] overflow-x-auto leading-relaxed">
                       {`sudo tee /etc/systemd/system/it-helpdesk.service > /dev/null << 'EOF'
@@ -3495,7 +3566,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now it-helpdesk`}
                       </button>
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-400">
-                      Creates the virtual host routing incoming traffic on <strong>{cleanDomain}</strong> to Express port 3000 with WebSocket upgrades and 50MB ticket attachment limits:
+                      Creates the virtual host routing incoming traffic on <strong>{cleanDomain}</strong> to Express port 3000 with WebSocket upgrades and 50MB ticket attachment limits. If your server is behind an office router, forward TCP ports <strong>80</strong> &amp; <strong>443</strong> from your router to the Ubuntu LAN IP, and keep port <code>3000</code> allowed on LAN (or use local Split-DNS) so internal devices can still reach the portal.
                     </p>
                     <pre className="p-2.5 rounded-lg bg-slate-950 text-emerald-400 font-mono text-[11px] overflow-x-auto leading-relaxed">
                       {`sudo tee /etc/nginx/sites-available/${cleanDomain}.conf > /dev/null << 'EOF'
@@ -3524,7 +3595,7 @@ sudo nginx -t && sudo systemctl reload nginx`}
                       </button>
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-400">
-                      Certbot automatically provisions an SSL certificate, updates your Nginx config, forces HTTPS redirection, and sets up auto-renewal:
+                      Certbot automatically provisions an SSL certificate, updates your Nginx config, forces HTTPS redirection, and sets up auto-renewal (requires DNS A-Record propagation and router port 80/443 forwarding):
                     </p>
                     <pre className="p-2.5 rounded-lg bg-slate-950 text-amber-400 font-mono text-[11px] overflow-x-auto">
                       sudo apt update &amp;&amp; sudo apt install -y certbot python3-certbot-nginx{'\n'}
@@ -3560,6 +3631,47 @@ sudo nginx -t && sudo systemctl reload nginx`}
             );
           })()}
         </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* TAB: Submit Support Ticket Custom Form Editor                 */}
+      {/* ============================================================= */}
+      {activeTab === 'ticket-form' && onCreateCustomField && onUpdateCustomField && onDeleteCustomField && onReorderCustomFields && (
+        <TicketFormEditorPanel
+          organization={organizations[0]}
+          organizations={organizations}
+          customFields={customFields}
+          systemSettings={systemSettings}
+          onUpdateSystemSettings={onUpdateSystemSettings}
+          onUpdateOrganization={onUpdateOrganization}
+          onCreateCustomField={onCreateCustomField}
+          onUpdateCustomField={onUpdateCustomField}
+          onDeleteCustomField={onDeleteCustomField}
+          onReorderCustomFields={onReorderCustomFields}
+        />
+      )}
+
+      {/* ============================================================= */}
+      {/* TAB: End-User Portal Announcements (Superadmin Managed)       */}
+      {/* ============================================================= */}
+      {activeTab === 'announcements' && onCreateAnnouncement && onUpdateAnnouncement && onDeleteAnnouncement && (
+        <AnnouncementsManager
+          announcements={announcements}
+          currentUser={
+            users.find((u) => u.role === 'superadmin') || {
+              id: 'usr-superadmin',
+              name: 'Super Administrator',
+              email: 'admin@lakhanglobal.com',
+              role: 'superadmin',
+              organizationId: organizations[0]?.id || 'org-lakhan-tech',
+              status: 'active',
+              createdAt: new Date().toISOString(),
+            }
+          }
+          onCreateAnnouncement={onCreateAnnouncement}
+          onUpdateAnnouncement={onUpdateAnnouncement}
+          onDeleteAnnouncement={onDeleteAnnouncement}
+        />
       )}
 
       {/* ============================================================= */}

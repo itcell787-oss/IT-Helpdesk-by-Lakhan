@@ -30,9 +30,14 @@ import {
   Forward,
   RotateCw,
   CheckCheck,
+  Megaphone,
+  Wrench,
+  Info,
+  Plus as PlusIcon,
 } from 'lucide-react';
-import { Ticket, KnowledgeArticle, ServiceCatalogItem, User, CustomFieldDefinition, Organization, Asset, DefaultEmailGatewayConfig, ApprovalRequest } from '../types';
+import { Ticket, KnowledgeArticle, ServiceCatalogItem, User, CustomFieldDefinition, Organization, Asset, DefaultEmailGatewayConfig, ApprovalRequest, PortalAnnouncement, AnnouncementSeverity, TicketSubmissionFormConfig } from '../types';
 import { api } from '../services/api';
+import { AnnouncementsManager, renderSeverityIcon } from './AnnouncementsManager';
 
 interface PortalViewProps {
   currentUser: User | null;
@@ -41,15 +46,36 @@ interface PortalViewProps {
   serviceCatalog: ServiceCatalogItem[];
   approvals?: ApprovalRequest[];
   customFields: CustomFieldDefinition[];
+  announcements?: PortalAnnouncement[];
   organization?: Organization;
   organizations?: Organization[];
   systemSettings?: {
     requireOtpForTicketSubmission: boolean;
     enableTicketRating: boolean;
     enableCategoryAutoAssign: boolean;
+    ticketCategories?: string[];
+    ticketSubmissionFormConfig?: TicketSubmissionFormConfig;
   };
   assets?: Asset[];
   allowRequesterAssetSelfService?: boolean;
+  onCreateAnnouncement?: (payload: {
+    title: string;
+    message: string;
+    severity: AnnouncementSeverity;
+    isActive: boolean;
+    expiresAt?: string;
+  }) => Promise<any>;
+  onUpdateAnnouncement?: (
+    id: string,
+    payload: {
+      title?: string;
+      message?: string;
+      severity?: AnnouncementSeverity;
+      isActive?: boolean;
+      expiresAt?: string;
+    }
+  ) => Promise<any>;
+  onDeleteAnnouncement?: (id: string) => Promise<any>;
   onCreateAsset?: (data: Partial<Asset>) => Promise<any> | void;
   onUpdateAsset?: (id: string, data: Partial<Asset>) => Promise<any> | void;
   onDeleteAsset?: (id: string) => Promise<any> | void;
@@ -73,11 +99,15 @@ export const PortalView: React.FC<PortalViewProps> = ({
   serviceCatalog,
   approvals = [],
   customFields,
+  announcements = [],
   organization,
   organizations,
   systemSettings,
   assets = [],
   allowRequesterAssetSelfService = true,
+  onCreateAnnouncement,
+  onUpdateAnnouncement,
+  onDeleteAnnouncement,
   onCreateAsset,
   onUpdateAsset,
   onDeleteAsset,
@@ -95,6 +125,36 @@ export const PortalView: React.FC<PortalViewProps> = ({
 }) => {
   const requireOtp = (systemSettings?.requireOtpForTicketSubmission ?? organization?.systemSettings?.requireOtpForTicketSubmission) === true;
   const isRatingEnabled = (systemSettings?.enableTicketRating ?? organization?.systemSettings?.enableTicketRating) !== false;
+  const canManageAnnouncements = Boolean(
+    currentUser && ['technician', 'admin', 'superadmin'].includes(currentUser.role)
+  );
+  const [showAnnouncementsModal, setShowAnnouncementsModal] = useState(false);
+
+  const activeAnnouncements = React.useMemo(() => {
+    const now = Date.now();
+    return (announcements || [])
+      .filter((a) => a.isActive && (!a.expiresAt || new Date(a.expiresAt).getTime() > now))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [announcements]);
+
+  const formConfig: TicketSubmissionFormConfig =
+    systemSettings?.ticketSubmissionFormConfig ||
+    organization?.systemSettings?.ticketSubmissionFormConfig ||
+    {};
+
+  const portalCategories = React.useMemo(() => {
+    const cats =
+      systemSettings?.ticketCategories || organization?.systemSettings?.ticketCategories;
+    if (Array.isArray(cats) && cats.length > 0) return cats;
+    return [
+      'Hardware & Workstations',
+      'Software & Cloud Apps',
+      'Network & Connectivity',
+      'Security & Access',
+      'User Accounts & Permissions',
+      'AV & Conference Rooms',
+    ];
+  }, [systemSettings?.ticketCategories, organization?.systemSettings?.ticketCategories]);
 
   const allOrganizations = organizations && organizations.length > 0 ? organizations : (organization ? [organization] : []);
   const urlOrgId = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('orgId') : null;
@@ -162,9 +222,21 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [otpError, setOtpError] = useState<string | null>(null);
 
   const [formSubject, setFormSubject] = useState('');
-  const [formCategory, setFormCategory] = useState('Software & Cloud Apps');
-  const [formPriority, setFormPriority] = useState('normal');
+  const [formCategory, setFormCategory] = useState<string>(portalCategories[0] || 'Software & Cloud Apps');
+  const [formPriority, setFormPriority] = useState<string>(formConfig.defaultPriority || 'normal');
   const [formDescription, setFormDescription] = useState('');
+
+  useEffect(() => {
+    if (portalCategories.length > 0 && !portalCategories.includes(formCategory)) {
+      setFormCategory(portalCategories[0]);
+    }
+  }, [portalCategories, formCategory]);
+
+  useEffect(() => {
+    if (formConfig.defaultPriority) {
+      setFormPriority(formConfig.defaultPriority);
+    }
+  }, [formConfig.defaultPriority]);
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
   const [formAttachments, setFormAttachments] = useState<Array<{ id: string; name: string; size: number; type: string; url: string; }>>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -531,8 +603,10 @@ export const PortalView: React.FC<PortalViewProps> = ({
       return;
     }
 
-    if (!formLocationDesk.trim()) {
-      setSubmitError('Location / Desk No is mandatory for IT support requests.');
+    const isLocationShown = formConfig.showLocationDesk !== false;
+    const isLocationRequired = isLocationShown && formConfig.requireLocationDesk !== false;
+    if (isLocationRequired && !formLocationDesk.trim()) {
+      setSubmitError(`${formConfig.locationDeskLabel || 'Location / Desk No'} is mandatory for IT support requests.`);
       return;
     }
 
@@ -713,6 +787,112 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-2">
+      {/* Announcements Modal for Technicians & Admins */}
+      {showAnnouncementsModal && canManageAnnouncements && onCreateAnnouncement && onUpdateAnnouncement && onDeleteAnnouncement && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-2xl neu-modal p-6 rounded-2xl border border-slate-200 dark:border-white/15 max-h-[90vh] overflow-y-auto custom-scrollbar shadow-2xl">
+            <AnnouncementsManager
+              announcements={announcements}
+              currentUser={currentUser}
+              onCreateAnnouncement={onCreateAnnouncement}
+              onUpdateAnnouncement={onUpdateAnnouncement}
+              onDeleteAnnouncement={onDeleteAnnouncement}
+              onClose={() => setShowAnnouncementsModal(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Portal Announcements (Shown ABOVE IT Self-Service Portal Hero Header) */}
+      {(activeAnnouncements.length > 0 || canManageAnnouncements) && (
+        <div className="space-y-2.5">
+          {canManageAnnouncements && (
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300">
+                <Megaphone className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                <span>Portal Announcements ({activeAnnouncements.length} live)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAnnouncementsModal(true)}
+                className="neu-btn px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-xl flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
+                <span>{activeAnnouncements.length > 0 ? 'Manage Announcements' : 'Create Announcement'}</span>
+              </button>
+            </div>
+          )}
+
+          {activeAnnouncements.map((ann) => {
+            const severityStyles: Record<AnnouncementSeverity, { wrap: string; icon: string; label: string; labelText: string }> = {
+              info: {
+                wrap: 'bg-cyan-50/90 dark:bg-cyan-950/35 border-cyan-300/80 dark:border-cyan-500/35',
+                icon: 'text-cyan-700 dark:text-cyan-400',
+                label: 'General Notice',
+                labelText: 'text-cyan-800 dark:text-cyan-300',
+              },
+              warning: {
+                wrap: 'bg-amber-50/90 dark:bg-amber-950/35 border-amber-300/80 dark:border-amber-500/35',
+                icon: 'text-amber-700 dark:text-amber-400',
+                label: 'Service Advisory',
+                labelText: 'text-amber-800 dark:text-amber-300',
+              },
+              urgent: {
+                wrap: 'bg-rose-50/90 dark:bg-rose-950/40 border-rose-300/80 dark:border-rose-500/35',
+                icon: 'text-rose-700 dark:text-rose-400',
+                label: 'Urgent Notice',
+                labelText: 'text-rose-800 dark:text-rose-300',
+              },
+              maintenance: {
+                wrap: 'bg-indigo-50/90 dark:bg-indigo-950/35 border-indigo-300/80 dark:border-indigo-500/35',
+                icon: 'text-indigo-700 dark:text-indigo-400',
+                label: 'Scheduled Maintenance',
+                labelText: 'text-indigo-800 dark:text-indigo-300',
+              },
+            };
+            const st = severityStyles[ann.severity || 'info'] || severityStyles.info;
+
+            return (
+              <div
+                key={ann.id}
+                className={`rounded-2xl border p-4 sm:p-5 shadow-xs space-y-2 ${st.wrap}`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`shrink-0 ${st.icon}`}>
+                      {renderSeverityIcon(ann.severity || 'info', 'w-4 h-4')}
+                    </span>
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                      {ann.title}
+                    </h2>
+                  </div>
+                  <span className={`text-[11px] font-bold uppercase tracking-wider ${st.labelText}`}>
+                    {st.label}
+                  </span>
+                </div>
+
+                <p className="text-xs sm:text-[13px] text-slate-800 dark:text-slate-200 leading-relaxed whitespace-pre-line">
+                  {ann.message}
+                </p>
+
+                {/* Creator attribution strictly below the announcement */}
+                <div className="pt-1 border-t border-slate-300/50 dark:border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+                  <span>
+                    Posted by <strong className="text-slate-900 dark:text-white">{ann.createdByName}</strong>
+                  </span>
+                  <span className="font-mono">
+                    {new Date(ann.createdAt).toLocaleString([], {
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Portal Hero Header */}
       <div className="relative overflow-hidden rounded-2xl neu-flat p-6 sm:p-8 border border-slate-200/90 dark:border-white/10 bg-gradient-to-r from-sky-50/80 via-white to-indigo-50/80 dark:from-slate-900/95 dark:via-slate-900/90 dark:to-cyan-950/40 text-center sm:text-left shadow-sm">
         <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-6">
@@ -998,12 +1178,12 @@ export const PortalView: React.FC<PortalViewProps> = ({
             <div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Shield className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-                Submit IT Service Request
+                {formConfig.formTitle || 'Submit IT Service Request'}
               </h2>
               <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
                 {requireOtp
                   ? 'Please confirm your work email address via the 6-digit OTP code before submitting.'
-                  : 'Fast-track ticket creation enabled. You can submit directly without login or OTP.'}
+                  : (formConfig.formSubtitle || 'Fast-track ticket creation enabled. You can submit directly without login or OTP.')}
               </p>
             </div>
             {!currentUser && onOpenLogin && (
@@ -1177,11 +1357,11 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   onChange={(e) => setFormCategory(e.target.value)}
                   className="w-full px-3 py-2 text-xs neu-select rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
                 >
-                  <option value="Software & Cloud Apps">Software &amp; Cloud Apps</option>
-                  <option value="Hardware & Workstations">Hardware &amp; Workstations</option>
-                  <option value="Network & Connectivity">Network &amp; Connectivity</option>
-                  <option value="Security & Access">Security &amp; Access</option>
-                  <option value="User Accounts & Access">User Accounts &amp; Access</option>
+                  {portalCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -1200,24 +1380,31 @@ export const PortalView: React.FC<PortalViewProps> = ({
               </div>
             </div>
 
-            {/* Mandatory Location / Desk No */}
-            <div>
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-                  <span>Location / Desk No *</span>
-                </span>
-                <span className="text-[10px] text-cyan-600 font-bold">Mandatory</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. Building A - Floor 2 - Desk #42 / Remote Home Office"
-                value={formLocationDesk}
-                onChange={(e) => setFormLocationDesk(e.target.value)}
-                className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
-              />
-            </div>
+            {/* Configurable Location / Desk No */}
+            {formConfig.showLocationDesk !== false && (
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                    <span>
+                      {formConfig.locationDeskLabel || 'Location / Desk No'}{' '}
+                      {formConfig.requireLocationDesk !== false ? '*' : ''}
+                    </span>
+                  </span>
+                  <span className="text-[10px] text-cyan-600 font-bold">
+                    {formConfig.requireLocationDesk !== false ? 'Mandatory' : 'Optional'}
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  required={formConfig.requireLocationDesk !== false}
+                  placeholder={formConfig.locationDeskPlaceholder || 'e.g. Building A - Floor 2 - Desk #42 / Remote Home Office'}
+                  value={formLocationDesk}
+                  onChange={(e) => setFormLocationDesk(e.target.value)}
+                  className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Subject / Summary *</label>
@@ -1247,65 +1434,67 @@ export const PortalView: React.FC<PortalViewProps> = ({
             </div>
 
             {/* Attachments & Direct Pasted Snips */}
-            <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-dashed border-cyan-500/40 space-y-2.5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Paperclip className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
-                  <div>
-                    <span className="text-xs font-bold text-slate-900 dark:text-white block">
-                      Attachments &amp; Snip Screenshots ({formAttachments.length})
-                    </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Paste screenshots with <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-cyan-700 dark:text-cyan-300 font-mono font-bold text-[10px]">Ctrl+V</kbd> or upload files
-                    </span>
-                  </div>
-                </div>
-
-                <label className="neu-btn px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-lg flex items-center gap-1.5 cursor-pointer hover:bg-cyan-50 dark:hover:bg-cyan-950/40 self-start sm:self-auto shrink-0 shadow-xs">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Attach File / Snip</span>
-                  <input
-                    type="file"
-                    multiple
-                    onChange={handleFormFileUpload}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              {formAttachments.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
-                  {formAttachments.map((att) => (
-                    <div
-                      key={att.id}
-                      className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 text-xs shadow-xs"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        {att.type.startsWith('image/') || att.url.startsWith('data:image/') ? (
-                          <div className="w-8 h-8 rounded bg-slate-900 overflow-hidden shrink-0">
-                            <img src={att.url} alt={att.name} className="w-full h-full object-cover" />
-                          </div>
-                        ) : (
-                          <FileText className="w-4 h-4 text-cyan-600 shrink-0" />
-                        )}
-                        <div className="truncate">
-                          <span className="font-semibold block truncate" title={att.name}>{att.name}</span>
-                          <span className="text-[10px] text-slate-500 font-mono">{Math.round(att.size / 1024)} KB</span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setFormAttachments((prev) => prev.filter((a) => a.id !== att.id))}
-                        className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
-                        title="Remove attachment"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+            {formConfig.showAttachments !== false && (
+              <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-dashed border-cyan-500/40 space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Paperclip className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 dark:text-white block">
+                        Attachments &amp; Snip Screenshots ({formAttachments.length})
+                      </span>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Paste screenshots with <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-cyan-700 dark:text-cyan-300 font-mono font-bold text-[10px]">Ctrl+V</kbd> or upload files
+                      </span>
                     </div>
-                  ))}
+                  </div>
+
+                  <label className="neu-btn px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-lg flex items-center gap-1.5 cursor-pointer hover:bg-cyan-50 dark:hover:bg-cyan-950/40 self-start sm:self-auto shrink-0 shadow-xs">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Attach File / Snip</span>
+                    <input
+                      type="file"
+                      multiple
+                      onChange={handleFormFileUpload}
+                      className="hidden"
+                    />
+                  </label>
                 </div>
-              )}
-            </div>
+
+                {formAttachments.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
+                    {formAttachments.map((att) => (
+                      <div
+                        key={att.id}
+                        className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 text-xs shadow-xs"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {att.type.startsWith('image/') || att.url.startsWith('data:image/') ? (
+                            <div className="w-8 h-8 rounded bg-slate-900 overflow-hidden shrink-0">
+                              <img src={att.url} alt={att.name} className="w-full h-full object-cover" />
+                            </div>
+                          ) : (
+                            <FileText className="w-4 h-4 text-cyan-600 shrink-0" />
+                          )}
+                          <div className="truncate">
+                            <span className="font-semibold block truncate" title={att.name}>{att.name}</span>
+                            <span className="text-[10px] text-slate-500 font-mono">{Math.round(att.size / 1024)} KB</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFormAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                          className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
+                          title="Remove attachment"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Dynamic Custom Fields Marked Visible to Portal */}
             {customFields.filter((f) => f.visibleOnPortal && f.enabled !== false).length > 0 && (
@@ -1366,6 +1555,36 @@ export const PortalView: React.FC<PortalViewProps> = ({
                               }
                               className="w-full p-2.5 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-500 font-medium focus:outline-none"
                             />
+                          ) : field.type === 'multiselect' ? (
+                            <div className="flex flex-wrap gap-2 p-2.5 rounded-xl neu-card border border-slate-200 dark:border-white/10">
+                              {(field.options || []).map((opt) => {
+                                const selectedList: string[] = Array.isArray(customValues[field.name])
+                                  ? customValues[field.name]
+                                  : typeof customValues[field.name] === 'string' && customValues[field.name]
+                                  ? customValues[field.name].split(',').map((s: string) => s.trim())
+                                  : [];
+                                const checked = selectedList.includes(opt);
+                                return (
+                                  <label
+                                    key={opt}
+                                    className="flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(e) => {
+                                        const next = e.target.checked
+                                          ? [...selectedList, opt]
+                                          : selectedList.filter((item) => item !== opt);
+                                        setCustomValues({ ...customValues, [field.name]: next.join(', ') });
+                                      }}
+                                      className="w-3.5 h-3.5 rounded text-cyan-600 cursor-pointer"
+                                    />
+                                    <span>{opt}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
                           ) : field.type === 'checkbox' ? (
                             <label className="flex items-center gap-2 p-2.5 rounded-xl neu-card border border-slate-200 dark:border-white/10 cursor-pointer">
                               <input
@@ -1401,7 +1620,8 @@ export const PortalView: React.FC<PortalViewProps> = ({
               </div>
             )}
 
-            {/* Forward to Manager & CC Option (User Request) */}
+            {/* Forward to Manager & CC Option */}
+            {formConfig.showForwardToManager !== false && (
             <div className="p-4 rounded-xl neu-card bg-slate-50/90 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -1457,6 +1677,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 </div>
               </div>
             </div>
+            )}
 
             {submitError && (
               <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in">

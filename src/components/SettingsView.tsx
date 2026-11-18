@@ -46,6 +46,7 @@ import {
   Tag,
   Power,
   Paperclip,
+  Megaphone,
 } from 'lucide-react';
 import { api } from '../services/api';
 import {
@@ -60,9 +61,13 @@ import {
   DefaultEmailGatewayConfig,
   Asset,
   Team,
+  PortalAnnouncement,
+  AnnouncementSeverity,
 } from '../types';
 import { AssetFormModal } from './AssetFormModal';
 import { SearchableEmployeeSelect } from './SearchableEmployeeSelect';
+import { TicketFormEditorPanel } from './TicketFormEditorPanel';
+import { AnnouncementsManager } from './AnnouncementsManager';
 
 interface SettingsViewProps {
   organization: Organization;
@@ -101,6 +106,25 @@ interface SettingsViewProps {
   initialTab?: string;
   defaultCurrency?: string;
   onUpdateSystemSettings?: (settings: any) => Promise<any> | void;
+  announcements?: PortalAnnouncement[];
+  onCreateAnnouncement?: (payload: {
+    title: string;
+    message: string;
+    severity: AnnouncementSeverity;
+    isActive: boolean;
+    expiresAt?: string;
+  }) => Promise<any>;
+  onUpdateAnnouncement?: (
+    id: string,
+    payload: {
+      title?: string;
+      message?: string;
+      severity?: AnnouncementSeverity;
+      isActive?: boolean;
+      expiresAt?: string;
+    }
+  ) => Promise<any>;
+  onDeleteAnnouncement?: (id: string) => Promise<any>;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -140,11 +164,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onBulkCreateAssets,
   initialTab,
   onUpdateSystemSettings,
+  announcements = [],
+  onCreateAnnouncement,
+  onUpdateAnnouncement,
+  onDeleteAnnouncement,
 }) => {
   const allOrganizations = organizations && organizations.length > 0 ? organizations : [organization];
 
   const [activeTab, setActiveTabState] = useState<
-    'profile' | 'users' | 'assets' | 'fields' | 'default-gateway' | 'sla' | 'automations' | 'branding' | 'linux-host'
+    'profile' | 'users' | 'assets' | 'fields' | 'announcements' | 'default-gateway' | 'sla' | 'automations' | 'branding' | 'linux-host'
   >(() => {
     try {
       const saved = sessionStorage.getItem('settings_active_tab');
@@ -781,34 +809,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [quickAssetCustomFields, setQuickAssetCustomFields] = useState<Array<{ key: string; value: string }>>([]);
 
   // -------------------------------------------------------------
-  // Custom Fields & Form Builder State
-  // -------------------------------------------------------------
-  const [showFieldModal, setShowFieldModal] = useState(false);
-  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
-  const [previewMode, setPreviewMode] = useState<'off' | 'portal' | 'technician'>('off');
-
-  const [fieldLabel, setFieldLabel] = useState('');
-  const [fieldKey, setFieldKey] = useState('');
-  const [fieldType, setFieldType] = useState<CustomFieldDefinition['type']>('text');
-  const [fieldRequired, setFieldRequired] = useState(false);
-  const [fieldRequiredOnClose, setFieldRequiredOnClose] = useState(false);
-  const [fieldPortalVisible, setFieldPortalVisible] = useState(true);
-  const [fieldOptions, setFieldOptions] = useState('');
-  const [fieldPlaceholder, setFieldPlaceholder] = useState('');
-  const [fieldDescription, setFieldDescription] = useState('');
-  const [fieldSection, setFieldSection] = useState<'general' | 'technical' | 'environment' | 'closure'>('general');
-  const [hasConditionalRule, setHasConditionalRule] = useState(false);
-  const [condField, setCondField] = useState('category');
-  const [condOperator, setCondOperator] = useState<'equals' | 'not_equals'>('equals');
-  const [condValue, setCondValue] = useState('Hardware & Workstations');
-
-  // Preview form test values
-  const [previewFormValues, setPreviewFormValues] = useState<Record<string, any>>({
-    category: 'Hardware & Workstations',
-    priority: 'normal',
-  });
-
-  // -------------------------------------------------------------
   // Staff Individual Mailbox (IMAP/POP3/SMTP) State - Configured by Admin for Staff
   // -------------------------------------------------------------
   const staffUsers = availableUsers.filter((u) => ['superadmin', 'admin', 'technician', 'inventory_manager', 'auditor'].includes(u.role));
@@ -988,91 +988,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   useEffect(() => {
     setBrandLogoLoadError(false);
   }, [brandLogoUrl]);
-
-  // Handlers for Custom Fields
-  const handleOpenNewField = () => {
-    setEditingFieldId(null);
-    setFieldLabel('');
-    setFieldKey('');
-    setFieldType('text');
-    setFieldRequired(false);
-    setFieldRequiredOnClose(false);
-    setFieldPortalVisible(true);
-    setFieldOptions('');
-    setFieldPlaceholder('');
-    setFieldDescription('');
-    setFieldSection('general');
-    setHasConditionalRule(false);
-    setShowFieldModal(true);
-  };
-
-  const handleEditField = (f: CustomFieldDefinition) => {
-    setEditingFieldId(f.id);
-    setFieldLabel(f.label);
-    setFieldKey(f.name);
-    setFieldType(f.type);
-    setFieldRequired(f.required);
-    setFieldRequiredOnClose(f.requiredOnClose);
-    setFieldPortalVisible(f.visibleOnPortal);
-    setFieldOptions((f.options || []).join(', '));
-    setFieldPlaceholder(f.placeholder || '');
-    setFieldDescription(f.description || '');
-    setFieldSection(f.section || 'general');
-    if (f.conditionalRule) {
-      setHasConditionalRule(true);
-      setCondField(f.conditionalRule.dependsOnField);
-      setCondOperator(f.conditionalRule.operator);
-      setCondValue(f.conditionalRule.value);
-    } else {
-      setHasConditionalRule(false);
-    }
-    setShowFieldModal(true);
-  };
-
-  const handleSaveFieldForm = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!fieldLabel.trim()) return;
-
-    const payload: Partial<CustomFieldDefinition> = {
-      label: fieldLabel.trim(),
-      name: fieldKey.trim() || fieldLabel.toLowerCase().replace(/[^a-z0-9]+/g, ''),
-      type: fieldType,
-      required: fieldRequired,
-      requiredOnClose: fieldRequiredOnClose,
-      visibleOnPortal: fieldPortalVisible,
-      description: fieldDescription,
-      placeholder: fieldPlaceholder,
-      section: fieldSection,
-      options: fieldType === 'select' || fieldType === 'multiselect'
-        ? fieldOptions.split(',').map((o) => o.trim()).filter(Boolean)
-        : undefined,
-      conditionalRule: hasConditionalRule
-        ? {
-            dependsOnField: condField,
-            operator: condOperator,
-            value: condValue,
-          }
-        : undefined,
-    };
-
-    if (editingFieldId) {
-      onUpdateCustomField(editingFieldId, payload);
-    } else {
-      onCreateCustomField(payload);
-    }
-
-    setShowFieldModal(false);
-  };
-
-  const handleMoveField = (index: number, direction: 'up' | 'down') => {
-    const newIdx = direction === 'up' ? index - 1 : index + 1;
-    if (newIdx < 0 || newIdx >= customFields.length) return;
-    const reordered = [...customFields];
-    const temp = reordered[index];
-    reordered[index] = reordered[newIdx];
-    reordered[newIdx] = temp;
-    onReorderCustomFields(reordered.map((f) => f.id));
-  };
 
   // Handlers for Admin Mailbox
   const handleTestAdminMailbox = async () => {
@@ -1417,86 +1332,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleResetRequesterOptions = () => {
     handleSaveRequesterAssetOptions(defaultRequesterOptions);
-  };
-
-  // Ticket Categories (Hardware & Workstations, Software & Cloud Apps, etc.) Customization
-  const defaultTicketCategories = [
-    'Hardware & Workstations',
-    'Software & Cloud Apps',
-    'Network & Connectivity',
-    'Security & Access',
-    'User Accounts & Permissions',
-    'AV & Conference Rooms',
-  ];
-  const [ticketCategories, setTicketCategories] = useState<string[]>(
-    organization.systemSettings?.ticketCategories || defaultTicketCategories
-  );
-  const [newCategoryInput, setNewCategoryInput] = useState('');
-  const [editingCategoryIdx, setEditingCategoryIdx] = useState<number | null>(null);
-  const [editingCategoryText, setEditingCategoryText] = useState('');
-  const [ticketCategoriesSaveMsg, setTicketCategoriesSaveMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (organization.systemSettings?.ticketCategories && organization.systemSettings.ticketCategories.length > 0) {
-      setTicketCategories(organization.systemSettings.ticketCategories);
-    }
-  }, [organization.systemSettings?.ticketCategories]);
-
-  const handleSaveTicketCategories = async (updated: string[]) => {
-    try {
-      setTicketCategoriesSaveMsg('Saving...');
-      await api.updateSystemSettings({ ticketCategories: updated });
-      if (onUpdateOrganization) {
-        onUpdateOrganization(organization.id, {
-          systemSettings: {
-            ...organization.systemSettings,
-            ticketCategories: updated,
-          } as any,
-        });
-      }
-      setTicketCategories(updated);
-      setTicketCategoriesSaveMsg('✓ Ticket categories saved successfully!');
-      setTimeout(() => setTicketCategoriesSaveMsg(null), 3000);
-    } catch (err: any) {
-      setTicketCategoriesSaveMsg('Failed to save categories');
-    }
-  };
-
-  const handleAddTicketCategory = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = newCategoryInput.trim();
-    if (!trimmed) return;
-    if (ticketCategories.includes(trimmed)) {
-      alert('This ticket category already exists.');
-      return;
-    }
-    const updated = [...ticketCategories, trimmed];
-    handleSaveTicketCategories(updated);
-    setNewCategoryInput('');
-  };
-
-  const handleRemoveTicketCategory = (cat: string) => {
-    if (ticketCategories.length <= 1) {
-      alert('You must retain at least one ticket category.');
-      return;
-    }
-    const updated = ticketCategories.filter((c) => c !== cat);
-    handleSaveTicketCategories(updated);
-  };
-
-  const handleStartEditCategory = (idx: number, currentVal: string) => {
-    setEditingCategoryIdx(idx);
-    setEditingCategoryText(currentVal);
-  };
-
-  const handleSaveEditCategory = (idx: number) => {
-    const trimmed = editingCategoryText.trim();
-    if (!trimmed) return;
-    const updated = [...ticketCategories];
-    updated[idx] = trimmed;
-    handleSaveTicketCategories(updated);
-    setEditingCategoryIdx(null);
-    setEditingCategoryText('');
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
@@ -1875,6 +1710,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             { id: 'profile', label: 'My Profile & Role', icon: UserIcon, roles: ['superadmin', 'admin', 'manager', 'technician', 'requester', 'auditor', 'inventory_manager'] },
             { id: 'users', label: 'User Directory & Registration', icon: Users, roles: ['superadmin', 'admin'] },
             { id: 'assets', label: 'Hardware Assets & CMDB', icon: HardDrive, roles: ['superadmin', 'admin', 'inventory_manager'] },
+            { id: 'fields', label: 'Submit Ticket Form Editor', icon: Sliders, roles: ['superadmin', 'admin'] },
+            { id: 'announcements', label: 'Portal Announcements', icon: Megaphone, roles: ['superadmin', 'admin', 'technician'] },
             { id: 'default-gateway', label: 'Helpdesk Email Gateway', icon: Mail, roles: ['superadmin', 'admin'] },
             { id: 'sla', label: 'SLA Target Matrix', icon: Clock, roles: ['superadmin', 'admin'] },
             { id: 'automations', label: 'Automation Rules', icon: Zap, roles: ['superadmin', 'admin'] },
@@ -3595,397 +3432,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* ============================================================= */}
-      {/* TAB 1: Advanced Dynamic Custom Fields & Form Builder */}
+      {/* TAB 1: Submit Support Ticket Form Editor & Custom Fields */}
       {/* ============================================================= */}
       {activeTab === 'fields' && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Dynamic Form Fields &amp; Attributes</h2>
-              <p className="text-xs text-slate-600 dark:text-slate-400">
-                Create custom fields, set closure validation gates, configure conditional logic, and preview form layouts.
-              </p>
-            </div>
+        <TicketFormEditorPanel
+          organization={organization}
+          organizations={organizations}
+          customFields={customFields}
+          systemSettings={systemSettings}
+          onUpdateSystemSettings={onUpdateSystemSettings}
+          onUpdateOrganization={onUpdateOrganization}
+          onCreateCustomField={onCreateCustomField}
+          onUpdateCustomField={onUpdateCustomField}
+          onDeleteCustomField={onDeleteCustomField}
+          onReorderCustomFields={onReorderCustomFields}
+        />
+      )}
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPreviewMode(previewMode === 'off' ? 'portal' : 'off')}
-                className={`neu-btn flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg cursor-pointer ${
-                  previewMode !== 'off'
-                    ? 'neu-pressed text-indigo-700 dark:text-indigo-300 border border-indigo-500/40'
-                    : 'text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <Eye className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                {previewMode === 'off' ? 'Preview Live Form' : 'Hide Form Preview'}
-              </button>
-              <button
-                onClick={handleOpenNewField}
-                className="neu-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add New Field
-              </button>
-            </div>
-          </div>
-
-          {/* Form Live Preview Mode */}
-          {previewMode !== 'off' && (
-            <div className="neu-flat p-5 rounded-2xl border border-indigo-300 dark:border-indigo-500/40 bg-indigo-50/50 dark:bg-indigo-950/20 space-y-4 animate-in fade-in">
-              <div className="flex items-center justify-between pb-3 border-b border-indigo-200 dark:border-indigo-500/30">
-                <div className="flex items-center gap-2 text-xs text-indigo-900 dark:text-indigo-300 font-bold">
-                  <Eye className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  Live Dynamic Form Preview
-                </div>
-                <div className="flex items-center gap-1 neu-inset p-1 rounded-lg border border-slate-200 dark:border-white/10 text-[11px]">
-                  <button
-                    onClick={() => setPreviewMode('portal')}
-                    className={`px-2.5 py-1 rounded-md font-bold transition-colors cursor-pointer ${
-                      previewMode === 'portal' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    Requester (Portal View)
-                  </button>
-                  <button
-                    onClick={() => setPreviewMode('technician')}
-                    className={`px-2.5 py-1 rounded-md font-bold transition-colors cursor-pointer ${
-                      previewMode === 'technician' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    Technician (Console View)
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
-                      Preview Ticket Category
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const el = document.getElementById('ticket-categories-manager');
-                        if (el) el.scrollIntoView({ behavior: 'smooth' });
-                      }}
-                      className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      <Edit2 className="w-2.5 h-2.5" /> Edit Categories
-                    </button>
-                  </div>
-                  <select
-                    value={previewFormValues['category'] || ticketCategories[0] || ''}
-                    onChange={(e) =>
-                      setPreviewFormValues({ ...previewFormValues, category: e.target.value })
-                    }
-                    className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                  >
-                    {ticketCategories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Preview Priority</label>
-                  <select
-                    value={previewFormValues['priority'] || ''}
-                    onChange={(e) =>
-                      setPreviewFormValues({ ...previewFormValues, priority: e.target.value })
-                    }
-                    className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="low">Low</option>
-                    <option value="normal">Normal</option>
-                    <option value="high">High</option>
-                    <option value="critical">Critical</option>
-                  </select>
-                </div>
-
-                {customFields
-                  .filter((f) => (previewMode === 'portal' ? f.visibleOnPortal : true))
-                  .map((field) => {
-                    // Check conditional rule
-                    if (field.conditionalRule) {
-                      const currentVal = previewFormValues[field.conditionalRule.dependsOnField];
-                      const targetVal = field.conditionalRule.value;
-                      const matches =
-                        field.conditionalRule.operator === 'equals'
-                          ? currentVal === targetVal
-                          : currentVal !== targetVal;
-                      if (!matches) return null;
-                    }
-
-                    return (
-                      <div key={field.id} className="p-3 rounded-xl neu-card bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-white/10 space-y-1">
-                        <div className="flex items-center justify-between">
-                          <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
-                            {field.label} {field.required && <span className="text-rose-500 font-bold">*</span>}
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => handleEditField(field)}
-                            className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-semibold flex items-center gap-1 cursor-pointer px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800/40"
-                            title="Edit this custom field (Operating System & Version, etc.)"
-                          >
-                            <Edit2 className="w-2.5 h-2.5" /> Edit Field
-                          </button>
-                        </div>
-                        {field.description && (
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400">{field.description}</div>
-                        )}
-                        {field.type === 'select' ? (
-                          <select
-                            value={previewFormValues[field.name] || ''}
-                            onChange={(e) =>
-                              setPreviewFormValues({ ...previewFormValues, [field.name]: e.target.value })
-                            }
-                            className="w-full px-2.5 py-1 text-xs neu-select bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                          >
-                            <option value="">Select option...</option>
-                            {field.options?.map((opt) => (
-                              <option key={opt} value={opt}>
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
-                        ) : field.type === 'textarea' ? (
-                          <textarea
-                            rows={2}
-                            placeholder={field.placeholder || ''}
-                            value={previewFormValues[field.name] || ''}
-                            onChange={(e) =>
-                              setPreviewFormValues({ ...previewFormValues, [field.name]: e.target.value })
-                            }
-                            className="w-full p-2 text-xs neu-input bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                          />
-                        ) : (
-                          <input
-                            type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
-                            placeholder={field.placeholder || ''}
-                            value={previewFormValues[field.name] || ''}
-                            onChange={(e) =>
-                              setPreviewFormValues({ ...previewFormValues, [field.name]: e.target.value })
-                            }
-                            className="w-full px-2.5 py-1.5 text-xs neu-input bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
-          )}
-
-          {/* Ticket Categories & Taxonomy Manager (Hardware & Workstations, Software & Cloud Apps, etc.) */}
-          <div id="ticket-categories-manager" className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-white/10">
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
-                  <Tag className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-                  Ticket Categories &amp; Taxonomy (Super Admin Managed)
-                </h3>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
-                  Categories available when submitting tickets and defining conditional routing rules (Hardware &amp; Workstations, Software &amp; Cloud Apps, etc.).
-                </p>
-              </div>
-
-              {ticketCategoriesSaveMsg && (
-                <div className="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300">
-                  {ticketCategoriesSaveMsg}
-                </div>
-              )}
-            </div>
-
-            {/* List of categories with inline edit / delete */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-              {ticketCategories.map((cat, idx) => (
-                <div
-                  key={cat}
-                  className="flex items-center justify-between p-2.5 rounded-xl neu-card bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 text-xs"
-                >
-                  {editingCategoryIdx === idx ? (
-                    <div className="flex items-center gap-1.5 w-full">
-                      <input
-                        type="text"
-                        value={editingCategoryText}
-                        onChange={(e) => setEditingCategoryText(e.target.value)}
-                        className="flex-1 px-2 py-1 text-xs neu-input bg-slate-50 dark:bg-slate-950 border border-cyan-500 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                        autoFocus
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleSaveEditCategory(idx);
-                          if (e.key === 'Escape') setEditingCategoryIdx(null);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleSaveEditCategory(idx)}
-                        className="px-2 py-1 text-[11px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer"
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingCategoryIdx(null)}
-                        className="px-2 py-1 text-[11px] font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 truncate">
-                        <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
-                        <span className="truncate">{cat}</span>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleStartEditCategory(idx, cat)}
-                          className="p-1 text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 cursor-pointer"
-                          title="Edit Category Name"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveTicketCategory(cat)}
-                          className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
-                          title="Delete Category"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* Quick Add Category Form */}
-            <form onSubmit={handleAddTicketCategory} className="flex items-center gap-2 pt-2">
-              <input
-                type="text"
-                placeholder="Add new ticket category (e.g. Facilities & Infrastructure, Mobile Devices)..."
-                value={newCategoryInput}
-                onChange={(e) => setNewCategoryInput(e.target.value)}
-                className="flex-1 px-3 py-1.5 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-slate-100 font-medium"
-              />
-              <button
-                type="submit"
-                className="neu-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl cursor-pointer shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add Category
-              </button>
-            </form>
-          </div>
-
-          {/* Fields Table wrapped in responsive scroll container */}
-          <div className="neu-flat rounded-2xl border border-slate-200 dark:border-white/10 overflow-hidden shadow-sm">
-            <div className="overflow-x-auto custom-scrollbar">
-              <table className="w-full text-left text-xs min-w-[700px]">
-                <thead className="bg-slate-100/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-white/10 uppercase tracking-wider font-bold text-[10px]">
-                  <tr>
-                    <th className="py-3 px-3 w-16 text-center">Order</th>
-                    <th className="py-3 px-3">Field Label</th>
-                    <th className="py-3 px-3">Variable Key</th>
-                    <th className="py-3 px-3">Type</th>
-                    <th className="py-3 px-3">Section</th>
-                    <th className="py-3 px-3">Mandatory on Create</th>
-                    <th className="py-3 px-3">Closure Gate</th>
-                    <th className="py-3 px-3">Portal Visible</th>
-                    <th className="py-3 px-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-white/5">
-                  {customFields.map((f, index) => (
-                    <tr key={f.id} className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
-                      <td className="py-3 px-3 text-center">
-                        <div className="flex items-center justify-center gap-1 text-slate-500 dark:text-slate-400">
-                          <button
-                            type="button"
-                            disabled={index === 0}
-                            onClick={() => handleMoveField(index, 'up')}
-                            className="p-1 hover:text-cyan-600 dark:hover:text-white disabled:opacity-30 cursor-pointer"
-                          >
-                            <ArrowUp className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={index === customFields.length - 1}
-                            onClick={() => handleMoveField(index, 'down')}
-                            className="p-1 hover:text-cyan-600 dark:hover:text-white disabled:opacity-30 cursor-pointer"
-                          >
-                            <ArrowDown className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 font-bold text-slate-900 dark:text-white">
-                        {f.label}
-                        {f.conditionalRule && (
-                          <span className="block text-[10px] text-indigo-600 dark:text-indigo-400 font-mono font-medium">
-                            ↳ if {f.conditionalRule.dependsOnField} == "{f.conditionalRule.value}"
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 font-mono text-[11px] font-bold text-cyan-700 dark:text-cyan-400">{f.name}</td>
-                      <td className="py-3 px-3 font-mono text-[11px] uppercase font-bold text-slate-700 dark:text-slate-300">{f.type}</td>
-                      <td className="py-3 px-3 text-slate-600 dark:text-slate-400 capitalize font-medium">{f.section || 'General'}</td>
-                      <td className="py-3 px-3">
-                        {f.required ? (
-                          <span className="text-emerald-700 dark:text-emerald-400 font-bold">Yes</span>
-                        ) : (
-                          <span className="text-slate-500 font-medium">Optional</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3">
-                        {f.requiredOnClose ? (
-                          <span className="text-amber-700 dark:text-amber-400 font-bold">Yes (Gate)</span>
-                        ) : (
-                          <span className="text-slate-500 font-medium">No</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3">
-                        {f.visibleOnPortal ? (
-                          <span className="text-cyan-700 dark:text-cyan-400 font-bold">Visible</span>
-                        ) : (
-                          <span className="text-slate-500 font-medium">Staff Only</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleEditField(f)}
-                            className="p-1 text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300 transition-colors cursor-pointer"
-                            title="Edit Field"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (confirm(`Delete custom field "${f.label}"?`)) {
-                                onDeleteCustomField(f.id);
-                              }
-                            }}
-                            className="p-1 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 transition-colors cursor-pointer"
-                            title="Delete Field"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+      {/* ============================================================= */}
+      {/* TAB: End-User Portal Announcements                            */}
+      {/* ============================================================= */}
+      {activeTab === 'announcements' && onCreateAnnouncement && onUpdateAnnouncement && onDeleteAnnouncement && (
+        <AnnouncementsManager
+          announcements={announcements}
+          currentUser={currentUser}
+          onCreateAnnouncement={onCreateAnnouncement}
+          onUpdateAnnouncement={onUpdateAnnouncement}
+          onDeleteAnnouncement={onDeleteAnnouncement}
+        />
       )}
 
       {/* ============================================================= */}
@@ -6718,239 +6192,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-lg cursor-pointer disabled:opacity-50"
                 >
                   {privSaving ? 'Saving...' : 'Save Privileges'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================= */}
-      {/* Modal: Create or Edit Dynamic Custom Field */}
-      {/* ============================================================= */}
-      {showFieldModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-lg neu-modal p-6 rounded-2xl border border-slate-200 dark:border-white/15 max-h-[90vh] overflow-y-auto custom-scrollbar space-y-4 shadow-2xl">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2 pb-3 border-b border-slate-200 dark:border-white/10">
-              <Sliders className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-              {editingFieldId ? 'Edit Custom Field' : 'Create Dynamic Custom Field'}
-            </h3>
-
-            <form onSubmit={handleSaveFieldForm} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Display Label *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Device Asset Tag"
-                    value={fieldLabel}
-                    onChange={(e) => {
-                      setFieldLabel(e.target.value);
-                      if (!editingFieldId) {
-                        setFieldKey(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, ''));
-                      }
-                    }}
-                    className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Field Key (JSON)</label>
-                  <input
-                    type="text"
-                    required
-                    value={fieldKey}
-                    onChange={(e) => setFieldKey(e.target.value)}
-                    className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-mono font-bold"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Data Type</label>
-                  <select
-                    value={fieldType}
-                    onChange={(e) => setFieldType(e.target.value as any)}
-                    className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="text">Single-line Text</option>
-                    <option value="textarea">Multi-line Text</option>
-                    <option value="select">Dropdown Select</option>
-                    <option value="multiselect">Multi-select Checkboxes</option>
-                    <option value="number">Integer / Number</option>
-                    <option value="date">Date</option>
-                    <option value="checkbox">Yes / No Checkbox</option>
-                    <option value="user">User Selector</option>
-                    <option value="asset">Asset Selector</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Display Section</label>
-                  <select
-                    value={fieldSection}
-                    onChange={(e) => setFieldSection(e.target.value as any)}
-                    className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="general">General Information</option>
-                    <option value="technical">Technical Specifications</option>
-                    <option value="environment">Environment &amp; Infrastructure</option>
-                    <option value="closure">Closure &amp; Post-Mortem</option>
-                  </select>
-                </div>
-              </div>
-
-              {(fieldType === 'select' || fieldType === 'multiselect') && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    Allowed Options (comma separated) *
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Option 1, Option 2, Option 3"
-                    value={fieldOptions}
-                    onChange={(e) => setFieldOptions(e.target.value)}
-                    className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                  />
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Placeholder Text</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Enter AST-1042..."
-                    value={fieldPlaceholder}
-                    onChange={(e) => setFieldPlaceholder(e.target.value)}
-                    className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">Help Description</label>
-                  <input
-                    type="text"
-                    placeholder="Guidance shown below field"
-                    value={fieldDescription}
-                    onChange={(e) => setFieldDescription(e.target.value)}
-                    className="w-full px-3 py-2 text-xs neu-input bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                  />
-                </div>
-              </div>
-
-              {/* Behavior & Gate Toggles */}
-              <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-white/10">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="mReq"
-                    checked={fieldRequired}
-                    onChange={(e) => setFieldRequired(e.target.checked)}
-                    className="rounded border-slate-300 text-cyan-600"
-                  />
-                  <label htmlFor="mReq" className="text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
-                    Mandatory when creating ticket
-                  </label>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="mClose"
-                    checked={fieldRequiredOnClose}
-                    onChange={(e) => setFieldRequiredOnClose(e.target.checked)}
-                    className="rounded border-slate-300 text-cyan-600"
-                  />
-                  <label htmlFor="mClose" className="text-xs font-bold text-amber-700 dark:text-amber-300 cursor-pointer">
-                    Mandatory on Closure Gate (Enforce before resolving/closing)
-                  </label>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="mPortal"
-                    checked={fieldPortalVisible}
-                    onChange={(e) => setFieldPortalVisible(e.target.checked)}
-                    className="rounded border-slate-300 text-cyan-600"
-                  />
-                  <label htmlFor="mPortal" className="text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
-                    Visible to normal users on Self-Service Portal
-                  </label>
-                </div>
-              </div>
-
-              {/* Conditional Visibility Rules */}
-              <div className="pt-3 border-t border-slate-200 dark:border-white/10 space-y-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="mCond"
-                    checked={hasConditionalRule}
-                    onChange={(e) => setHasConditionalRule(e.target.checked)}
-                    className="rounded border-slate-300 text-cyan-600"
-                  />
-                  <label htmlFor="mCond" className="text-xs font-bold text-indigo-700 dark:text-indigo-300 cursor-pointer">
-                    Enable Conditional Display Rule (Show only when condition met)
-                  </label>
-                </div>
-
-                {hasConditionalRule && (
-                  <div className="p-3 rounded-xl neu-card bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-500/30 grid grid-cols-3 gap-2 text-xs">
-                    <div>
-                      <span className="text-slate-600 dark:text-slate-400 block text-[10px] font-bold mb-0.5">When Field</span>
-                      <select
-                        value={condField}
-                        onChange={(e) => setCondField(e.target.value)}
-                        className="w-full px-2 py-1 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-200 font-semibold"
-                      >
-                        <option value="category">Category</option>
-                        <option value="priority">Priority</option>
-                        <option value="type">Type</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <span className="text-slate-600 dark:text-slate-400 block text-[10px] font-bold mb-0.5">Operator</span>
-                      <select
-                        value={condOperator}
-                        onChange={(e) => setCondOperator(e.target.value as any)}
-                        className="w-full px-2 py-1 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-200 font-semibold"
-                      >
-                        <option value="equals">Equals</option>
-                        <option value="not_equals">Does Not Equal</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <span className="text-slate-600 dark:text-slate-400 block text-[10px] font-bold mb-0.5">Target Value</span>
-                      <input
-                        type="text"
-                        value={condValue}
-                        onChange={(e) => setCondValue(e.target.value)}
-                        className="w-full px-2 py-1 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100 font-medium"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setShowFieldModal(false)}
-                  className="neu-btn px-4 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="neu-btn-primary px-5 py-2 text-xs font-bold rounded-xl cursor-pointer"
-                >
-                  {editingFieldId ? 'Update Field' : 'Create Field'}
                 </button>
               </div>
             </form>

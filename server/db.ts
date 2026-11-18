@@ -27,6 +27,7 @@ import {
   TechnicianAttendanceSession,
   AttendanceReportSchedule,
   TechnicianAssignedTask,
+  PortalAnnouncement,
 } from '../src/types';
 
 import {
@@ -77,6 +78,7 @@ export interface DatabaseSchema {
   attendanceSessions: TechnicianAttendanceSession[];
   attendanceSchedule: AttendanceReportSchedule;
   technicianTasks: TechnicianAssignedTask[];
+  announcements: PortalAnnouncement[];
   currentUserId: string;
   nextTicketSequence: number;
 }
@@ -254,6 +256,7 @@ class DatabaseEngine {
         if (!parsed.otpRecords) parsed.otpRecords = [];
         if (!Array.isArray(parsed.attendanceSessions)) parsed.attendanceSessions = [];
         if (!Array.isArray(parsed.technicianTasks)) parsed.technicianTasks = [];
+        if (!Array.isArray(parsed.announcements)) parsed.announcements = [];
         if (!parsed.attendanceSchedule) {
           parsed.attendanceSchedule = {
             enabled: false,
@@ -499,6 +502,7 @@ class DatabaseEngine {
         lastSendStatus: 'Not sent yet',
       },
       technicianTasks: [],
+      announcements: [],
       currentUserId: '', // By default: guest session (landing on End User Portal)
       nextTicketSequence: 110,
     };

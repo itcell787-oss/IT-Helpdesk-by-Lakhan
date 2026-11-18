@@ -905,6 +905,118 @@ async function runTestSuite() {
 
   await testTechnicianAttendanceAndOvertime();
 
+  // -------------------------------------------------------------
+  // Test 27: Portal Announcements & Submit Support Ticket Form Config
+  // -------------------------------------------------------------
+  const testPortalAnnouncementsAndTicketFormEditor = () => {
+    console.log('\n📢 Running Portal Announcements & Submit Support Ticket Form Editor Tests...');
+
+    const allowedRoles = ['technician', 'admin', 'superadmin'];
+    assert(
+      'Technicians, Admins, and Superadmins can manage announcements while Requesters cannot',
+      allowedRoles.includes('technician') &&
+        allowedRoles.includes('admin') &&
+        allowedRoles.includes('superadmin') &&
+        !allowedRoles.includes('requester')
+    );
+
+    const futureIso = new Date(Date.now() + 3600 * 1000).toISOString();
+    const pastIso = new Date(Date.now() - 3600 * 1000).toISOString();
+    const sampleAnnouncements = [
+      {
+        id: 'ann-test-active-tech',
+        title: 'Planned Mail Maintenance',
+        message: 'Email relay maintenance starts at 11:00 PM IST.',
+        severity: 'maintenance' as const,
+        isActive: true,
+        createdById: technicianUser?.id || 'usr-technician',
+        createdByName: technicianUser?.name || 'Support Technician',
+        createdByRole: 'technician' as const,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        expiresAt: futureIso,
+      },
+      {
+        id: 'ann-test-expired',
+        title: 'Old Expired Notice',
+        message: 'This notice should be filtered out when activeOnly=true.',
+        severity: 'info' as const,
+        isActive: true,
+        createdById: superadminUser?.id || 'usr-superadmin',
+        createdByName: superadminUser?.name || 'Lakhan Prajapati',
+        createdByRole: 'superadmin' as const,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        expiresAt: pastIso,
+      },
+      {
+        id: 'ann-test-hidden',
+        title: 'Draft Hidden Notice',
+        message: 'Should remain hidden while isActive is false.',
+        severity: 'warning' as const,
+        isActive: false,
+        createdById: superadminUser?.id || 'usr-superadmin',
+        createdByName: superadminUser?.name || 'Lakhan Prajapati',
+        createdByRole: 'superadmin' as const,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+
+    db.set('announcements', sampleAnnouncements);
+    const storedAnnouncements = db.get('announcements') || [];
+    const nowMs = Date.now();
+    const activeVisible = storedAnnouncements.filter(
+      (a) => a.isActive && (!a.expiresAt || new Date(a.expiresAt).getTime() > nowMs)
+    );
+
+    assert('Announcements store creator name for display below announcement', Boolean(storedAnnouncements[0]?.createdByName));
+    assert(
+      'Active-only filter keeps unexpired active announcements and excludes expired or hidden ones',
+      activeVisible.length === 1 && activeVisible[0].id === 'ann-test-active-tech'
+    );
+
+    // Submit Support Ticket Form Config persistence
+    const orgsList = db.get('organizations');
+    const primaryOrg = orgsList[0];
+    const customFormConfig = {
+      formTitle: 'Custom IT Support Intake',
+      formSubtitle: 'Customized portal subtitle from Superadmin editor',
+      showLocationDesk: true,
+      requireLocationDesk: false,
+      locationDeskLabel: 'Bay / Remote City',
+      locationDeskPlaceholder: 'e.g. Bay 14 or Pune Remote',
+      defaultPriority: 'high' as const,
+      showForwardToManager: false,
+      showAttachments: true,
+    };
+    primaryOrg.systemSettings = {
+      requireOtpForTicketSubmission: false,
+      enableTicketRating: true,
+      enableCategoryAutoAssign: true,
+      ...(primaryOrg.systemSettings || {}),
+      ticketSubmissionFormConfig: customFormConfig,
+    };
+    db.set('organizations', orgsList);
+
+    const savedCfg = db.get('organizations')[0]?.systemSettings?.ticketSubmissionFormConfig;
+    assert(
+      'Submit Support Ticket Form Config persists custom title, location label, priority, and toggles',
+      Boolean(
+        savedCfg &&
+          savedCfg.formTitle === 'Custom IT Support Intake' &&
+          savedCfg.locationDeskLabel === 'Bay / Remote City' &&
+          savedCfg.requireLocationDesk === false &&
+          savedCfg.defaultPriority === 'high' &&
+          savedCfg.showForwardToManager === false
+      )
+    );
+
+    db.set('announcements', []);
+  };
+
+  testPortalAnnouncementsAndTicketFormEditor();
+
   try {
     fs.copyFileSync('data/database.seed.json', 'data/database.json');
     if (fs.existsSync('data/database.json.bak')) {

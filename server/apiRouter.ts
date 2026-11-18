@@ -34,6 +34,7 @@ import {
   AutomationRule,
   Team,
   TechnicianAssignedTask,
+  PortalAnnouncement,
 } from '../src/types';
 
 export const apiRouter = Router();
@@ -469,6 +470,18 @@ apiRouter.post('/session/switch', (req: Request, res: Response) => {
 // -------------------------------------------------------------
 // System Settings (OTP, Ratings, Category Auto-Assign)
 // -------------------------------------------------------------
+const DEFAULT_TICKET_SUBMISSION_FORM_CONFIG = {
+  formTitle: 'Submit IT Service Request',
+  formSubtitle: 'Fast-track ticket creation enabled. You can submit directly without login or OTP.',
+  showLocationDesk: true,
+  requireLocationDesk: true,
+  locationDeskLabel: 'Location / Desk No',
+  locationDeskPlaceholder: 'e.g. Building A - Floor 2 - Desk #42 / Remote Home Office',
+  defaultPriority: 'normal',
+  showForwardToManager: true,
+  showAttachments: true,
+};
+
 apiRouter.get('/system-settings', (req: Request, res: Response) => {
   const organizations = db.get('organizations');
   const org = organizations[0];
@@ -485,6 +498,10 @@ apiRouter.get('/system-settings', (req: Request, res: Response) => {
     preSharedKey: 'Sports@9433',
     defaultCurrency: '₹',
     ...settings,
+    ticketSubmissionFormConfig: {
+      ...DEFAULT_TICKET_SUBMISSION_FORM_CONFIG,
+      ...(settings.ticketSubmissionFormConfig || {}),
+    },
   });
 });
 
@@ -499,9 +516,17 @@ apiRouter.patch('/system-settings', (req: Request, res: Response) => {
 
   const organizations = db.get('organizations');
   const org = organizations[0];
+  const mergedFormConfig = req.body.ticketSubmissionFormConfig
+    ? {
+        ...DEFAULT_TICKET_SUBMISSION_FORM_CONFIG,
+        ...(org.systemSettings?.ticketSubmissionFormConfig || {}),
+        ...req.body.ticketSubmissionFormConfig,
+      }
+    : org.systemSettings?.ticketSubmissionFormConfig;
   org.systemSettings = {
     ...org.systemSettings,
     ...req.body,
+    ...(mergedFormConfig ? { ticketSubmissionFormConfig: mergedFormConfig } : {}),
   };
 
   if (req.body.defaultCurrency) {
@@ -4598,4 +4623,152 @@ apiRouter.delete('/technician-tasks/:id', (req: Request, res: Response) => {
   res.json({ success: true, deletedTaskId: id });
 });
 
+// -------------------------------------------------------------
+// End-User Portal Announcements (Technicians & Admins)
+// -------------------------------------------------------------
+const ANNOUNCEMENT_MANAGER_ROLES = ['technician', 'admin', 'superadmin'];
+
+apiRouter.get('/announcements', (req: Request, res: Response) => {
+  const announcements = [...(db.get('announcements') || [])].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  if (req.query.activeOnly === 'true') {
+    const now = Date.now();
+    return res.json(
+      announcements.filter(
+        (a) => a.isActive && (!a.expiresAt || new Date(a.expiresAt).getTime() > now)
+      )
+    );
+  }
+  res.json(announcements);
+});
+
+apiRouter.post('/announcements', (req: Request, res: Response) => {
+  const users = db.get('users') || [];
+  const actor =
+    getOptionalActor(req) ||
+    (db.get('currentUserId') ? users.find((u: User) => u.id === db.get('currentUserId')) : null);
+
+  if (!actor || !ANNOUNCEMENT_MANAGER_ROLES.includes(actor.role)) {
+    return res.status(403).json({
+      error: 'Forbidden: Only Technicians and Administrators can create portal announcements.',
+    });
+  }
+
+  const { title, message, severity = 'info', isActive = true, expiresAt } = req.body || {};
+  if (!title || !String(title).trim() || !message || !String(message).trim()) {
+    return res.status(400).json({ error: 'Announcement title and message are required.' });
+  }
+
+  const validSeverities = ['info', 'warning', 'urgent', 'maintenance'];
+  const normalizedSeverity = validSeverities.includes(severity) ? severity : 'info';
+  const nowIso = new Date().toISOString();
+
+  const newAnnouncement: PortalAnnouncement = {
+    id: `ann-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    title: String(title).trim(),
+    message: String(message).trim(),
+    severity: normalizedSeverity,
+    isActive: Boolean(isActive),
+    createdById: actor.id,
+    createdByName: actor.name,
+    createdByRole: actor.role,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    ...(typeof expiresAt === 'string' && expiresAt.trim() ? { expiresAt: expiresAt.trim() } : {}),
+  };
+
+  const existing = db.get('announcements') || [];
+  db.set('announcements', [newAnnouncement, ...existing]);
+
+  logAudit(
+    actor,
+    'announcement.created',
+    'setting',
+    newAnnouncement.id,
+    `${actor.name} (${actor.role}) published portal announcement "${newAnnouncement.title}"`
+  );
+
+  res.status(201).json(newAnnouncement);
+});
+
+apiRouter.patch('/announcements/:id', (req: Request, res: Response) => {
+  const users = db.get('users') || [];
+  const actor =
+    getOptionalActor(req) ||
+    (db.get('currentUserId') ? users.find((u: User) => u.id === db.get('currentUserId')) : null);
+
+  if (!actor || !ANNOUNCEMENT_MANAGER_ROLES.includes(actor.role)) {
+    return res.status(403).json({
+      error: 'Forbidden: Only Technicians and Administrators can update portal announcements.',
+    });
+  }
+
+  const { id } = req.params;
+  const existing = db.get('announcements') || [];
+  const idx = existing.findIndex((a) => a.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Announcement not found' });
+  }
+
+  const { title, message, severity, isActive, expiresAt } = req.body || {};
+  const validSeverities = ['info', 'warning', 'urgent', 'maintenance'];
+  const current = existing[idx];
+
+  const updated: PortalAnnouncement = {
+    ...current,
+    ...(typeof title === 'string' && title.trim() ? { title: title.trim() } : {}),
+    ...(typeof message === 'string' && message.trim() ? { message: message.trim() } : {}),
+    ...(severity && validSeverities.includes(severity) ? { severity } : {}),
+    ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {}),
+    ...(expiresAt !== undefined
+      ? { expiresAt: typeof expiresAt === 'string' && expiresAt.trim() ? expiresAt.trim() : undefined }
+      : {}),
+    updatedAt: new Date().toISOString(),
+  };
+
+  existing[idx] = updated;
+  db.set('announcements', existing);
+
+  logAudit(
+    actor,
+    'announcement.updated',
+    'setting',
+    id,
+    `${actor.name} updated portal announcement "${updated.title}"`
+  );
+
+  res.json(updated);
+});
+
+apiRouter.delete('/announcements/:id', (req: Request, res: Response) => {
+  const users = db.get('users') || [];
+  const actor =
+    getOptionalActor(req) ||
+    (db.get('currentUserId') ? users.find((u: User) => u.id === db.get('currentUserId')) : null);
+
+  if (!actor || !ANNOUNCEMENT_MANAGER_ROLES.includes(actor.role)) {
+    return res.status(403).json({
+      error: 'Forbidden: Only Technicians and Administrators can delete portal announcements.',
+    });
+  }
+
+  const { id } = req.params;
+  const existing = db.get('announcements') || [];
+  const target = existing.find((a) => a.id === id);
+  if (!target) {
+    return res.status(404).json({ error: 'Announcement not found' });
+  }
+
+  db.set('announcements', existing.filter((a) => a.id !== id));
+  logAudit(
+    actor,
+    'announcement.deleted',
+    'setting',
+    id,
+    `${actor.name} deleted portal announcement "${target.title}"`
+  );
+
+  res.json({ success: true, deletedAnnouncementId: id });
+});
 

@@ -25,10 +25,12 @@ import {
   RefreshCw,
   Settings as SettingsIcon,
   CheckCircle,
+  Megaphone,
 } from 'lucide-react';
-import { Ticket, AuditLog, User, DefaultEmailGatewayConfig } from '../types';
+import { Ticket, AuditLog, User, DefaultEmailGatewayConfig, PortalAnnouncement, AnnouncementSeverity } from '../types';
 import { api } from '../services/api';
 import { TechnicianShiftCard, LiveAttendanceState } from './TechnicianShiftTimer';
+import { AnnouncementsManager } from './AnnouncementsManager';
 
 interface DashboardViewProps {
   metrics: {
@@ -51,6 +53,25 @@ interface DashboardViewProps {
   currentUser?: User | null;
   technicianAttendance?: LiveAttendanceState | null;
   defaultGatewayConfig?: DefaultEmailGatewayConfig | null;
+  announcements?: PortalAnnouncement[];
+  onCreateAnnouncement?: (payload: {
+    title: string;
+    message: string;
+    severity: AnnouncementSeverity;
+    isActive: boolean;
+    expiresAt?: string;
+  }) => Promise<any>;
+  onUpdateAnnouncement?: (
+    id: string,
+    payload: {
+      title?: string;
+      message?: string;
+      severity?: AnnouncementSeverity;
+      isActive?: boolean;
+      expiresAt?: string;
+    }
+  ) => Promise<any>;
+  onDeleteAnnouncement?: (id: string) => Promise<any>;
   onSelectTicket: (ticketId: string) => void;
   onNavigate: (view: string) => void;
   onOpenNewTicket: () => void;
@@ -65,11 +86,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   currentUser,
   technicianAttendance,
   defaultGatewayConfig,
+  announcements = [],
+  onCreateAnnouncement,
+  onUpdateAnnouncement,
+  onDeleteAnnouncement,
   onSelectTicket,
   onNavigate,
   onOpenNewTicket,
   onOpenEmailSimulator,
 }) => {
+  const [showAnnouncementsModal, setShowAnnouncementsModal] = useState(false);
+  const canManageAnnouncements = Boolean(
+    currentUser && ['technician', 'admin', 'superadmin'].includes(currentUser.role)
+  );
+  const activeAnnouncementsCount = announcements.filter(
+    (a) => a.isActive && (!a.expiresAt || new Date(a.expiresAt).getTime() > Date.now())
+  ).length;
   // Live Email Gateway Interaction State
   const [gwPolling, setGwPolling] = useState(false);
   const [gwPollFeedback, setGwPollFeedback] = useState<string | null>(null);
@@ -567,6 +599,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Simulate Email
           </button>
 
+          {canManageAnnouncements && onCreateAnnouncement && onUpdateAnnouncement && onDeleteAnnouncement && (
+            <button
+              type="button"
+              onClick={() => setShowAnnouncementsModal(true)}
+              className="neu-btn flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-cyan-700 dark:text-cyan-300 rounded-xl cursor-pointer whitespace-nowrap shrink-0"
+              title="Create and manage End-User Portal Announcements"
+            >
+              <Megaphone className="w-3.5 h-3.5" />
+              <span>Announcements ({activeAnnouncementsCount})</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onOpenNewTicket}
@@ -576,6 +620,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Announcements Manager Modal */}
+      {showAnnouncementsModal && canManageAnnouncements && onCreateAnnouncement && onUpdateAnnouncement && onDeleteAnnouncement && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-2xl neu-modal p-6 rounded-2xl border border-slate-200 dark:border-white/15 max-h-[90vh] overflow-y-auto custom-scrollbar shadow-2xl">
+            <AnnouncementsManager
+              announcements={announcements}
+              currentUser={currentUser || null}
+              onCreateAnnouncement={onCreateAnnouncement}
+              onUpdateAnnouncement={onUpdateAnnouncement}
+              onDeleteAnnouncement={onDeleteAnnouncement}
+              onClose={() => setShowAnnouncementsModal(false)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Staff & Technician Live Shift Timer, Break Control, Overtime & Assigned Tasks */}
       {currentUser && technicianAttendance?.isEligible && (

@@ -38,6 +38,8 @@ import {
   EmailChannel,
   MailboxConnectionConfig,
   DefaultEmailGatewayConfig,
+  PortalAnnouncement,
+  AnnouncementSeverity,
 } from './types';
 
 const fallbackGateway: DefaultEmailGatewayConfig = {
@@ -97,6 +99,7 @@ export default function App() {
   const [metrics, setMetrics] = useState<any>(null);
   const [superadminStats, setSuperadminStats] = useState<any>(null);
   const [systemSettings, setSystemSettings] = useState<any>(null);
+  const [announcements, setAnnouncements] = useState<PortalAnnouncement[]>([]);
   const defaultCurrency = systemSettings?.defaultCurrency || organization?.systemSettings?.defaultCurrency || '₹';
 
   // Active View Navigation - Persisted in sessionStorage and localStorage so browser refresh never kicks staff to portal
@@ -249,6 +252,7 @@ export default function App() {
         adminMailboxesData,
         defaultGatewayData,
         settingsData,
+        announcementsData,
       ] = await Promise.all([
         api.getTickets().catch(() => []),
         api.getAssets().catch(() => []),
@@ -266,6 +270,7 @@ export default function App() {
         api.getAdminMailboxes().catch(() => []),
         api.getDefaultGatewayConfig().catch(() => null),
         api.getSystemSettings().catch(() => null),
+        api.getAnnouncements().catch(() => []),
       ]);
 
       setTickets(ticketsData);
@@ -289,6 +294,7 @@ export default function App() {
       setOrganizations(orgsData);
       setSuperadminStats(saStatsData);
       setAdminMailboxes(adminMailboxesData || []);
+      setAnnouncements(Array.isArray(announcementsData) ? announcementsData : []);
       if (defaultGatewayData) {
         setDefaultGateway(defaultGatewayData);
       }
@@ -822,6 +828,44 @@ export default function App() {
     }
   };
 
+  const handleCreateAnnouncement = async (payload: {
+    title: string;
+    message: string;
+    severity?: AnnouncementSeverity;
+    isActive?: boolean;
+    expiresAt?: string;
+  }) => {
+    const created = await api.createAnnouncement(payload);
+    setAnnouncements((prev) => [created, ...prev]);
+    showToast('Portal announcement published!');
+    loadData();
+    return created;
+  };
+
+  const handleUpdateAnnouncement = async (
+    id: string,
+    payload: {
+      title?: string;
+      message?: string;
+      severity?: AnnouncementSeverity;
+      isActive?: boolean;
+      expiresAt?: string;
+    }
+  ) => {
+    const updated = await api.updateAnnouncement(id, payload);
+    setAnnouncements((prev) => prev.map((a) => (a.id === id ? updated : a)));
+    showToast('Announcement updated!');
+    loadData();
+    return updated;
+  };
+
+  const handleDeleteAnnouncement = async (id: string) => {
+    await api.deleteAnnouncement(id);
+    setAnnouncements((prev) => prev.filter((a) => a.id !== id));
+    showToast('Announcement deleted.');
+    loadData();
+  };
+
   const handleUpdateArticle = async (id: string, articleData: Partial<KnowledgeArticle>) => {
     try {
       const updated = await api.updateKnowledgeArticle(id, articleData);
@@ -1259,6 +1303,10 @@ export default function App() {
                 technicianAttendance={technicianAttendance}
                 auditLogs={auditLogs}
                 defaultGatewayConfig={defaultGateway}
+                announcements={announcements}
+                onCreateAnnouncement={handleCreateAnnouncement}
+                onUpdateAnnouncement={handleUpdateAnnouncement}
+                onDeleteAnnouncement={handleDeleteAnnouncement}
                 onSelectTicket={handleSelectTicket}
                 onNavigate={(v) => {
                   setSelectedTicketId(null);
@@ -1440,12 +1488,16 @@ export default function App() {
                 serviceCatalog={serviceCatalog}
                 approvals={approvals}
                 customFields={customFields}
+                announcements={announcements}
                 organization={organization}
                 organizations={organizations}
                 systemSettings={systemSettings || organization?.systemSettings}
                 assets={assets}
                 initialTab={portalInitialTab}
                 allowRequesterAssetSelfService={systemSettings?.allowRequesterAssetSelfService ?? organization?.systemSettings?.allowRequesterAssetSelfService ?? true}
+                onCreateAnnouncement={handleCreateAnnouncement}
+                onUpdateAnnouncement={handleUpdateAnnouncement}
+                onDeleteAnnouncement={handleDeleteAnnouncement}
                 onCreateAsset={handleCreateAsset}
                 onUpdateAsset={handleUpdateAsset}
                 onDeleteAsset={handleDeleteAsset}
@@ -1587,6 +1639,10 @@ export default function App() {
                 onUpdateSlaPolicy={handleUpdateSlaPolicy}
                 systemSettings={systemSettings}
                 onUpdateSystemSettings={handleUpdateSystemSettings}
+                announcements={announcements}
+                onCreateAnnouncement={handleCreateAnnouncement}
+                onUpdateAnnouncement={handleUpdateAnnouncement}
+                onDeleteAnnouncement={handleDeleteAnnouncement}
                 initialTab={settingsInitialTab}
               />
             )}
@@ -1617,6 +1673,8 @@ export default function App() {
                 auditLogs={auditLogs}
                 users={availableUsers}
                 catalogItems={serviceCatalog}
+                customFields={customFields}
+                announcements={announcements}
                 stats={superadminStats}
                 systemSettings={systemSettings || organization?.systemSettings}
                 defaultGateway={defaultGateway || fallbackGateway}
@@ -1632,6 +1690,13 @@ export default function App() {
                 onCreateCatalogItem={handleCreateCatalogItem}
                 onUpdateCatalogItem={handleUpdateCatalogItem}
                 onDeleteCatalogItem={handleDeleteCatalogItem}
+                onCreateCustomField={handleCreateCustomField}
+                onUpdateCustomField={handleUpdateCustomField}
+                onDeleteCustomField={handleDeleteCustomField}
+                onReorderCustomFields={handleReorderCustomFields}
+                onCreateAnnouncement={handleCreateAnnouncement}
+                onUpdateAnnouncement={handleUpdateAnnouncement}
+                onDeleteAnnouncement={handleDeleteAnnouncement}
                 onRefreshUsers={() => loadData()}
                 initialTab={activeView === 'superadmin-attendance' ? 'attendance' : 'policies'}
                 onTabChange={(tab) => {
@@ -1654,7 +1719,7 @@ export default function App() {
         assets={assets}
         currentUser={currentUser}
         requireOtp={Boolean(systemSettings?.requireOtpForTicketSubmission ?? organization?.systemSettings?.requireOtpForTicketSubmission)}
-        ticketCategories={organization?.systemSettings?.ticketCategories}
+        ticketCategories={systemSettings?.ticketCategories || organization?.systemSettings?.ticketCategories}
       />
 
       {/* Separate User Portal & Admin Login Modal */}

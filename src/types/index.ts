@@ -15,6 +15,34 @@ export interface AdminPrivileges {
   allowedViews?: string[]; // ['dashboard', 'tickets', 'assets', 'approvals', 'reports']
 }
 
+export interface TicketSubmissionFormConfig {
+  formTitle?: string;
+  formSubtitle?: string;
+  showLocationDesk?: boolean;
+  requireLocationDesk?: boolean;
+  locationDeskLabel?: string;
+  locationDeskPlaceholder?: string;
+  defaultPriority?: 'low' | 'normal' | 'high' | 'critical';
+  showForwardToManager?: boolean;
+  showAttachments?: boolean;
+}
+
+export type AnnouncementSeverity = 'info' | 'warning' | 'urgent' | 'maintenance';
+
+export interface PortalAnnouncement {
+  id: string;
+  title: string;
+  message: string;
+  severity: AnnouncementSeverity;
+  isActive: boolean;
+  createdById: string;
+  createdByName: string;
+  createdByRole: UserRole;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string;
+}
+
 export interface SystemSettings {
   requireOtpForTicketSubmission: boolean;
   enableTicketRating: boolean;
@@ -25,6 +53,7 @@ export interface SystemSettings {
   allowRequesterAssetSelfService?: boolean; // Requesters can view and add/remove assigned assets from portal
   requesterAssetOptions?: string[]; // Customizable dropdown options for requesters: CPU, Keyboard, Mouse, Display, Laptop, Headphone, Webcam
   ticketCategories?: string[]; // Customizable ticket categories (Hardware & Workstations, Software & Cloud Apps, etc.)
+  ticketSubmissionFormConfig?: TicketSubmissionFormConfig; // Customizable End-User Submit Support Ticket form settings
   enableInboundTicketGeneration?: boolean; // Superadmin toggle to enable/disable ticket creation via email
   enableOutboundReplyNotification?: boolean; // Superadmin toggle for outbound reply emails
 }

@@ -23,6 +23,8 @@ import {
   TechnicianAttendanceOverviewItem,
   TechnicianAssignedTask,
   TechnicianTaskStatus,
+  PortalAnnouncement,
+  AnnouncementSeverity,
 } from '../types';
 
 function getSessionToken(): string {
@@ -971,5 +973,44 @@ export const api = {
       method: 'DELETE',
     });
   },
-};
 
+  // Portal Announcements (Technicians & Admins)
+  async getAnnouncements(activeOnly = false): Promise<PortalAnnouncement[]> {
+    return request(`/api/announcements${activeOnly ? '?activeOnly=true' : ''}`);
+  },
+
+  async createAnnouncement(payload: {
+    title: string;
+    message: string;
+    severity?: AnnouncementSeverity;
+    isActive?: boolean;
+    expiresAt?: string;
+  }): Promise<PortalAnnouncement> {
+    return request('/api/announcements', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateAnnouncement(
+    id: string,
+    payload: {
+      title?: string;
+      message?: string;
+      severity?: AnnouncementSeverity;
+      isActive?: boolean;
+      expiresAt?: string;
+    }
+  ): Promise<PortalAnnouncement> {
+    return request(`/api/announcements/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteAnnouncement(id: string): Promise<{ success: boolean; deletedAnnouncementId: string }> {
+    return request(`/api/announcements/${id}`, {
+      method: 'DELETE',
+    });
+  },
+};
