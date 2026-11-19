@@ -31,8 +31,22 @@ import {
   Mail,
   Users,
   RefreshCw,
+  Maximize2,
+  Minimize2,
+  Edit2,
+  Save,
 } from 'lucide-react';
-import { Ticket, TicketComment, TaskItem, WorkLog, AuditLog, User as UserType, formatUserBadge } from '../types';
+import {
+  Ticket,
+  TicketComment,
+  TaskItem,
+  WorkLog,
+  AuditLog,
+  User as UserType,
+  CustomFieldDefinition,
+  Asset,
+  formatUserBadge,
+} from '../types';
 import { SlaCountdownBadge } from './SlaCountdownBadge';
 import { generateTicketPdf } from '../utils/ticketPdfGenerator';
 
@@ -43,6 +57,9 @@ interface TicketDetailViewProps {
   workLogs: WorkLog[];
   auditLogs: AuditLog[];
   users: UserType[];
+  customFields?: CustomFieldDefinition[];
+  assets?: Asset[];
+  systemSettings?: any;
   currentUser?: UserType | null;
   onBack: () => void;
   onUpdateTicket: (id: string, updates: Partial<Ticket>) => void;
@@ -52,6 +69,8 @@ interface TicketDetailViewProps {
   onAddWorkLog: (ticketId: string, minutes: number, notes: string, billable: boolean) => void;
   onDeleteTicket?: (ticketId: string) => void;
   onRefreshTicket?: () => Promise<void> | void;
+  isMaximized?: boolean;
+  onToggleMaximize?: () => void;
 }
 
 export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
@@ -60,6 +79,9 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
   tasks,
   workLogs,
   users,
+  customFields = [],
+  assets = [],
+  systemSettings,
   currentUser,
   onBack,
   onUpdateTicket,
@@ -69,6 +91,8 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
   onAddWorkLog,
   onDeleteTicket,
   onRefreshTicket,
+  isMaximized = false,
+  onToggleMaximize,
 }) => {
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [commentText, setCommentText] = useState('');
@@ -104,6 +128,32 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
   const [isEditingRating, setIsEditingRating] = useState<boolean>(false);
   const [ratingSubmitting, setRatingSubmitting] = useState<boolean>(false);
   const [ratingSuccessMsg, setRatingSuccessMsg] = useState<string | null>(null);
+
+  // Inline Custom Fields editing state
+  const [isEditingCustomFields, setIsEditingCustomFields] = useState(false);
+  const [customFieldDraft, setCustomFieldDraft] = useState<Record<string, any>>(ticket.customFields || {});
+
+  React.useEffect(() => {
+    setCustomFieldDraft(ticket.customFields || {});
+    setIsEditingCustomFields(false);
+  }, [ticket.id, ticket.customFields]);
+
+  const enabledCustomFields = React.useMemo(
+    () => customFields.filter((f) => f.enabled !== false),
+    [customFields]
+  );
+
+  const formCfg = systemSettings?.ticketSubmissionFormConfig || {};
+  const showLocationDeskField = formCfg.showLocationDesk !== false;
+  const locationDeskLabel = formCfg.locationDeskLabel || 'Location / Desk No';
+  const requireLocationDeskField = formCfg.requireLocationDesk !== false;
+
+  const handleSaveCustomFields = () => {
+    onUpdateTicket(ticket.id, { customFields: customFieldDraft });
+    setIsEditingCustomFields(false);
+    setPrintToast('✓ Ticket custom fields updated.');
+    setTimeout(() => setPrintToast(null), 3000);
+  };
 
   const handleSubmitDetailRating = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -463,6 +513,30 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {onToggleMaximize && (
+            <button
+              type="button"
+              onClick={onToggleMaximize}
+              className={`neu-btn flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap shrink-0 transition-all ${
+                isMaximized
+                  ? 'neu-pressed text-cyan-700 dark:text-cyan-300 border border-cyan-500/50'
+                  : 'text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/5'
+              }`}
+              title={isMaximized ? 'Restore standard layout (Esc)' : 'Maximize ticket workspace inside browser window'}
+            >
+              {isMaximized ? (
+                <>
+                  <Minimize2 className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Restore View</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Maximize</span>
+                </>
+              )}
+            </button>
+          )}
           {onRefreshTicket && (
             <button
               type="button"
@@ -633,20 +707,166 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               </div>
             )}
 
-            {/* Custom Field Values Display */}
-            {Object.keys(ticket.customFields || {}).length > 0 && (
-              <div className="mt-4 pt-3 border-t border-slate-200 dark:border-white/10">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2">
-                  Custom Ticket Attributes &amp; Fields
+            {/* Custom Field Values Display & Inline Staff Editor */}
+            {(enabledCustomFields.length > 0 || Object.keys(ticket.customFields || {}).length > 0) && (
+              <div className="mt-4 pt-3 border-t border-slate-200 dark:border-white/10 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    Custom Ticket Attributes &amp; Fields
+                  </div>
+                  {!isRequester && !isManager && (
+                    isEditingCustomFields ? (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={handleSaveCustomFields}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-bold cursor-pointer"
+                        >
+                          <Save className="w-3 h-3" /> Save Fields
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomFieldDraft(ticket.customFields || {});
+                            setIsEditingCustomFields(false);
+                          }}
+                          className="px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomFieldDraft(ticket.customFields || {});
+                          setIsEditingCustomFields(true);
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold text-cyan-700 dark:text-cyan-400 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 cursor-pointer"
+                      >
+                        <Edit2 className="w-3 h-3" /> Edit Fields
+                      </button>
+                    )
+                  )}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  {Object.entries(ticket.customFields).map(([k, v]) => (
-                    <div key={k} className="p-2.5 rounded-xl neu-card border border-slate-200/80 dark:border-white/5">
-                      <span className="text-slate-500 dark:text-slate-400 block text-[10px] uppercase font-mono font-semibold">{k}</span>
-                      <span className="text-slate-900 dark:text-slate-100 font-semibold">{String(v)}</span>
-                    </div>
-                  ))}
-                </div>
+
+                {isEditingCustomFields ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    {enabledCustomFields.map((field) => {
+                      const val = customFieldDraft[field.name] ?? '';
+                      return (
+                        <div key={field.id} className="p-2.5 rounded-xl neu-card border border-slate-200/80 dark:border-white/10 space-y-1">
+                          <label className="block text-[10px] uppercase font-bold text-slate-600 dark:text-slate-300">
+                            {field.label}
+                          </label>
+                          {field.type === 'select' ? (
+                            <select
+                              value={val}
+                              onChange={(e) => setCustomFieldDraft({ ...customFieldDraft, [field.name]: e.target.value })}
+                              className="w-full px-2 py-1 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                            >
+                              <option value="">Not set</option>
+                              {field.options?.map((opt) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          ) : field.type === 'checkbox' ? (
+                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer pt-1">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(val)}
+                                onChange={(e) => setCustomFieldDraft({ ...customFieldDraft, [field.name]: e.target.checked })}
+                                className="rounded text-cyan-600 cursor-pointer"
+                              />
+                              <span>{Boolean(val) ? 'Yes' : 'No'}</span>
+                            </label>
+                          ) : field.type === 'textarea' ? (
+                            <textarea
+                              rows={2}
+                              value={val}
+                              placeholder={field.placeholder || ''}
+                              onChange={(e) => setCustomFieldDraft({ ...customFieldDraft, [field.name]: e.target.value })}
+                              className="w-full p-1.5 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                            />
+                          ) : field.type === 'asset' ? (
+                            <select
+                              value={val}
+                              onChange={(e) => setCustomFieldDraft({ ...customFieldDraft, [field.name]: e.target.value })}
+                              className="w-full px-2 py-1 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                            >
+                              <option value="">Select asset...</option>
+                              {assets.map((a) => (
+                                <option key={a.id} value={`${a.id} - ${a.name}`}>
+                                  {a.id} - {a.name} ({a.model})
+                                </option>
+                              ))}
+                            </select>
+                          ) : field.type === 'user' ? (
+                            <select
+                              value={val}
+                              onChange={(e) => setCustomFieldDraft({ ...customFieldDraft, [field.name]: e.target.value })}
+                              className="w-full px-2 py-1 text-xs neu-select bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                            >
+                              <option value="">Select user...</option>
+                              {users.map((u) => (
+                                <option key={u.id} value={u.name}>
+                                  {u.name} ({u.email})
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                              value={val}
+                              placeholder={field.placeholder || ''}
+                              onChange={(e) => setCustomFieldDraft({ ...customFieldDraft, [field.name]: e.target.value })}
+                              className="w-full px-2 py-1 text-xs neu-input bg-white dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    {(() => {
+                      const renderedKeys = new Set<string>();
+                      const items: Array<{ key: string; label: string; value: string }> = [];
+                      enabledCustomFields.forEach((f) => {
+                        const raw = ticket.customFields?.[f.name];
+                        const formatted =
+                          raw !== undefined && raw !== null && raw !== ''
+                            ? typeof raw === 'boolean'
+                              ? raw
+                                ? 'Yes'
+                                : 'No'
+                              : Array.isArray(raw)
+                              ? raw.join(', ')
+                              : String(raw)
+                            : '—';
+                        items.push({ key: f.name, label: f.label, value: formatted });
+                        renderedKeys.add(f.name);
+                      });
+                      Object.entries(ticket.customFields || {}).forEach(([k, v]) => {
+                        if (!renderedKeys.has(k) && v !== undefined && v !== null && v !== '') {
+                          items.push({
+                            key: k,
+                            label: k,
+                            value: typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v),
+                          });
+                        }
+                      });
+                      return items.map((item) => (
+                        <div key={item.key} className="p-2.5 rounded-xl neu-card border border-slate-200/80 dark:border-white/5">
+                          <span className="text-slate-500 dark:text-slate-400 block text-[10px] uppercase font-mono font-semibold">
+                            {item.label}
+                          </span>
+                          <span className="text-slate-900 dark:text-slate-100 font-semibold">{item.value}</span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1237,22 +1457,26 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               )}
             </div>
 
-            {/* Location / Desk No (Mandatory Field as in Asset & Inventory) */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-                  <span>Location / Desk No *</span>
-                </label>
-                <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Mandatory</span>
+            {/* Location / Desk No (Respects Ticket Form Editor settings) */}
+            {showLocationDeskField && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                    <span>{locationDeskLabel} {requireLocationDeskField ? '*' : ''}</span>
+                  </label>
+                  <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">
+                    {requireLocationDeskField ? 'Mandatory' : 'Optional'}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg neu-inset bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-slate-100 flex items-center justify-between">
+                  <span className="font-mono">{ticket.locationDesk || 'Not specified'}</span>
+                  <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300">
+                    {ticket.locationDesk ? 'Assigned' : 'Unset'}
+                  </span>
+                </div>
               </div>
-              <div className="p-2.5 rounded-lg neu-inset bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-slate-100 flex items-center justify-between">
-                <span className="font-mono">{ticket.locationDesk || 'Desk #14-B (Main Floor)'}</span>
-                <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300">
-                  Assigned
-                </span>
-              </div>
-            </div>
+            )}
 
             {/* Priority */}
             <div>

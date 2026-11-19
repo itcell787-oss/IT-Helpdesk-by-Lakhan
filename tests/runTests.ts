@@ -1017,6 +1017,74 @@ async function runTestSuite() {
 
   testPortalAnnouncementsAndTicketFormEditor();
 
+  // -------------------------------------------------------------
+  // Test 28: Dynamic Asset & Ticket Custom Fields + Ticket Table Column Sync
+  // -------------------------------------------------------------
+  const testDynamicTicketCustomFieldsAndTableSync = () => {
+    console.log('\n🧩 Running Dynamic Asset & Ticket Custom Fields Tests...');
+
+    const originalFields = [...(db.get('customFields') || [])];
+    const assetIdField = {
+      id: 'cf-test-asset-id',
+      name: 'assetId',
+      label: 'Asset ID',
+      type: 'text' as const,
+      required: false,
+      requiredOnClose: false,
+      visibleOnPortal: true,
+      showInTicketTable: true,
+      enabled: true,
+      order: originalFields.length + 1,
+      section: 'technical' as const,
+      placeholder: 'e.g. AST-1042',
+    };
+
+    const serialMacField = {
+      id: 'cf-test-serial-mac',
+      name: 'serialMacAddress',
+      label: 'Serial / MAC',
+      type: 'text' as const,
+      required: false,
+      requiredOnClose: false,
+      visibleOnPortal: true,
+      showInTicketTable: false,
+      enabled: true,
+      order: originalFields.length + 2,
+      section: 'technical' as const,
+    };
+
+    db.set('customFields', [...originalFields, assetIdField, serialMacField]);
+    const savedFields = db.get('customFields') || [];
+    const foundAssetId = savedFields.find((f) => f.id === 'cf-test-asset-id');
+    const foundSerialMac = savedFields.find((f) => f.id === 'cf-test-serial-mac');
+
+    assert(
+      'Adding asset/hardware ticket fields persists label, key, and showInTicketTable flag',
+      Boolean(
+        foundAssetId &&
+          foundAssetId.label === 'Asset ID' &&
+          foundAssetId.showInTicketTable === true &&
+          foundSerialMac &&
+          foundSerialMac.showInTicketTable === false
+      )
+    );
+
+    // Removing a field removes it cleanly from the customFields schema
+    db.set('customFields', savedFields.filter((f) => f.id !== 'cf-test-serial-mac'));
+    const afterDelete = db.get('customFields') || [];
+    assert(
+      'Removing a field from Ticket Form Editor deletes it cleanly from persisted schema',
+      Boolean(
+        afterDelete.some((f) => f.id === 'cf-test-asset-id') &&
+          !afterDelete.some((f) => f.id === 'cf-test-serial-mac')
+      )
+    );
+
+    db.set('customFields', originalFields);
+  };
+
+  testDynamicTicketCustomFieldsAndTableSync();
+
   try {
     fs.copyFileSync('data/database.seed.json', 'data/database.json');
     if (fs.existsSync('data/database.json.bak')) {

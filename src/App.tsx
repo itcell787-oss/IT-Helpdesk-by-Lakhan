@@ -159,6 +159,7 @@ export default function App() {
 
   // UI state & Separate Login Modal state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isTicketWorkspaceMaximized, setIsTicketWorkspaceMaximized] = useState(false);
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [loginModalPortalType, setLoginModalPortalType] = useState<'user' | 'admin'>('user');
@@ -166,6 +167,25 @@ export default function App() {
   const [isMandatoryPasswordResetOpen, setIsMandatoryPasswordResetOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Auto-exit maximize mode if user navigates outside ticket views, and allow Esc to restore
+  useEffect(() => {
+    const ticketViews = ['tickets', 'tickets-my', 'tickets-unassigned', 'tickets-critical', 'ticket-detail'];
+    if (!ticketViews.includes(activeView) && isTicketWorkspaceMaximized) {
+      setIsTicketWorkspaceMaximized(false);
+    }
+  }, [activeView, isTicketWorkspaceMaximized]);
+
+  useEffect(() => {
+    if (!isTicketWorkspaceMaximized) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isNewTicketOpen && !isCommandPaletteOpen && !isLoginModalOpen) {
+        setIsTicketWorkspaceMaximized(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [isTicketWorkspaceMaximized, isNewTicketOpen, isCommandPaletteOpen, isLoginModalOpen]);
 
   // Real-time Ticket Generation Notification State
   const [showNewTicketNotification, setShowNewTicketNotification] = useState<boolean>(false);
@@ -1156,6 +1176,8 @@ export default function App() {
   };
 
   const isStaffLoggedIn = currentUser && currentUser.role !== 'requester';
+  const isTicketViewActive = ['tickets', 'tickets-my', 'tickets-unassigned', 'tickets-critical', 'ticket-detail'].includes(activeView);
+  const workspaceMaximized = Boolean(isTicketWorkspaceMaximized && isTicketViewActive && isStaffLoggedIn);
 
   return (
     <div className={`h-screen max-h-screen overflow-hidden ${isDark ? 'dark bg-[#0b1120] text-slate-100' : 'bg-[#f1f5f9] text-slate-900'} flex flex-col font-sans transition-colors`}>
@@ -1167,7 +1189,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Navbar */}
+      {/* Top Navbar (Hidden while Ticket Management Workspace is maximized inside browser) */}
+      {!workspaceMaximized && (
       <Navbar
         currentUser={currentUser}
         organization={organization}
@@ -1234,11 +1257,12 @@ export default function App() {
         defaultGatewayConfig={defaultGateway}
         technicianAttendance={technicianAttendance}
       />
+      )}
 
       {/* Main Layout Area - Static Left Sidebar & Scrollable Main Canvas */}
       <div className="flex-1 flex overflow-hidden min-h-0 relative">
-        {/* Sidebar Navigation (Only visible for authenticated IT staff outside portal) */}
-        {activeView !== 'portal' && isStaffLoggedIn && (
+        {/* Sidebar Navigation (Only visible for authenticated IT staff outside portal & when not maximized) */}
+        {activeView !== 'portal' && isStaffLoggedIn && !workspaceMaximized && (
           <Sidebar
             activeView={activeView}
             onNavigate={(view) => {
@@ -1260,8 +1284,8 @@ export default function App() {
         )}
 
         {/* Viewport Content Canvas */}
-        <main className="flex-1 overflow-y-auto h-full min-h-0 p-4 sm:p-6 lg:p-8 custom-scrollbar">
-          <div className="max-w-7xl mx-auto">
+        <main className={`flex-1 overflow-y-auto h-full min-h-0 custom-scrollbar ${workspaceMaximized ? 'p-3 sm:p-4' : 'p-4 sm:p-6 lg:p-8'}`}>
+          <div className={workspaceMaximized ? 'w-full max-w-none' : 'max-w-7xl mx-auto'}>
             {/* If unauthenticated guest accesses an administrative view, show Admin Login Required guard */}
             {!currentUser && activeView !== 'portal' && activeView !== 'kb' && activeView !== 'catalog' && (
               <div className="max-w-md mx-auto my-12 p-8 neu-flat rounded-2xl border border-slate-300 dark:border-white/10 text-center space-y-4">
@@ -1322,6 +1346,10 @@ export default function App() {
                 tickets={tickets}
                 users={availableUsers}
                 organizations={organizations}
+                customFields={customFields}
+                assets={assets}
+                isMaximized={workspaceMaximized}
+                onToggleMaximize={isStaffLoggedIn ? () => setIsTicketWorkspaceMaximized((v) => !v) : undefined}
                 onSelectTicket={handleSelectTicket}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onBulkUpdate={handleBulkUpdate}
@@ -1357,6 +1385,10 @@ export default function App() {
                 tickets={tickets}
                 users={availableUsers}
                 organizations={organizations}
+                customFields={customFields}
+                assets={assets}
+                isMaximized={workspaceMaximized}
+                onToggleMaximize={isStaffLoggedIn ? () => setIsTicketWorkspaceMaximized((v) => !v) : undefined}
                 onSelectTicket={handleSelectTicket}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onBulkUpdate={handleBulkUpdate}
@@ -1392,6 +1424,10 @@ export default function App() {
                 tickets={tickets}
                 users={availableUsers}
                 organizations={organizations}
+                customFields={customFields}
+                assets={assets}
+                isMaximized={workspaceMaximized}
+                onToggleMaximize={isStaffLoggedIn ? () => setIsTicketWorkspaceMaximized((v) => !v) : undefined}
                 onSelectTicket={handleSelectTicket}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onBulkUpdate={handleBulkUpdate}
@@ -1427,6 +1463,10 @@ export default function App() {
                 tickets={tickets}
                 users={availableUsers}
                 organizations={organizations}
+                customFields={customFields}
+                assets={assets}
+                isMaximized={workspaceMaximized}
+                onToggleMaximize={isStaffLoggedIn ? () => setIsTicketWorkspaceMaximized((v) => !v) : undefined}
                 onSelectTicket={handleSelectTicket}
                 onOpenNewTicket={() => setIsNewTicketOpen(true)}
                 onBulkUpdate={handleBulkUpdate}
@@ -1465,7 +1505,12 @@ export default function App() {
                 workLogs={ticketDetailData.workLogs}
                 auditLogs={ticketDetailData.auditLogs}
                 users={availableUsers}
+                customFields={customFields}
+                assets={assets}
+                systemSettings={systemSettings || organization?.systemSettings}
                 currentUser={currentUser}
+                isMaximized={workspaceMaximized}
+                onToggleMaximize={isStaffLoggedIn ? () => setIsTicketWorkspaceMaximized((v) => !v) : undefined}
                 onBack={() => {
                   setSelectedTicketId(null);
                   setActiveView(previousTicketView && previousTicketView !== 'ticket-detail' ? previousTicketView : (currentUser?.role === 'requester' ? 'portal' : 'tickets'));
@@ -1720,6 +1765,7 @@ export default function App() {
         currentUser={currentUser}
         requireOtp={Boolean(systemSettings?.requireOtpForTicketSubmission ?? organization?.systemSettings?.requireOtpForTicketSubmission)}
         ticketCategories={systemSettings?.ticketCategories || organization?.systemSettings?.ticketCategories}
+        systemSettings={systemSettings || organization?.systemSettings}
       />
 
       {/* Separate User Portal & Admin Login Modal */}

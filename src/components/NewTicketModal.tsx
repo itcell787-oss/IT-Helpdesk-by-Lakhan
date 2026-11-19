@@ -32,6 +32,7 @@ interface NewTicketModalProps {
   currentUser: User | null;
   requireOtp?: boolean;
   ticketCategories?: string[];
+  systemSettings?: any;
 }
 
 export const NewTicketModal: React.FC<NewTicketModalProps> = ({
@@ -45,8 +46,17 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
   currentUser,
   requireOtp = false,
   ticketCategories,
+  systemSettings,
 }) => {
   const isRequester = !currentUser || currentUser.role === 'requester';
+  const formCfg = systemSettings?.ticketSubmissionFormConfig || {};
+  const showLocationDesk = formCfg.showLocationDesk !== false;
+  const requireLocationDesk = showLocationDesk && formCfg.requireLocationDesk !== false;
+  const locationDeskLabel = formCfg.locationDeskLabel || 'Location / Desk No';
+  const locationDeskPlaceholder = formCfg.locationDeskPlaceholder || 'e.g. Floor 2 - Desk 14-B / Sales Bay 4';
+  const showAttachments = formCfg.showAttachments !== false;
+  const showForwardToManager = formCfg.showForwardToManager !== false;
+  const defaultPriority = formCfg.defaultPriority || 'normal';
 
   const categoriesList = ticketCategories && ticketCategories.length > 0 ? ticketCategories : [
     'Hardware & Workstations',
@@ -59,7 +69,7 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
 
   const [subject, setSubject] = useState('');
   const [category, setCategory] = useState(categoriesList[0] || 'Hardware & Workstations');
-  const [priority, setPriority] = useState('normal');
+  const [priority, setPriority] = useState<string>(defaultPriority);
   const [type, setType] = useState('incident');
   const [description, setDescription] = useState('');
   const [requesterId, setRequesterId] = useState(currentUser?.id || 'guest');
@@ -67,6 +77,7 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
   const [requesterEmail, setRequesterEmail] = useState(currentUser?.email || '');
   const [locationDesk, setLocationDesk] = useState('');
   const [locationDeskError, setLocationDeskError] = useState<string | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState('');
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
   const [suggestedArticle, setSuggestedArticle] = useState<KnowledgeArticle | null>(null);
@@ -88,13 +99,14 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
 
         const currentTotal = attachments.reduce((acc, a) => acc + (a.size || 0), 0);
         if (attachments.length >= 4) {
-          alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+          setAttachmentError('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
           return;
         }
         if (currentTotal + file.size > 2 * 1024 * 1024) {
-          alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (Current: ${(currentTotal / (1024 * 1024)).toFixed(2)} MB)`);
+          setAttachmentError(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (Current: ${(currentTotal / (1024 * 1024)).toFixed(2)} MB)`);
           return;
         }
+        setAttachmentError(null);
 
         const reader = new FileReader();
         reader.onload = (uploadEvent) => {
@@ -120,15 +132,16 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
     let currentTotal = attachments.reduce((acc, a) => acc + (a.size || 0), 0);
     let count = attachments.length;
     const filesToAdd: File[] = [];
+    setAttachmentError(null);
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (count >= 4) {
-        alert('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
+        setAttachmentError('Attachment limit reached: Maximum 4 attachments allowed per ticket.');
         break;
       }
       if (currentTotal + file.size > 2 * 1024 * 1024) {
-        alert(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (File "${file.name}" would exceed the 2 MB limit)`);
+        setAttachmentError(`Attachment limit exceeded: Total attachments cannot exceed 2 MB. (File "${file.name}" would exceed the 2 MB limit)`);
         break;
       }
       currentTotal += file.size;
@@ -251,8 +264,8 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
     e.preventDefault();
     if (!subject.trim() || !description.trim()) return;
 
-    if (!locationDesk.trim()) {
-      setLocationDeskError('Location / Desk No is mandatory for IT support requests.');
+    if (requireLocationDesk && !locationDesk.trim()) {
+      setLocationDeskError(`${locationDeskLabel} is mandatory for IT support requests.`);
       return;
     }
 
@@ -536,7 +549,13 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
           </div>
 
           {/* Attachments & Direct Snip Paste Zone */}
+          {showAttachments && (
           <div className="space-y-2 p-3 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-dashed border-cyan-500/40">
+            {attachmentError && (
+              <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-500/40 text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+                {attachmentError}
+              </div>
+            )}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Paperclip className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
@@ -622,36 +641,41 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
               </div>
             )}
           </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Location / Desk No (Mandatory Field as in Asset & Inventory) */}
-            <div>
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
-                <span className="flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-                  <span>Location / Desk No *</span>
-                </span>
-                <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Mandatory</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. Floor 2 - Desk 14-B / Sales Bay 4"
-                value={locationDesk}
-                onChange={(e) => {
-                  setLocationDesk(e.target.value);
-                  if (locationDeskError) setLocationDeskError(null);
-                }}
-                className={`w-full px-3 py-1.5 text-xs font-medium neu-input bg-slate-50 dark:bg-slate-900 border rounded-lg text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500 ${
-                  locationDeskError ? 'border-rose-500 ring-1 ring-rose-500' : 'border-slate-300 dark:border-white/10'
-                }`}
-              />
-              {locationDeskError && (
-                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 mt-1">
-                  {locationDeskError}
-                </p>
-              )}
-            </div>
+            {/* Location / Desk No (Respects Ticket Form Editor config) */}
+            {showLocationDesk && (
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                    <span>{locationDeskLabel} {requireLocationDesk ? '*' : ''}</span>
+                  </span>
+                  <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">
+                    {requireLocationDesk ? 'Mandatory' : 'Optional'}
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  required={requireLocationDesk}
+                  placeholder={locationDeskPlaceholder}
+                  value={locationDesk}
+                  onChange={(e) => {
+                    setLocationDesk(e.target.value);
+                    if (locationDeskError) setLocationDeskError(null);
+                  }}
+                  className={`w-full px-3 py-1.5 text-xs font-medium neu-input bg-slate-50 dark:bg-slate-900 border rounded-lg text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500 ${
+                    locationDeskError ? 'border-rose-500 ring-1 ring-rose-500' : 'border-slate-300 dark:border-white/10'
+                  }`}
+                />
+                {locationDeskError && (
+                  <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 mt-1">
+                    {locationDeskError}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Associated IT Asset */}
             <div>
@@ -717,6 +741,75 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
                               </option>
                             ))}
                           </select>
+                        ) : field.type === 'multiselect' ? (
+                          <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10">
+                            {(field.options || []).map((opt) => {
+                              const selectedArr: string[] = Array.isArray(customValues[field.name])
+                                ? customValues[field.name]
+                                : [];
+                              const checked = selectedArr.includes(opt);
+                              return (
+                                <label key={opt} className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const next = e.target.checked
+                                        ? [...selectedArr, opt]
+                                        : selectedArr.filter((v) => v !== opt);
+                                      setCustomValues({ ...customValues, [field.name]: next });
+                                    }}
+                                    className="rounded text-cyan-600 cursor-pointer"
+                                  />
+                                  <span>{opt}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ) : field.type === 'checkbox' ? (
+                          <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(customValues[field.name])}
+                              onChange={(e) =>
+                                setCustomValues({ ...customValues, [field.name]: e.target.checked })
+                              }
+                              className="rounded text-cyan-600 cursor-pointer"
+                            />
+                            <span>{field.placeholder || 'Yes'}</span>
+                          </label>
+                        ) : field.type === 'asset' ? (
+                          <select
+                            required={field.required}
+                            value={customValues[field.name] || ''}
+                            onChange={(e) =>
+                              setCustomValues({ ...customValues, [field.name]: e.target.value })
+                            }
+                            className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                          >
+                            <option value="">Select IT asset...</option>
+                            {assets.map((a) => (
+                              <option key={a.id} value={`${a.id} - ${a.name}`}>
+                                {a.id} - {a.name} ({a.model})
+                              </option>
+                            ))}
+                          </select>
+                        ) : field.type === 'user' ? (
+                          <select
+                            required={field.required}
+                            value={customValues[field.name] || ''}
+                            onChange={(e) =>
+                              setCustomValues({ ...customValues, [field.name]: e.target.value })
+                            }
+                            className="w-full px-3 py-1.5 text-xs font-semibold neu-select bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-white/10 rounded-lg text-slate-900 dark:text-slate-100"
+                          >
+                            <option value="">Select employee...</option>
+                            {users.map((u) => (
+                              <option key={u.id} value={u.name}>
+                                {u.name} ({u.email})
+                              </option>
+                            ))}
+                          </select>
                         ) : field.type === 'textarea' ? (
                           <textarea
                             required={field.required}
@@ -750,7 +843,8 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
             </div>
           )}
 
-          {/* Forward to Manager & CC Option (User Request) */}
+          {/* Forward to Manager & CC Option */}
+          {showForwardToManager && (
           <div className="p-3.5 rounded-xl neu-card bg-slate-50/80 dark:bg-slate-900/60 border border-slate-200 dark:border-white/10 space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -797,6 +891,7 @@ export const NewTicketModal: React.FC<NewTicketModalProps> = ({
               </div>
             </div>
           </div>
+          )}
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-white/10">
             <button

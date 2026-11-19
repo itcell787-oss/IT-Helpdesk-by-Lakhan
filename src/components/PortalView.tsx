@@ -1599,6 +1599,21 @@ export const PortalView: React.FC<PortalViewProps> = ({
                                 {field.placeholder || `Enable / Confirm ${field.label}`}
                               </span>
                             </label>
+                          ) : field.type === 'asset' ? (
+                            <select
+                              value={customValues[field.name] || ''}
+                              onChange={(e) =>
+                                setCustomValues({ ...customValues, [field.name]: e.target.value })
+                              }
+                              className="w-full px-3 py-2 text-xs neu-select rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
+                            >
+                              <option value="">Select IT asset...</option>
+                              {(assets || []).map((a) => (
+                                <option key={a.id} value={`${a.id} - ${a.name}`}>
+                                  {a.id} - {a.name} ({a.model})
+                                </option>
+                              ))}
+                            </select>
                           ) : (
                             <input
                               type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}

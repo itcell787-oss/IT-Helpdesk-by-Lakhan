@@ -3479,6 +3479,7 @@ apiRouter.post('/custom-fields', (req: Request, res: Response) => {
     defaultValue: req.body.defaultValue,
     order: req.body.order || fields.length + 1,
     enabled: req.body.enabled !== false,
+    showInTicketTable: req.body.showInTicketTable !== false,
     section: req.body.section || 'general',
     conditionalRule: req.body.conditionalRule,
   };

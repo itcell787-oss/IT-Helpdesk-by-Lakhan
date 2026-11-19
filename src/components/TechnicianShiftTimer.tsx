@@ -344,7 +344,7 @@ export const TechnicianNavbarTimerWidget: React.FC<{
   } = attendance;
 
   return (
-    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 shadow-2xs">
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-100/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 shadow-2xs shrink-0 whitespace-nowrap">
       {/* Live Status Indicator */}
       <div className="flex items-center gap-1.5 pr-1.5 border-r border-slate-200 dark:border-slate-800">
         <span
@@ -355,7 +355,7 @@ export const TechnicianNavbarTimerWidget: React.FC<{
                 ? 'bg-amber-500 animate-pulse'
                 : currentStatus === 'stopped'
                   ? 'bg-slate-400'
-                  : 'bg-rose-500 animate-ping'
+                  : 'bg-rose-500'
           }`}
         />
         <div className="flex flex-col leading-none">
@@ -371,7 +371,7 @@ export const TechnicianNavbarTimerWidget: React.FC<{
                 ? 'On Break'
                 : currentStatus === 'stopped'
                   ? 'Shift Done'
-                  : 'Start Shift'}
+                  : 'Shift'}
           </span>
         </div>
       </div>
@@ -382,11 +382,11 @@ export const TechnicianNavbarTimerWidget: React.FC<{
           type="button"
           disabled={actionLoading}
           onClick={() => startTimer()}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer disabled:opacity-50 shadow-2xs"
-          title="Start Working Shift Timer"
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer disabled:opacity-50 shadow-2xs whitespace-nowrap shrink-0"
+          title={currentStatus === 'stopped' ? 'Resume Working Shift Timer' : 'Start Working Shift Timer'}
         >
-          <Play className="w-3 h-3 fill-current" />
-          <span className="hidden xl:inline">{currentStatus === 'stopped' ? 'Resume' : 'Start Timer'}</span>
+          <Play className="w-3 h-3 fill-current shrink-0" />
+          <span className="hidden 2xl:inline">{currentStatus === 'stopped' ? 'Resume' : 'Start'}</span>
         </button>
       ) : currentStatus === 'working' ? (
         <>
@@ -394,21 +394,21 @@ export const TechnicianNavbarTimerWidget: React.FC<{
             type="button"
             disabled={actionLoading}
             onClick={() => startBreak('Break')}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/30 transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/30 transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             title="Start Break Timer (Pauses work clock)"
           >
-            <Coffee className="w-3 h-3" />
-            <span className="hidden xl:inline">Break</span>
+            <Coffee className="w-3 h-3 shrink-0" />
+            <span className="hidden 2xl:inline">Break</span>
           </button>
           <button
             type="button"
             disabled={actionLoading}
             onClick={() => stopTimer()}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 border border-rose-500/30 transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 border border-rose-500/30 transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             title="Stop Shift Timer & Clock Out"
           >
-            <Square className="w-3 h-3 fill-current" />
-            <span className="hidden xl:inline">Stop</span>
+            <Square className="w-3 h-3 fill-current shrink-0" />
+            <span className="hidden 2xl:inline">Stop</span>
           </button>
         </>
       ) : (
@@ -417,21 +417,21 @@ export const TechnicianNavbarTimerWidget: React.FC<{
             type="button"
             disabled={actionLoading}
             onClick={() => stopBreak()}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             title="Stop Break Timer & Resume Work"
           >
-            <Play className="w-3 h-3 fill-current" />
-            <span className="hidden xl:inline">End Break</span>
+            <Play className="w-3 h-3 fill-current shrink-0" />
+            <span className="hidden 2xl:inline">Resume</span>
           </button>
           <button
             type="button"
             disabled={actionLoading}
             onClick={() => stopTimer()}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 border border-rose-500/30 transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 border border-rose-500/30 transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
             title="Stop Shift Timer & Clock Out"
           >
-            <Square className="w-3 h-3 fill-current" />
-            <span className="hidden xl:inline">Stop</span>
+            <Square className="w-3 h-3 fill-current shrink-0" />
+            <span className="hidden 2xl:inline">Stop</span>
           </button>
         </>
       )}

@@ -338,6 +338,7 @@ export interface CustomFieldDefinition {
   defaultValue?: any;
   order?: number;
   enabled?: boolean;
+  showInTicketTable?: boolean;
   section?: 'general' | 'technical' | 'environment' | 'closure';
   conditionalRule?: {
     dependsOnField: string;

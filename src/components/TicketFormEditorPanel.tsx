@@ -11,6 +11,9 @@ import {
   CheckCircle2,
   FileText,
   MapPin,
+  Table2,
+  Package,
+  X,
 } from 'lucide-react';
 import { CustomFieldDefinition, Organization, TicketSubmissionFormConfig } from '../types';
 import { api } from '../services/api';
@@ -48,6 +51,101 @@ const DEFAULT_FORM_CONFIG: Required<TicketSubmissionFormConfig> = {
   showForwardToManager: true,
   showAttachments: true,
 };
+
+interface QuickFieldPreset {
+  name: string;
+  label: string;
+  type: CustomFieldDefinition['type'];
+  placeholder: string;
+  description: string;
+  section: 'general' | 'technical' | 'environment' | 'closure';
+  options?: string[];
+}
+
+const ASSET_AND_TICKET_FIELD_PRESETS: QuickFieldPreset[] = [
+  {
+    name: 'assetId',
+    label: 'Asset ID',
+    type: 'text',
+    placeholder: 'e.g. AST-1042',
+    description: 'Internal IT inventory Asset ID',
+    section: 'technical',
+  },
+  {
+    name: 'deviceAssetTag',
+    label: 'Asset Tag / Serial Number',
+    type: 'text',
+    placeholder: 'e.g. TAG-8821 / SN-9X21K',
+    description: 'Hardware asset tag or chassis serial number',
+    section: 'technical',
+  },
+  {
+    name: 'deviceHardwareName',
+    label: 'Device / Hardware Name',
+    type: 'text',
+    placeholder: 'e.g. Dell Latitude 7440 / HQ-SW-01',
+    description: 'Hostname or hardware device name',
+    section: 'technical',
+  },
+  {
+    name: 'assetType',
+    label: 'Asset / Device Type',
+    type: 'select',
+    placeholder: 'Select device type',
+    description: 'Category of hardware or software asset',
+    section: 'technical',
+    options: ['Laptop', 'Desktop', 'Server', 'Monitor', 'Switch', 'Mobile', 'Peripheral', 'License'],
+  },
+  {
+    name: 'manufacturerModel',
+    label: 'Manufacturer & Model',
+    type: 'text',
+    placeholder: 'e.g. Dell Precision 5680 / MacBook Pro M3',
+    description: 'Hardware vendor and model number',
+    section: 'technical',
+  },
+  {
+    name: 'serialMacAddress',
+    label: 'Serial / MAC',
+    type: 'text',
+    placeholder: 'e.g. SN-88291A / 00:1A:2B:3C:4D:5E',
+    description: 'Device serial number or network MAC address',
+    section: 'technical',
+  },
+  {
+    name: 'assignedEmployee',
+    label: 'Assigned Employee',
+    type: 'text',
+    placeholder: 'e.g. Priya Sharma (CBPL1042)',
+    description: 'Primary employee assigned to this device',
+    section: 'general',
+  },
+  {
+    name: 'assetCost',
+    label: 'Cost',
+    type: 'text',
+    placeholder: 'e.g. ₹85,000',
+    description: 'Hardware acquisition or repair cost',
+    section: 'general',
+  },
+  {
+    name: 'lifecycleStatus',
+    label: 'Lifecycle Status',
+    type: 'select',
+    placeholder: 'Select lifecycle status',
+    description: 'Current hardware inventory status',
+    section: 'environment',
+    options: ['In Service', 'In Stock', 'In Repair', 'Retired'],
+  },
+  {
+    name: 'warrantyPeriod',
+    label: 'Warranty & Period',
+    type: 'text',
+    placeholder: 'e.g. 3 Years ProSupport (Valid till Dec 2027)',
+    description: 'Active warranty plan and expiry period',
+    section: 'environment',
+  },
+];
 
 export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
   organization,
@@ -136,6 +234,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
   const [fieldRequired, setFieldRequired] = useState(false);
   const [fieldRequiredOnClose, setFieldRequiredOnClose] = useState(false);
   const [fieldPortalVisible, setFieldPortalVisible] = useState(true);
+  const [fieldShowInTable, setFieldShowInTable] = useState(true);
   const [fieldEnabled, setFieldEnabled] = useState(true);
   const [fieldOptions, setFieldOptions] = useState('');
   const [fieldPlaceholder, setFieldPlaceholder] = useState('');
@@ -145,11 +244,19 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
   const [condField, setCondField] = useState('category');
   const [condOperator, setCondOperator] = useState<'equals' | 'not_equals'>('equals');
   const [condValue, setCondValue] = useState(ticketCategories[0] || 'Hardware & Workstations');
+  const [editorErrorMsg, setEditorErrorMsg] = useState<string | null>(null);
+  const [pendingDeleteFieldId, setPendingDeleteFieldId] = useState<string | null>(null);
+  const [presetBusyKey, setPresetBusyKey] = useState<string | null>(null);
 
   const [previewFormValues, setPreviewFormValues] = useState<Record<string, any>>({
     category: ticketCategories[0] || 'Hardware & Workstations',
     priority: defaultPriority,
   });
+
+  const showEditorError = (msg: string) => {
+    setEditorErrorMsg(msg);
+    setTimeout(() => setEditorErrorMsg(null), 4000);
+  };
 
   const handleSaveFormConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -176,7 +283,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
       setFormCfgSaveMsg('Submit Support Ticket form settings saved and synced to the End-User Portal.');
       setTimeout(() => setFormCfgSaveMsg(null), 4000);
     } catch (err: any) {
-      alert(err.message || 'Failed to save form configuration');
+      showEditorError(err.message || 'Failed to save form configuration');
     } finally {
       setSavingFormCfg(false);
     }
@@ -211,7 +318,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
     const trimmed = newCategoryInput.trim();
     if (!trimmed) return;
     if (ticketCategories.includes(trimmed)) {
-      alert('This ticket category already exists.');
+      showEditorError('This ticket category already exists.');
       return;
     }
     handleSaveTicketCategories([...ticketCategories, trimmed]);
@@ -220,7 +327,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
 
   const handleRemoveTicketCategory = (cat: string) => {
     if (ticketCategories.length <= 1) {
-      alert('You must retain at least one ticket category.');
+      showEditorError('You must retain at least one ticket category.');
       return;
     }
     handleSaveTicketCategories(ticketCategories.filter((c) => c !== cat));
@@ -249,6 +356,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
     setFieldRequired(false);
     setFieldRequiredOnClose(false);
     setFieldPortalVisible(true);
+    setFieldShowInTable(true);
     setFieldEnabled(true);
     setFieldOptions('');
     setFieldPlaceholder('');
@@ -269,6 +377,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
     setFieldRequired(f.required);
     setFieldRequiredOnClose(f.requiredOnClose);
     setFieldPortalVisible(f.visibleOnPortal);
+    setFieldShowInTable(f.showInTicketTable !== false);
     setFieldEnabled(f.enabled !== false);
     setFieldOptions((f.options || []).join(', '));
     setFieldPlaceholder(f.placeholder || '');
@@ -296,6 +405,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
       required: fieldRequired,
       requiredOnClose: fieldRequiredOnClose,
       visibleOnPortal: fieldPortalVisible,
+      showInTicketTable: fieldShowInTable,
       enabled: fieldEnabled,
       description: fieldDescription,
       placeholder: fieldPlaceholder,
@@ -322,6 +432,38 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
       onCreateCustomField(payload);
     }
     setShowFieldModal(false);
+  };
+
+  const handleTogglePresetField = async (preset: QuickFieldPreset) => {
+    if (presetBusyKey) return;
+    setPresetBusyKey(preset.name);
+    try {
+      const existing = customFields.find(
+        (f) => f.name.toLowerCase() === preset.name.toLowerCase() || f.label.toLowerCase() === preset.label.toLowerCase()
+      );
+      if (existing) {
+        await onDeleteCustomField(existing.id);
+      } else {
+        await onCreateCustomField({
+          name: preset.name,
+          label: preset.label,
+          type: preset.type,
+          placeholder: preset.placeholder,
+          description: preset.description,
+          section: preset.section,
+          options: preset.options,
+          required: false,
+          requiredOnClose: false,
+          visibleOnPortal: true,
+          showInTicketTable: true,
+          enabled: true,
+        });
+      }
+    } catch (err: any) {
+      showEditorError(err?.message || 'Failed to update preset field');
+    } finally {
+      setPresetBusyKey(null);
+    }
   };
 
   const handleMoveField = (idx: number, direction: 'up' | 'down') => {
@@ -368,6 +510,19 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {editorErrorMsg && (
+        <div className="px-3.5 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-500/40 text-xs font-semibold text-rose-800 dark:text-rose-200 flex items-center justify-between gap-2">
+          <span>{editorErrorMsg}</span>
+          <button
+            type="button"
+            onClick={() => setEditorErrorMsg(null)}
+            className="p-0.5 text-rose-500 hover:text-rose-700 dark:hover:text-rose-200 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Live Preview Panel */}
       {previewMode !== 'off' && (
@@ -805,7 +960,68 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
         </form>
       </div>
 
-      {/* Section 3: Custom Fields Table */}
+      {/* Section 3A: Quick-Add / Remove Asset & Ticket Fields */}
+      <div className="neu-flat p-5 rounded-2xl border border-slate-200 dark:border-white/10 space-y-3.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-white/10">
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
+              <Package className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+              Quick Add / Remove Asset &amp; Hardware Ticket Fields
+            </h3>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">
+              Toggle standard Asset &amp; Inventory fields on or off. Enabled fields sync instantly to the Submit Support Ticket form, Ticket Details, and Ticket Management table columns.
+            </p>
+          </div>
+          <span className="text-[11px] font-mono font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+            Location / Desk No is controlled in Layout above
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5">
+          {ASSET_AND_TICKET_FIELD_PRESETS.map((preset) => {
+            const existing = customFields.find(
+              (f) => f.name.toLowerCase() === preset.name.toLowerCase() || f.label.toLowerCase() === preset.label.toLowerCase()
+            );
+            const isAdded = Boolean(existing);
+            const isBusy = presetBusyKey === preset.name;
+            return (
+              <button
+                key={preset.name}
+                type="button"
+                disabled={isBusy}
+                onClick={() => handleTogglePresetField(preset)}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2 disabled:opacity-50 ${
+                  isAdded
+                    ? 'bg-cyan-50/80 dark:bg-cyan-950/35 border-cyan-400/70 dark:border-cyan-500/50 text-slate-900 dark:text-white shadow-xs'
+                    : 'bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-300 hover:border-cyan-400/60'
+                }`}
+                title={isAdded ? `Remove "${preset.label}" from ticket form & table` : `Add "${preset.label}" to ticket form & table`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-xs font-bold leading-snug">{preset.label}</span>
+                  <span
+                    className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                      isAdded
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                        : 'bg-slate-200/80 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                    }`}
+                  >
+                    {isAdded ? 'Added' : '+ Add'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+                  <span className="font-mono truncate">{preset.name}</span>
+                  <span className={isAdded ? 'text-rose-600 dark:text-rose-400 font-semibold shrink-0' : 'text-cyan-700 dark:text-cyan-400 font-semibold shrink-0'}>
+                    {isBusy ? 'Updating...' : isAdded ? 'Remove' : 'Enable'}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Section 3B: Custom Fields Table */}
       <div className="neu-flat rounded-2xl border border-slate-200 dark:border-white/10 overflow-hidden shadow-sm">
         <div className="px-5 py-3.5 border-b border-slate-200 dark:border-white/10 flex items-center justify-between gap-3">
           <div>
@@ -813,7 +1029,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
               Custom Ticket Form Fields ({customFields.length})
             </h3>
             <p className="text-[11px] text-slate-600 dark:text-slate-400">
-              Fields marked Portal Visible appear automatically on the End-User Submit Support Ticket form.
+              Fields marked Portal Visible appear on the End-User Submit Support Ticket form; fields marked Ticket Table appear as columns in Ticket Management.
             </p>
           </div>
           <button
@@ -825,7 +1041,7 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
           </button>
         </div>
         <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left text-xs min-w-[760px]">
+          <table className="w-full text-left text-xs min-w-[860px]">
             <thead className="bg-slate-100/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-white/10 uppercase tracking-wider font-bold text-[10px]">
               <tr>
                 <th className="py-3 px-3 w-16 text-center">Order</th>
@@ -833,9 +1049,10 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
                 <th className="py-3 px-3">Variable Key</th>
                 <th className="py-3 px-3">Type</th>
                 <th className="py-3 px-3">Section</th>
-                <th className="py-3 px-3">Mandatory on Create</th>
+                <th className="py-3 px-3">Mandatory</th>
                 <th className="py-3 px-3">Closure Gate</th>
                 <th className="py-3 px-3">Portal Visible</th>
+                <th className="py-3 px-3">Ticket Table</th>
                 <th className="py-3 px-3">Status</th>
                 <th className="py-3 px-3 text-right">Actions</th>
               </tr>
@@ -910,6 +1127,20 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
                   <td className="py-3 px-3">
                     <button
                       type="button"
+                      onClick={() => onUpdateCustomField(f.id, { showInTicketTable: f.showInTicketTable === false })}
+                      className={`inline-flex items-center gap-1 text-xs font-bold cursor-pointer hover:underline ${
+                        f.showInTicketTable !== false
+                          ? 'text-indigo-700 dark:text-indigo-400'
+                          : 'text-slate-500 font-medium'
+                      }`}
+                    >
+                      <Table2 className="w-3 h-3" />
+                      {f.showInTicketTable !== false ? 'Shown' : 'Hidden'}
+                    </button>
+                  </td>
+                  <td className="py-3 px-3">
+                    <button
+                      type="button"
                       onClick={() => onUpdateCustomField(f.id, { enabled: f.enabled === false })}
                       className={`text-xs font-bold cursor-pointer hover:underline ${
                         f.enabled !== false
@@ -922,26 +1153,46 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
                   </td>
                   <td className="py-3 px-3 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleEditField(f)}
-                        className="p-1 text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300 transition-colors cursor-pointer"
-                        title="Edit Field"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (confirm(`Delete custom field "${f.label}"?`)) {
-                            onDeleteCustomField(f.id);
-                          }
-                        }}
-                        className="p-1 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 transition-colors cursor-pointer"
-                        title="Delete Field"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {pendingDeleteFieldId === f.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onDeleteCustomField(f.id);
+                              setPendingDeleteFieldId(null);
+                            }}
+                            className="px-2 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-500 cursor-pointer whitespace-nowrap"
+                          >
+                            Confirm Remove
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingDeleteFieldId(null)}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleEditField(f)}
+                            className="p-1 text-slate-500 hover:text-cyan-600 dark:text-slate-400 dark:hover:text-cyan-300 transition-colors cursor-pointer"
+                            title="Edit Field"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingDeleteFieldId(f.id)}
+                            className="p-1 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 transition-colors cursor-pointer"
+                            title="Remove Field"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1127,6 +1378,19 @@ export const TicketFormEditorPanel: React.FC<TicketFormEditorPanelProps> = ({
                   />
                   <label htmlFor="tfEditorPortal" className="text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
                     Visible to normal users on Self-Service Portal
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="tfEditorTicketTable"
+                    checked={fieldShowInTable}
+                    onChange={(e) => setFieldShowInTable(e.target.checked)}
+                    className="rounded border-slate-300 text-cyan-600"
+                  />
+                  <label htmlFor="tfEditorTicketTable" className="text-xs font-bold text-indigo-700 dark:text-indigo-300 cursor-pointer">
+                    Show as column in Ticket Management Workspace table
                   </label>
                 </div>
               </div>

@@ -32,26 +32,20 @@ import {
   Printer,
   Paperclip,
   RotateCw,
+  Maximize2,
+  Minimize2,
+  MapPin,
 } from 'lucide-react';
-import { Ticket, User as UserType, UserRole, Organization } from '../types';
+import { Ticket, User as UserType, UserRole, Organization, CustomFieldDefinition, Asset } from '../types';
 import { SlaCountdownBadge } from './SlaCountdownBadge';
 import { generateTicketPdf } from '../utils/ticketPdfGenerator';
 
-export type TicketColumnKey =
-  | 'ticketId'
-  | 'subjectCategory'
-  | 'type'
-  | 'requester'
-  | 'organization'
-  | 'priority'
-  | 'status'
-  | 'assignee'
-  | 'slaStatus'
-  | 'createdTime';
+export type TicketColumnKey = string;
 
 export interface ColumnDefinition {
   key: TicketColumnKey;
   label: string;
+  customField?: CustomFieldDefinition;
 }
 
 export const AVAILABLE_TICKET_COLUMNS: ColumnDefinition[] = [
@@ -59,6 +53,7 @@ export const AVAILABLE_TICKET_COLUMNS: ColumnDefinition[] = [
   { key: 'subjectCategory', label: 'Subject & Category' },
   { key: 'type', label: 'Type' },
   { key: 'requester', label: 'Requester' },
+  { key: 'locationDesk', label: 'Location / Desk No' },
   { key: 'organization', label: 'Organization' },
   { key: 'priority', label: 'Priority' },
   { key: 'status', label: 'Status' },
@@ -71,6 +66,8 @@ interface TicketListViewProps {
   tickets: Ticket[];
   users: UserType[];
   organizations?: Organization[];
+  customFields?: CustomFieldDefinition[];
+  assets?: Asset[];
   onSelectTicket: (ticketId: string) => void;
   onOpenNewTicket: () => void;
   onBulkUpdate: (ticketIds: string[], action: string, value: string) => void;
@@ -86,12 +83,16 @@ interface TicketListViewProps {
   customPageInput?: string;
   onCustomPageInputChange?: (input: string) => void;
   onRefreshTickets?: () => Promise<void> | void;
+  isMaximized?: boolean;
+  onToggleMaximize?: () => void;
 }
 
 export const TicketListView: React.FC<TicketListViewProps> = ({
   tickets,
   users,
   organizations = [],
+  customFields = [],
+  assets = [],
   onSelectTicket,
   onOpenNewTicket,
   onBulkUpdate,
@@ -107,6 +108,8 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
   customPageInput: propCustomPageInput,
   onCustomPageInputChange,
   onRefreshTickets,
+  isMaximized = false,
+  onToggleMaximize,
 }) => {
   const [activeQueue, setActiveQueue] = useState(initialQueue);
   const [searchQuery, setSearchQuery] = useState('');
@@ -212,6 +215,36 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
     setCurrentPage(1);
   }, [activeQueue, searchQuery, selectedCategory, selectedPriority, selectedType, dateSort, dateRange]);
 
+  // Dynamic columns combining standard columns + enabled Custom Ticket Form Fields
+  const enabledCustomFields = React.useMemo(
+    () => customFields.filter((f) => f.enabled !== false),
+    [customFields]
+  );
+
+  const allColumns: ColumnDefinition[] = React.useMemo(
+    () => [
+      ...AVAILABLE_TICKET_COLUMNS,
+      ...enabledCustomFields.map((f) => ({
+        key: `cf:${f.name}`,
+        label: f.label,
+        customField: f,
+      })),
+    ],
+    [enabledCustomFields]
+  );
+
+  // Track user-hidden custom field columns so newly added fields auto-appear unless manually unchecked
+  const [hiddenCustomCols, setHiddenCustomCols] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('ticket_table_hidden_cf');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
   // Column visibility state persisted in localStorage
   const [selectedColumns, setSelectedColumns] = useState<TicketColumnKey[]>(() => {
     try {
@@ -235,7 +268,48 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
     ];
   });
 
+  // Sync custom field columns whenever fields are added/removed/toggled in Ticket Form Editor
+  React.useEffect(() => {
+    const validKeySet = new Set(allColumns.map((c) => c.key));
+    const tableVisibleCfKeys = enabledCustomFields
+      .filter((f) => f.showInTicketTable !== false)
+      .map((f) => `cf:${f.name}`);
+
+    setSelectedColumns((prev) => {
+      // Remove any cf: column that was deleted or disabled in the Ticket Form Editor
+      const cleaned = prev.filter((k) => validKeySet.has(k));
+      // Auto-include enabled custom fields marked showInTicketTable !== false unless explicitly hidden by user
+      const toAdd = tableVisibleCfKeys.filter(
+        (k) => !cleaned.includes(k) && !hiddenCustomCols.includes(k)
+      );
+      // Also remove cf: columns explicitly set to showInTicketTable === false in Ticket Form Editor
+      const explicitlyHiddenInEditor = new Set(
+        enabledCustomFields.filter((f) => f.showInTicketTable === false).map((f) => `cf:${f.name}`)
+      );
+      const next = [...cleaned.filter((k) => !explicitlyHiddenInEditor.has(k)), ...toAdd];
+      if (next.length === prev.length && next.every((k, idx) => k === prev[idx])) {
+        return prev;
+      }
+      try {
+        localStorage.setItem('ticket_table_columns', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [allColumns, enabledCustomFields, hiddenCustomCols]);
+
   const toggleColumn = (colKey: TicketColumnKey) => {
+    const isRemoving = selectedColumns.includes(colKey);
+    if (colKey.startsWith('cf:')) {
+      setHiddenCustomCols((prevHidden) => {
+        const nextHidden = isRemoving
+          ? Array.from(new Set([...prevHidden, colKey]))
+          : prevHidden.filter((k) => k !== colKey);
+        try {
+          localStorage.setItem('ticket_table_hidden_cf', JSON.stringify(nextHidden));
+        } catch {}
+        return nextHidden;
+      });
+    }
     setSelectedColumns((prev) => {
       let next: TicketColumnKey[];
       if (prev.includes(colKey)) {
@@ -250,6 +324,60 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
       return next;
     });
   };
+
+  // Resolve a custom field value for a ticket (with smart fallback to linked Asset properties)
+  const getCustomFieldDisplayValue = (ticket: Ticket, fieldName: string): string => {
+    const raw = ticket.customFields?.[fieldName];
+    if (raw !== undefined && raw !== null && raw !== '') {
+      if (typeof raw === 'boolean') return raw ? 'Yes' : 'No';
+      if (Array.isArray(raw)) return raw.join(', ');
+      return String(raw);
+    }
+    const linkedAssetId = ticket.relatedAssetIds?.[0];
+    if (linkedAssetId) {
+      const asset = assets.find((a) => a.id === linkedAssetId);
+      if (asset) {
+        switch (fieldName) {
+          case 'assetId':
+            return asset.id;
+          case 'deviceAssetTag':
+            return asset.serialNumber || asset.id || '';
+          case 'deviceHardwareName':
+            return asset.name || '';
+          case 'assetType':
+            return asset.type || '';
+          case 'manufacturerModel':
+            return [asset.manufacturer, asset.model].filter(Boolean).join(' ');
+          case 'serialMacAddress':
+            return [asset.serialNumber, asset.macAddress].filter(Boolean).join(' / ');
+          case 'assignedEmployee':
+            return asset.assignedToUserName || asset.assignedUserName || '';
+          case 'assetCost':
+            if (currentUserRole === 'manager') return '';
+            return asset.purchaseCost !== undefined
+              ? `${asset.costCurrency || '₹'}${asset.purchaseCost.toLocaleString()}`
+              : '';
+          case 'lifecycleStatus':
+            return (asset.lifecycleStatus || asset.status || '').replace(/_/g, ' ');
+          case 'warrantyPeriod':
+            return [asset.warrantyPeriod, asset.warrantyExpiry].filter(Boolean).join(' · ');
+          default:
+            break;
+        }
+      }
+    }
+    return '';
+  };
+
+  const activeCustomFieldCols = React.useMemo(
+    () => enabledCustomFields.filter((f) => selectedColumns.includes(`cf:${f.name}`)),
+    [enabledCustomFields, selectedColumns]
+  );
+
+  const visibleColumnCount = React.useMemo(
+    () => allColumns.filter((c) => selectedColumns.includes(c.key)).length,
+    [allColumns, selectedColumns]
+  );
 
   // STRICT RULE: Only Super Admin and Admin can delete tickets. Technicians & basic users cannot delete tickets!
   const canDelete = currentUserRole === 'superadmin' || currentUserRole === 'admin';
@@ -311,14 +439,19 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
     // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
+      const customFieldMatch = enabledCustomFields.some((f) =>
+        getCustomFieldDisplayValue(t, f.name).toLowerCase().includes(q)
+      );
       const match =
         t.id.toLowerCase().includes(q) ||
         t.subject.toLowerCase().includes(q) ||
         t.requesterName.toLowerCase().includes(q) ||
         t.requesterEmail.toLowerCase().includes(q) ||
+        (t.locationDesk || '').toLowerCase().includes(q) ||
         t.category.toLowerCase().includes(q) ||
         t.type.toLowerCase().includes(q) ||
-        t.tags.some((tag) => tag.toLowerCase().includes(q));
+        t.tags.some((tag) => tag.toLowerCase().includes(q)) ||
+        customFieldMatch;
       if (!match) return false;
     }
 
@@ -376,7 +509,20 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
 
   // CSV Export
   const handleExportCSV = () => {
-    const headers = ['ID', 'Subject', 'Status', 'Priority', 'Category', 'Requester', 'Assignee', 'Created', 'Due Date'];
+    const customHeaders = activeCustomFieldCols.map((f) => `"${f.label.replace(/"/g, '""')}"`);
+    const headers = [
+      'ID',
+      'Subject',
+      'Status',
+      'Priority',
+      'Category',
+      'Requester',
+      'Location / Desk No',
+      'Assignee',
+      ...customHeaders,
+      'Created',
+      'Due Date',
+    ];
     const rows = filteredTickets.map((t) => [
       t.id,
       `"${t.subject.replace(/"/g, '""')}"`,
@@ -384,7 +530,11 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
       t.priority,
       `"${t.category}"`,
       `"${t.requesterName}"`,
+      `"${(t.locationDesk || '').replace(/"/g, '""')}"`,
       `"${t.assignedTechnicianName || 'Unassigned'}"`,
+      ...activeCustomFieldCols.map(
+        (f) => `"${getCustomFieldDisplayValue(t, f.name).replace(/"/g, '""')}"`
+      ),
       t.createdAt,
       t.dueDate || '',
     ]);
@@ -814,9 +964,33 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
             <RotateCw className={`w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 ${isRefreshing ? 'animate-spin' : ''}`} />
             <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
           </button>
+          {onToggleMaximize && (
+            <button
+              type="button"
+              onClick={onToggleMaximize}
+              className={`neu-btn flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap shrink-0 transition-all ${
+                isMaximized
+                  ? 'neu-pressed text-cyan-700 dark:text-cyan-300 border border-cyan-500/50'
+                  : 'text-slate-800 dark:text-slate-200 hover:text-cyan-700 dark:hover:text-cyan-300'
+              }`}
+              title={isMaximized ? 'Restore standard workspace view (Esc)' : 'Maximize workspace inside browser window'}
+            >
+              {isMaximized ? (
+                <>
+                  <Minimize2 className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Restore View</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Maximize</span>
+                </>
+              )}
+            </button>
+          )}
           <button
             onClick={onOpenNewTicket}
-            className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.02]"
+            className="neu-btn-primary px-4 py-2 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap shrink-0 transition-transform hover:scale-[1.02]"
           >
             + Create Ticket
           </button>
@@ -918,12 +1092,12 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
               <Settings className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
               <span>Choose Columns</span>
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300 font-mono">
-                {selectedColumns.length}/10
+                {visibleColumnCount}/{allColumns.length}
               </span>
             </button>
 
             {showColumnChooser && (
-              <div className="absolute left-0 top-full mt-2 z-50 w-64 p-3 rounded-2xl neu-modal border border-slate-200 dark:border-white/15 shadow-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md space-y-2.5">
+              <div className="absolute left-0 top-full mt-2 z-50 w-72 p-3 rounded-2xl neu-modal border border-slate-200 dark:border-white/15 shadow-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md space-y-2.5">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-white/10">
                   <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                     <Settings className="w-3.5 h-3.5 text-cyan-600" />
@@ -933,9 +1107,13 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const allKeys = AVAILABLE_TICKET_COLUMNS.map((c) => c.key);
+                        const allKeys = allColumns.map((c) => c.key);
                         setSelectedColumns(allKeys);
-                        localStorage.setItem('ticket_table_columns', JSON.stringify(allKeys));
+                        setHiddenCustomCols([]);
+                        try {
+                          localStorage.setItem('ticket_table_columns', JSON.stringify(allKeys));
+                          localStorage.setItem('ticket_table_hidden_cf', JSON.stringify([]));
+                        } catch {}
                       }}
                       className="text-[10px] text-cyan-600 hover:underline font-semibold cursor-pointer"
                     >
@@ -952,7 +1130,7 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                 </div>
 
                 <div className="space-y-1 max-h-72 overflow-y-auto custom-scrollbar pr-1">
-                  {AVAILABLE_TICKET_COLUMNS.map((col) => {
+                  {allColumns.map((col) => {
                     const isChecked = selectedColumns.includes(col.key);
                     return (
                       <label
@@ -963,16 +1141,21 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                             : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 font-medium'
                         }`}
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
                           <input
                             type="checkbox"
                             checked={isChecked}
                             onChange={() => toggleColumn(col.key)}
-                            className="rounded border-slate-400 dark:border-slate-700 text-cyan-600 focus:ring-0 cursor-pointer"
+                            className="rounded border-slate-400 dark:border-slate-700 text-cyan-600 focus:ring-0 cursor-pointer shrink-0"
                           />
-                          <span>{col.label}</span>
+                          <span className="truncate">{col.label}</span>
+                          {col.customField && (
+                            <span className="text-[9px] font-mono uppercase px-1 py-0.2 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 shrink-0">
+                              Form
+                            </span>
+                          )}
                         </div>
-                        {isChecked && <Check className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />}
+                        {isChecked && <Check className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />}
                       </label>
                     );
                   })}
@@ -1167,23 +1350,29 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                     </button>
                   </div>
                 </th>
-                {selectedColumns.includes('ticketId') && <th className="py-3 px-2 w-28">Ticket ID</th>}
-                {selectedColumns.includes('subjectCategory') && <th className="py-3 px-3">Subject &amp; Category</th>}
-                {selectedColumns.includes('type') && <th className="py-3 px-3">Type</th>}
-                {selectedColumns.includes('requester') && <th className="py-3 px-3">Requester</th>}
-                {selectedColumns.includes('organization') && <th className="py-3 px-3">Organization</th>}
-                {selectedColumns.includes('priority') && <th className="py-3 px-3">Priority</th>}
-                {selectedColumns.includes('status') && <th className="py-3 px-3">Status</th>}
-                {selectedColumns.includes('assignee') && <th className="py-3 px-3">Assignee</th>}
-                {selectedColumns.includes('slaStatus') && <th className="py-3 px-3">SLA Status</th>}
-                {selectedColumns.includes('createdTime') && <th className="py-3 px-3 text-right">Created Time &amp; Date</th>}
-                <th className="py-3 px-2 text-center w-20">Actions</th>
+                {selectedColumns.includes('ticketId') && <th className="py-3 px-2 w-28 whitespace-nowrap">Ticket ID</th>}
+                {selectedColumns.includes('subjectCategory') && <th className="py-3 px-3 whitespace-nowrap">Subject &amp; Category</th>}
+                {selectedColumns.includes('type') && <th className="py-3 px-3 whitespace-nowrap">Type</th>}
+                {selectedColumns.includes('requester') && <th className="py-3 px-3 whitespace-nowrap">Requester</th>}
+                {selectedColumns.includes('locationDesk') && <th className="py-3 px-3 whitespace-nowrap">Location / Desk No</th>}
+                {selectedColumns.includes('organization') && <th className="py-3 px-3 whitespace-nowrap">Organization</th>}
+                {selectedColumns.includes('priority') && <th className="py-3 px-3 whitespace-nowrap">Priority</th>}
+                {selectedColumns.includes('status') && <th className="py-3 px-3 whitespace-nowrap">Status</th>}
+                {selectedColumns.includes('assignee') && <th className="py-3 px-3 whitespace-nowrap">Assignee</th>}
+                {selectedColumns.includes('slaStatus') && <th className="py-3 px-3 whitespace-nowrap">SLA Status</th>}
+                {activeCustomFieldCols.map((field) => (
+                  <th key={field.id} className="py-3 px-3 whitespace-nowrap">
+                    {field.label}
+                  </th>
+                ))}
+                {selectedColumns.includes('createdTime') && <th className="py-3 px-3 text-right whitespace-nowrap">Created Time &amp; Date</th>}
+                <th className="py-3 px-2 text-center w-20 whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200/90 dark:divide-white/5">
               {filteredTickets.length === 0 ? (
                 <tr>
-                  <td colSpan={1 + selectedColumns.length + 1} className="py-12 text-center text-slate-700 dark:text-slate-300 font-semibold text-sm">
+                  <td colSpan={1 + visibleColumnCount + 1} className="py-12 text-center text-slate-700 dark:text-slate-300 font-semibold text-sm">
                     No tickets found matching the specified filter criteria.
                   </td>
                 </tr>
@@ -1306,6 +1495,19 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                         );
                       })()}
 
+                      {selectedColumns.includes('locationDesk') && (
+                        <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                          {t.locationDesk ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-800 dark:text-slate-200 max-w-[160px] truncate" title={t.locationDesk}>
+                              <MapPin className="w-3 h-3 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                              <span className="truncate">{t.locationDesk}</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 dark:text-slate-500">—</span>
+                          )}
+                        </td>
+                      )}
+
                       {selectedColumns.includes('organization') && (
                         <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-cyan-100/70 dark:bg-cyan-950/60 text-cyan-900 dark:text-cyan-200 border border-cyan-300 dark:border-cyan-800/50">
@@ -1371,6 +1573,24 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
                           </div>
                         </td>
                       )}
+
+                      {activeCustomFieldCols.map((field) => {
+                        const val = getCustomFieldDisplayValue(t, field.name);
+                        return (
+                          <td key={field.id} className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
+                            {val ? (
+                              <span
+                                className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 font-mono block max-w-[170px] truncate"
+                                title={val}
+                              >
+                                {val}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-500">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
 
                       {/* Display explicit Time of Ticket & Date */}
                       {selectedColumns.includes('createdTime') && (
