@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -35,6 +36,7 @@ import {
   Team,
   TechnicianAssignedTask,
   PortalAnnouncement,
+  ApprovalRequest,
 } from '../src/types';
 
 export const apiRouter = Router();
@@ -821,10 +823,32 @@ apiRouter.delete('/users/:id', (req: Request, res: Response) => {
   res.json({ success: true, deletedUserId: id });
 });
 
+// Public list of active managers for Employee Self-Registration dropdown
+apiRouter.get('/auth/managers', (_req: Request, res: Response) => {
+  const users = db.get('users') || [];
+  const managers = users
+    .filter((u) => u.role === 'manager' && u.status !== 'suspended')
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      email: m.email,
+      employeeCode: m.employeeCode,
+      title: m.title,
+      team: m.team,
+      organizationId: m.organizationId,
+    }));
+  res.json(managers);
+});
+
 apiRouter.post('/auth/register', (req: Request, res: Response) => {
-  const { name, email, employeeCode, organizationId, departmentId, team, title, phone, otp, preSharedKey, password } = req.body;
+  const { name, email, employeeCode, organizationId, departmentId, team, title, phone, otp, preSharedKey, password, managerId } = req.body;
   if (!email || !name || !employeeCode || !employeeCode.trim()) {
     return res.status(400).json({ error: 'Full name, email address, and Employee Code are compulsory for registration.' });
+  }
+
+  const rawManagerId = typeof managerId === 'string' ? managerId.trim() : '';
+  if (!rawManagerId) {
+    return res.status(400).json({ error: 'Selecting a Manager (or NA) is mandatory for registration.' });
   }
 
   const normalizedEmail = email.trim().toLowerCase();
@@ -832,6 +856,18 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
   const existing = users.find(u => u.email.toLowerCase() === normalizedEmail);
   if (existing) {
     return res.status(400).json({ error: 'An account with this email address already exists. Please log in or submit a ticket directly.' });
+  }
+
+  let resolvedManagerId = 'NA';
+  let selectedManager: User | undefined;
+  if (rawManagerId.toUpperCase() === 'NA') {
+    resolvedManagerId = 'NA';
+  } else {
+    selectedManager = users.find((u) => u.id === rawManagerId && u.role === 'manager' && u.status !== 'suspended');
+    if (!selectedManager) {
+      return res.status(400).json({ error: 'Please select a valid Manager from the list or choose NA.' });
+    }
+    resolvedManagerId = selectedManager.id;
   }
 
   const organizations = db.get('organizations');
@@ -857,13 +893,10 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
   }
 
   const teams = db.get('teams') || [];
-  const assignedTeam = teams.find(t => t.id === req.body.groupId) || teams[0];
-  const assignedManager = users.find(u => 
-    u.id === req.body.managerId || 
-    (assignedTeam?.managerId && u.id === assignedTeam.managerId) || 
-    u.role === 'manager' || 
-    u.role === 'admin'
-  );
+  const assignedTeam =
+    teams.find(t => t.id === req.body.groupId) ||
+    (selectedManager ? teams.find(t => t.managerId === selectedManager!.id) : undefined) ||
+    teams[0];
 
   const newUser: User = {
     id: `usr-${Date.now()}`,
@@ -878,7 +911,7 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     team: assignedTeam?.name || team?.trim() || 'Operations & Support Team',
     groupId: assignedTeam?.id || 'grp-operations',
     groupName: assignedTeam?.name || 'Operations & Support Team',
-    managerId: assignedManager?.id || 'usr-team-manager',
+    managerId: resolvedManagerId,
     status: 'active',
     password: password ? password.trim() : undefined,
     createdAt: new Date().toISOString(),
@@ -891,7 +924,7 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     'user.self_registered',
     'user',
     newUser.id,
-    `User ${newUser.name} self-registered via public portal registration link with verified email ${newUser.email}`
+    `User ${newUser.name} self-registered via public portal registration link with verified email ${newUser.email} (Manager: ${selectedManager ? `${selectedManager.name} <${selectedManager.email}>` : 'NA'})`
   );
 
   res.status(201).json({
@@ -2669,7 +2702,103 @@ apiRouter.delete('/service-catalog/:id', (req: Request, res: Response) => {
   res.json({ success: true, deletedCatalogId: id });
 });
 
-apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
+// Shared helper to derive public base URL for interactive email links
+function resolvePublicBaseUrl(req: Request): string {
+  const explicitPublicUrl = (process.env.PUBLIC_APP_URL || '').trim();
+  if (explicitPublicUrl) return explicitPublicUrl.replace(/\/+$/, '');
+  const protoHeader = (req.headers['x-forwarded-proto'] as string) || '';
+  const proto = protoHeader.split(',')[0]?.trim() || req.protocol || 'http';
+  const hostHeader = (req.headers['x-forwarded-host'] as string) || '';
+  const host = hostHeader.split(',')[0]?.trim() || req.get('host');
+  if (host) return `${proto}://${host}`.replace(/\/+$/, '');
+  const fallbackAppUrl = (process.env.APP_URL || 'http://localhost:3000').trim();
+  return fallbackAppUrl.replace(/\/+$/, '');
+}
+
+// Shared helper to apply a manager approval or rejection decision (via Portal OR Email)
+function applyApprovalDecision(params: {
+  approvalIndex: number;
+  decision: 'approved' | 'rejected';
+  actor: User;
+  notes?: string;
+  decidedVia: 'portal' | 'email';
+}): { approval: ApprovalRequest; ticket: Ticket | null } {
+  const { approvalIndex, decision, actor, notes, decidedVia } = params;
+  const now = new Date().toISOString();
+  const approvals = db.get('approvalRequests') || [];
+  const approval = approvals[approvalIndex];
+
+  approval.status = decision;
+  approval.approverId = actor.id;
+  approval.approverName = actor.name;
+  approval.approverEmail = actor.email || approval.approverEmail;
+  approval.decidedAt = now;
+  approval.decidedVia = decidedVia;
+  if (notes && notes.trim()) {
+    approval.notes = notes.trim();
+  } else {
+    approval.notes =
+      decision === 'approved'
+        ? `Approved by Manager ${actor.name}${decidedVia === 'email' ? ' via interactive email' : ''}. Ticket opened for IT fulfillment.`
+        : `Rejected by Manager ${actor.name}${decidedVia === 'email' ? ' via interactive email' : ''}. Ticket automatically closed.`;
+  }
+
+  approvals[approvalIndex] = approval;
+  db.set('approvalRequests', approvals);
+
+  const ticketId = approval.ticketId;
+  const tickets = db.get('tickets') || [];
+  const tIdx = tickets.findIndex((t) => t.id === ticketId);
+  let updatedTicket: Ticket | null = null;
+
+  if (tIdx !== -1) {
+    if (decision === 'approved') {
+      tickets[tIdx].status = 'open';
+    } else {
+      tickets[tIdx].status = 'closed';
+      tickets[tIdx].closedAt = now;
+      tickets[tIdx].resolvedAt = now;
+      tickets[tIdx].resolutionCode = 'cancelled';
+      tickets[tIdx].resolutionSummary =
+        notes && notes.trim()
+          ? `Automatically closed: Manager ${actor.name} rejected the service catalog request (${notes.trim()}).`
+          : `Automatically closed: Manager ${actor.name} rejected the service catalog request${decidedVia === 'email' ? ' via email' : ''}.`;
+    }
+    tickets[tIdx].updatedAt = now;
+    updatedTicket = tickets[tIdx];
+    db.set('tickets', tickets);
+
+    // Record transparent activity comment on the ticket so portal/workspace reflects exact decision immediately
+    const comments = db.get('comments') || [];
+    const decisionComment: TicketComment = {
+      id: `cmt-appr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      ticketId,
+      authorId: actor.id,
+      authorName: actor.name,
+      authorEmail: actor.email || 'manager@helpdesk.local',
+      authorRole: actor.role || 'manager',
+      content:
+        decision === 'approved'
+          ? `✅ Manager Approval Granted (${decidedVia === 'email' ? 'via Email Action' : 'via Portal'}): ${actor.name} approved "${approval.catalogItemTitle}". Ticket status is now OPEN for IT fulfillment.${notes && notes.trim() ? `\nNotes: ${notes.trim()}` : ''}`
+          : `❌ Manager Approval Rejected (${decidedVia === 'email' ? 'via Email Action' : 'via Portal'}): ${actor.name} rejected "${approval.catalogItemTitle}". Ticket has been automatically CLOSED.${notes && notes.trim() ? `\nReason: ${notes.trim()}` : ''}`,
+      isInternal: false,
+      createdAt: now,
+    };
+    db.set('comments', [...comments, decisionComment]);
+  }
+
+  logAudit(
+    actor,
+    `approval.${decision}`,
+    'ticket',
+    ticketId,
+    `${decision.toUpperCase()} service catalog request "${approval.catalogItemTitle}" on ticket ${ticketId} via ${decidedVia}${decision === 'approved' ? ' -> ticket OPEN' : ' -> ticket AUTO-CLOSED'}`
+  );
+
+  return { approval, ticket: updatedTicket };
+}
+
+apiRouter.post('/service-catalog/request', async (req: Request, res: Response) => {
   const { catalogItemId, formData, requesterId, requesterName, requesterEmail, requesterEmployeeCode } = req.body;
   const catalog = db.get('serviceCatalog');
   const item = catalog.find(c => c.id === catalogItemId);
@@ -2679,12 +2808,31 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
   const optionalActor = getOptionalActor(req);
   const matchedUserById = requesterId ? users.find(u => u.id === requesterId) : null;
   const matchedUserByEmail = requesterEmail ? users.find(u => u.email.toLowerCase() === requesterEmail.toLowerCase()) : null;
-  const actor = optionalActor || matchedUserById || matchedUserByEmail || getActor(req);
+  const requesterUser = matchedUserById || matchedUserByEmail || optionalActor || getActor(req);
 
-  const resolvedRequesterId = requesterId || actor.id;
-  const resolvedRequesterName = requesterName || actor.name;
-  const resolvedRequesterEmail = requesterEmail || actor.email;
-  const resolvedRequesterEmpCode = requesterEmployeeCode || actor.employeeCode || (actor.name?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010');
+  const resolvedRequesterId = requesterId || requesterUser.id;
+  const resolvedRequesterName = requesterName || requesterUser.name;
+  const resolvedRequesterEmail = requesterEmail || requesterUser.email;
+  const resolvedRequesterEmpCode =
+    requesterEmployeeCode ||
+    requesterUser.employeeCode ||
+    (requesterUser.name?.toLowerCase().includes('lakhan') ? 'CBPL2045' : 'CBPL1010');
+
+  // Resolve the requester's respective reporting manager (if set and not 'NA')
+  const requesterManagerId = requesterUser?.managerId ? String(requesterUser.managerId).trim() : '';
+  const hasExplicitNoManager = requesterManagerId.toUpperCase() === 'NA';
+  const respectiveManager =
+    !hasExplicitNoManager && requesterManagerId
+      ? users.find((u) => u.id === requesterManagerId && u.status !== 'suspended')
+      : undefined;
+
+  const fallbackManager =
+    item.requiresApproval && !respectiveManager && !hasExplicitNoManager
+      ? users.find((u) => u.role === 'manager' && u.status !== 'suspended')
+      : undefined;
+
+  const targetApprover = respectiveManager || fallbackManager;
+  const needsManagerApproval = Boolean(targetApprover || item.requiresApproval);
 
   const ticketId = db.generateTicketId();
   const slaPolicies = db.get('slaPolicies');
@@ -2700,6 +2848,7 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
     item.category.toLowerCase().includes('asset');
 
   const ticketManager =
+    targetApprover ||
     users.find((u) => u.role === 'manager' && u.status === 'active') ||
     users.find((u) => u.id === 'usr-marcus-manager') ||
     users.find((u) => u.role === 'manager');
@@ -2707,12 +2856,13 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
   const resolvedAssignedTechId = isAssetOrHardware && ticketManager ? ticketManager.id : undefined;
   const resolvedAssignedTechName = isAssetOrHardware && ticketManager ? ticketManager.name : undefined;
   const resolvedTeamId = isAssetOrHardware ? 'team-workplace' : item.defaultTeamId;
+  const now = new Date().toISOString();
 
   const ticket: Ticket = {
     id: ticketId,
     subject: `[Service Request]: ${item.title}`,
     description: `Service Catalog Request submitted by [${resolvedRequesterEmpCode}] ${resolvedRequesterName} (${resolvedRequesterEmail}).\n\nForm Specification:\n${formattedDetails}`,
-    status: item.requiresApproval ? 'waiting_approval' : 'open',
+    status: needsManagerApproval ? 'waiting_approval' : 'open',
     priority: item.defaultPriority,
     type: 'service_request',
     category: item.category,
@@ -2723,14 +2873,16 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
     requesterName: resolvedRequesterName,
     requesterEmail: resolvedRequesterEmail,
     requesterEmployeeCode: resolvedRequesterEmpCode,
-    organizationId: actor.organizationId || 'org-lakhan-tech',
+    organizationId: requesterUser.organizationId || 'org-lakhan-tech',
     assignedTeamId: resolvedTeamId,
     assignedTechnicianId: resolvedAssignedTechId,
     assignedTechnicianName: resolvedAssignedTechName,
     followers: [resolvedRequesterId],
     ccRecipients: [],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    managerEmail: targetApprover?.email,
+    forwardedToManager: Boolean(targetApprover?.email),
+    createdAt: now,
+    updatedAt: now,
     dueDate: resolutionDeadline,
     relatedAssetIds: [],
     tags: isAssetOrHardware ? ['service-catalog', 'it-asset-request', 'manager-assigned'] : ['service-catalog', item.category.toLowerCase()],
@@ -2745,26 +2897,91 @@ apiRouter.post('/service-catalog/request', (req: Request, res: Response) => {
   const tickets = db.get('tickets') || [];
   db.set('tickets', [ticket, ...tickets]);
 
-  // If requires approval, create approval item
-  if (item.requiresApproval) {
+  let createdApproval: ApprovalRequest | undefined;
+  let approvalEmailDispatched = false;
+  let approveUrl: string | undefined;
+  let rejectUrl: string | undefined;
+
+  if (needsManagerApproval) {
+    const approvalToken = crypto.randomBytes(24).toString('hex');
     const approvals = db.get('approvalRequests') || [];
-    const newApproval = {
-      id: `appr-${Date.now()}`,
+    const newApproval: ApprovalRequest = {
+      id: `appr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       ticketId,
       catalogItemId: item.id,
       catalogItemTitle: item.title,
       requesterId: resolvedRequesterId,
       requesterName: resolvedRequesterName,
-      approverRole: item.approverRole || 'manager',
-      status: 'pending' as const,
-      notes: `Request awaiting approval from ${item.approverRole || 'manager'}.`,
-      createdAt: new Date().toISOString(),
+      approverId: targetApprover?.id,
+      approverName: targetApprover?.name,
+      approverEmail: targetApprover?.email,
+      approverRole: targetApprover?.role || item.approverRole || 'manager',
+      approvalToken,
+      status: 'pending',
+      notes: targetApprover
+        ? `Interactive approval email dispatched to Manager ${targetApprover.name} (${targetApprover.email}).`
+        : `Request awaiting approval from ${item.approverRole || 'manager'}.`,
+      createdAt: now,
     };
+
+    if (targetApprover?.email) {
+      const appBaseUrl = resolvePublicBaseUrl(req);
+      const emailResult = await emailService.sendServiceCatalogApprovalEmail({
+        ticket,
+        catalogItemTitle: item.title,
+        catalogItemCategory: item.category,
+        estimatedHours: item.estimatedHours,
+        formData: formData || {},
+        managerName: targetApprover.name,
+        managerEmail: targetApprover.email,
+        requesterDepartment: requesterUser.departmentId || requesterUser.team,
+        approvalToken,
+        appBaseUrl,
+      });
+
+      newApproval.emailDeliveryStatus = emailResult.status;
+      newApproval.emailMessageId = emailResult.messageId;
+      approvalEmailDispatched = emailResult.success;
+      approveUrl = emailResult.approveUrl;
+      rejectUrl = emailResult.rejectUrl;
+
+      // Record activity comment noting email dispatch
+      const comments = db.get('comments') || [];
+      const dispatchComment: TicketComment = {
+        id: `cmt-appr-req-${Date.now()}`,
+        ticketId,
+        authorId: resolvedRequesterId,
+        authorName: 'System Approval Workflow',
+        authorEmail: resolvedRequesterEmail || 'system@helpdesk.local',
+        authorRole: 'admin',
+        content: `📧 Interactive approval email sent to reporting manager ${targetApprover.name} (${targetApprover.email}). Ticket is waiting for manager decision (Approve -> Open, Reject -> Auto-Close).`,
+        isInternal: false,
+        createdAt: now,
+      };
+      db.set('comments', [...comments, dispatchComment]);
+    }
+
     db.set('approvalRequests', [newApproval, ...approvals]);
+    createdApproval = newApproval;
   }
 
-  logAudit(actor, 'catalog.requested', 'ticket', ticketId, `Requester [${resolvedRequesterEmpCode}] ${resolvedRequesterName} lodged service catalog item "${item.title}"`);
-  res.status(201).json({ ticket });
+  logAudit(
+    requesterUser,
+    'catalog.requested',
+    'ticket',
+    ticketId,
+    `Requester [${resolvedRequesterEmpCode}] ${resolvedRequesterName} lodged service catalog item "${item.title}"${targetApprover ? ` (Approval email sent to Manager ${targetApprover.name} <${targetApprover.email}>)` : ''}`
+  );
+
+  res.status(201).json({
+    ticket,
+    approval: createdApproval,
+    approvalEmailDispatched,
+    managerName: targetApprover?.name,
+    managerEmail: targetApprover?.email,
+    approveUrl,
+    rejectUrl,
+  });
 });
 
 apiRouter.get('/approvals', (req: Request, res: Response) => {
@@ -2774,43 +2991,255 @@ apiRouter.get('/approvals', (req: Request, res: Response) => {
   if (actor && actor.role === 'requester') {
     return res.json(approvals.filter(a => a.requesterId === actor.id));
   }
+  if (actor && actor.role === 'manager') {
+    return res.json(
+      approvals.filter(
+        (a) =>
+          !a.approverId ||
+          a.approverId === actor.id ||
+          (a.approverEmail && actor.email && a.approverEmail.toLowerCase() === actor.email.toLowerCase()) ||
+          a.requesterId === actor.id
+      )
+    );
+  }
   res.json(approvals);
 });
 
 apiRouter.post('/approvals/:id/decide', (req: Request, res: Response) => {
   const { id } = req.params;
   const { status, notes } = req.body;
+  if (status !== 'approved' && status !== 'rejected') {
+    return res.status(400).json({ error: 'Decision status must be "approved" or "rejected".' });
+  }
+
   const approvals = db.get('approvalRequests') || [];
   const idx = approvals.findIndex(a => a.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Approval request not found' });
 
   const actor = getOptionalActor(req) || getActor(req);
+  const { approval } = applyApprovalDecision({
+    approvalIndex: idx,
+    decision: status,
+    actor,
+    notes,
+    decidedVia: 'portal',
+  });
 
-  approvals[idx].status = status;
-  approvals[idx].approverId = actor.id;
-  approvals[idx].approverName = actor.name;
-  approvals[idx].decidedAt = new Date().toISOString();
-  if (notes) approvals[idx].notes = notes;
+  res.json(approval);
+});
 
-  db.set('approvalRequests', approvals);
+// Interactive Email One-Click Approve / Reject Action Handler
+function renderApprovalActionHtml(opts: {
+  title: string;
+  badgeText: string;
+  badgeBg: string;
+  badgeColor: string;
+  heading: string;
+  message: string;
+  ticketId?: string;
+  ticketStatus?: string;
+  catalogItemTitle?: string;
+  requesterName?: string;
+  managerName?: string;
+  decidedAt?: string;
+  portalUrl: string;
+}): string {
+  const esc = (v?: string) =>
+    String(v ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
 
-  // Update associated ticket status
-  const ticketId = approvals[idx].ticketId;
-  const tickets = db.get('tickets') || [];
-  const tIdx = tickets.findIndex(t => t.id === ticketId);
-  if (tIdx !== -1) {
-    if (status === 'approved') {
-      tickets[tIdx].status = 'open';
-    } else {
-      tickets[tIdx].status = 'cancelled';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${esc(opts.title)}</title>
+  <style>
+    body { margin: 0; padding: 24px 16px; background: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a; }
+    .card { max-width: 540px; margin: 32px auto; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); }
+    .header { background: #0f172a; padding: 24px 28px; color: #ffffff; }
+    .badge { display: inline-block; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.4px; background: ${opts.badgeBg}; color: ${opts.badgeColor}; }
+    .body { padding: 26px 28px; }
+    h1 { margin: 14px 0 0; font-size: 21px; line-height: 1.3; }
+    p { margin: 0 0 16px; font-size: 14px; line-height: 1.6; color: #334155; }
+    .meta { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 22px; }
+    .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+    .row:last-child { border-bottom: none; }
+    .label { color: #64748b; font-weight: 600; }
+    .val { color: #0f172a; font-weight: 700; text-align: right; }
+    .btn { display: inline-block; background: #0284c7; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 700; padding: 11px 22px; border-radius: 10px; }
+    .footer { background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 14px 28px; text-align: center; font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <span class="badge">${esc(opts.badgeText)}</span>
+      <h1>${esc(opts.heading)}</h1>
+    </div>
+    <div class="body">
+      <p>${esc(opts.message)}</p>
+      ${
+        opts.ticketId
+          ? `<div class="meta">
+              <div class="row"><span class="label">Ticket ID</span><span class="val" style="font-family: monospace; color: #0369a1;">${esc(opts.ticketId)}</span></div>
+              ${opts.catalogItemTitle ? `<div class="row"><span class="label">Requested Item</span><span class="val">${esc(opts.catalogItemTitle)}</span></div>` : ''}
+              ${opts.requesterName ? `<div class="row"><span class="label">Requester</span><span class="val">${esc(opts.requesterName)}</span></div>` : ''}
+              ${opts.managerName ? `<div class="row"><span class="label">Decision By</span><span class="val">${esc(opts.managerName)}</span></div>` : ''}
+              ${opts.ticketStatus ? `<div class="row"><span class="label">Current Ticket Status</span><span class="val" style="text-transform: uppercase;">${esc(opts.ticketStatus)}</span></div>` : ''}
+              ${opts.decidedAt ? `<div class="row"><span class="label">Recorded At</span><span class="val">${esc(new Date(opts.decidedAt).toLocaleString())}</span></div>` : ''}
+            </div>`
+          : ''
+      }
+      <div style="text-align: center;">
+        <a class="btn" href="${esc(opts.portalUrl)}">Open IT Helpdesk Portal</a>
+      </div>
+    </div>
+    <div class="footer">IT Helpdesk &bull; This change is already reflected live in the Ticket Portal.</div>
+  </div>
+</body>
+</html>`;
+}
+
+function handleEmailApprovalAction(req: Request, res: Response) {
+  const token = String((req.query.token ?? req.body?.token ?? '')).trim();
+  const rawDecision = String((req.query.decision ?? req.body?.decision ?? '')).trim().toLowerCase();
+  const notes = typeof req.query.notes === 'string' ? req.query.notes : typeof req.body?.notes === 'string' ? req.body.notes : undefined;
+  const wantsJson = req.headers.accept?.includes('application/json') && !req.headers.accept?.includes('text/html');
+  const portalUrl = `${resolvePublicBaseUrl(req)}/`;
+
+  if (!token || (rawDecision !== 'approved' && rawDecision !== 'rejected')) {
+    if (wantsJson) {
+      return res.status(400).json({ error: 'Invalid or incomplete approval link parameters.' });
     }
-    tickets[tIdx].updatedAt = new Date().toISOString();
-    db.set('tickets', tickets);
+    return res.status(400).setHeader('Content-Type', 'text/html; charset=utf-8').send(
+      renderApprovalActionHtml({
+        title: 'Invalid Approval Link',
+        badgeText: 'INVALID LINK',
+        badgeBg: '#fee2e2',
+        badgeColor: '#991b1b',
+        heading: 'Approval Link Invalid or Incomplete',
+        message: 'This approval link is missing a valid security token or decision parameter. Please review the request directly inside the IT Helpdesk Portal.',
+        portalUrl,
+      })
+    );
   }
 
-  logAudit(actor, `approval.${status}`, 'ticket', ticketId, `${status.toUpperCase()} approval for request on ticket ${ticketId}`);
-  res.json(approvals[idx]);
-});
+  const approvals = db.get('approvalRequests') || [];
+  const idx = approvals.findIndex((a) => a.approvalToken && a.approvalToken === token);
+  if (idx === -1) {
+    if (wantsJson) {
+      return res.status(404).json({ error: 'Approval request not found or link expired.' });
+    }
+    return res.status(404).setHeader('Content-Type', 'text/html; charset=utf-8').send(
+      renderApprovalActionHtml({
+        title: 'Approval Request Not Found',
+        badgeText: 'NOT FOUND',
+        badgeBg: '#fee2e2',
+        badgeColor: '#991b1b',
+        heading: 'Approval Request Not Found',
+        message: 'No matching service catalog approval request was found for this link.',
+        portalUrl,
+      })
+    );
+  }
+
+  const existingApproval = approvals[idx];
+  const tickets = db.get('tickets') || [];
+  const existingTicket = tickets.find((t) => t.id === existingApproval.ticketId);
+
+  // Idempotent guard if manager clicks the email button more than once
+  if (existingApproval.status !== 'pending') {
+    const alreadyApproved = existingApproval.status === 'approved';
+    if (wantsJson) {
+      return res.json({
+        alreadyDecided: true,
+        approval: existingApproval,
+        ticket: existingTicket || null,
+      });
+    }
+    return res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').send(
+      renderApprovalActionHtml({
+        title: `Already ${existingApproval.status.toUpperCase()} - ${existingApproval.ticketId}`,
+        badgeText: alreadyApproved ? 'ALREADY APPROVED' : 'ALREADY REJECTED',
+        badgeBg: alreadyApproved ? '#d1fae5' : '#ffe4e6',
+        badgeColor: alreadyApproved ? '#065f46' : '#9f1239',
+        heading: `Request Already ${alreadyApproved ? 'Approved' : 'Rejected'}`,
+        message: `A decision for Ticket ${existingApproval.ticketId} was already recorded by ${existingApproval.approverName || 'Manager'}. No further action is required.`,
+        ticketId: existingApproval.ticketId,
+        ticketStatus: existingTicket?.status || (alreadyApproved ? 'open' : 'closed'),
+        catalogItemTitle: existingApproval.catalogItemTitle,
+        requesterName: existingApproval.requesterName,
+        managerName: existingApproval.approverName,
+        decidedAt: existingApproval.decidedAt,
+        portalUrl,
+      })
+    );
+  }
+
+  const users = db.get('users') || [];
+  const managerActor: User =
+    users.find((u) => u.id === existingApproval.approverId) ||
+    (existingApproval.approverEmail
+      ? users.find((u) => u.email.toLowerCase() === existingApproval.approverEmail!.toLowerCase())
+      : undefined) || {
+      id: existingApproval.approverId || 'usr-email-manager',
+      name: existingApproval.approverName || 'Reporting Manager',
+      email: existingApproval.approverEmail || 'manager@helpdesk.local',
+      role: 'manager',
+      title: 'Reporting Manager',
+      organizationId: existingTicket?.organizationId || 'org-lakhan-tech',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    };
+
+  const decision = rawDecision as 'approved' | 'rejected';
+  const { approval, ticket } = applyApprovalDecision({
+    approvalIndex: idx,
+    decision,
+    actor: managerActor,
+    notes,
+    decidedVia: 'email',
+  });
+
+  if (wantsJson) {
+    return res.json({
+      success: true,
+      alreadyDecided: false,
+      approval,
+      ticket,
+    });
+  }
+
+  const isApproved = decision === 'approved';
+  return res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').send(
+    renderApprovalActionHtml({
+      title: `${isApproved ? 'Approved' : 'Rejected'} - ${approval.ticketId}`,
+      badgeText: isApproved ? '✓ APPROVED · TICKET OPEN' : '✕ REJECTED · TICKET AUTO-CLOSED',
+      badgeBg: isApproved ? '#d1fae5' : '#ffe4e6',
+      badgeColor: isApproved ? '#065f46' : '#9f1239',
+      heading: isApproved
+        ? `Service Request Approved — Ticket ${approval.ticketId} is now OPEN`
+        : `Service Request Rejected — Ticket ${approval.ticketId} Auto-Closed`,
+      message: isApproved
+        ? `Thank you, ${managerActor.name}. Your approval has been recorded and Ticket ${approval.ticketId} is immediately visible as OPEN in the IT Helpdesk Ticket Portal for fulfillment.`
+        : `Thank you, ${managerActor.name}. Your rejection has been recorded and Ticket ${approval.ticketId} has been automatically CLOSED in the IT Helpdesk Ticket Portal.`,
+      ticketId: approval.ticketId,
+      ticketStatus: ticket?.status || (isApproved ? 'open' : 'closed'),
+      catalogItemTitle: approval.catalogItemTitle,
+      requesterName: approval.requesterName,
+      managerName: managerActor.name,
+      decidedAt: approval.decidedAt,
+      portalUrl,
+    })
+  );
+}
+
+apiRouter.get('/approvals/email-action', handleEmailApprovalAction);
+apiRouter.post('/approvals/email-action', handleEmailApprovalAction);
 
 // -------------------------------------------------------------
 // OTP Email Confirmation for Ticket Submission

@@ -89,8 +89,20 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                       <td className="py-3 px-3 text-slate-800 dark:text-slate-200 font-medium">
                         {appr.requesterName}
                       </td>
-                      <td className="py-3 px-3 font-mono text-[11px] text-indigo-700 dark:text-indigo-400 uppercase font-bold">
-                        {appr.approverRole}
+                      <td className="py-3 px-3">
+                        <div className="font-mono text-[11px] text-indigo-700 dark:text-indigo-400 uppercase font-bold">
+                          {appr.approverName || appr.approverRole}
+                        </div>
+                        {appr.approverEmail && (
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                            {appr.approverEmail}
+                          </div>
+                        )}
+                        {appr.emailDeliveryStatus && (
+                          <span className="inline-block mt-1 px-1.5 py-0.5 text-[10px] rounded bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border border-cyan-300/80 dark:border-cyan-800/50 font-semibold">
+                            {appr.emailDeliveryStatus === 'sent' ? 'Approval Email Sent' : 'Approval Email Dispatched'}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-3 font-mono text-[11px] text-slate-600 dark:text-slate-400 font-medium">
                         {new Date(appr.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -99,6 +111,11 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                         <span className={`capitalize text-[11px] px-2 py-0.5 rounded-md ${statusColors[appr.status] || ''}`}>
                           {appr.status}
                         </span>
+                        {appr.decidedVia && (
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1">
+                            via {appr.decidedVia === 'email' ? 'Email' : 'Portal'}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-3 text-right">
                         {isPending ? (
@@ -124,7 +141,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           </div>
                         ) : (
                           <span className="text-[11px] text-slate-600 dark:text-slate-400 font-mono font-medium">
-                            Decided by {appr.approverName || 'Approver'}
+                            Decided by {appr.approverName || 'Approver'}{appr.decidedVia === 'email' ? ' (Email)' : ''}
                           </span>
                         )}
                       </td>
@@ -151,6 +168,11 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
             </h3>
             <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
               Requester: <span className="text-slate-900 dark:text-slate-200 font-bold">{selectedApproval.requesterName}</span> · Ticket ID: <span className="font-mono text-cyan-700 dark:text-cyan-400 font-bold">{selectedApproval.ticketId}</span>
+            </p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {actionType === 'approved'
+                ? 'Approving will immediately open this ticket for IT fulfillment.'
+                : 'Rejecting will automatically close this ticket in the portal.'}
             </p>
 
             <div>

@@ -66,7 +66,7 @@ export interface InboundEmailPayload {
 
 export interface OutboundEmailRecord {
   id: string;
-  type: 'ticket_created' | 'public_reply' | 'survey' | 'test_probe' | 'status_update' | 'attendance_report';
+  type: 'ticket_created' | 'public_reply' | 'survey' | 'test_probe' | 'status_update' | 'attendance_report' | 'approval_request';
   recipient: string;
   subject: string;
   sentAt: string;
@@ -999,6 +999,317 @@ class EmailGatewayService {
         ticketId: ticket.id,
       });
       return { success: true, messageId: simId };
+    }
+  }
+
+  /**
+   * Dispatches an interactive HTML approval email to the requester's respective manager
+   * with direct one-click Approve (opens ticket) and Reject (auto-closes ticket) buttons.
+   */
+  public async sendServiceCatalogApprovalEmail(params: {
+    ticket: Ticket;
+    catalogItemTitle: string;
+    catalogItemCategory: string;
+    estimatedHours?: number;
+    formData?: Record<string, any>;
+    managerName: string;
+    managerEmail: string;
+    requesterDepartment?: string;
+    approvalToken: string;
+    appBaseUrl: string;
+  }): Promise<{
+    success: boolean;
+    status: 'sent' | 'simulated_success' | 'failed';
+    messageId?: string;
+    approveUrl: string;
+    rejectUrl: string;
+    html: string;
+    error?: string;
+  }> {
+    const {
+      ticket,
+      catalogItemTitle,
+      catalogItemCategory,
+      estimatedHours,
+      formData,
+      managerName,
+      managerEmail,
+      requesterDepartment,
+      approvalToken,
+      appBaseUrl,
+    } = params;
+
+    const cleanBase = (appBaseUrl || 'http://localhost:3000').replace(/\/+$/, '');
+    const encodedToken = encodeURIComponent(approvalToken);
+    const approveUrl = `${cleanBase}/api/approvals/email-action?token=${encodedToken}&decision=approved`;
+    const rejectUrl = `${cleanBase}/api/approvals/email-action?token=${encodedToken}&decision=rejected`;
+    const portalUrl = `${cleanBase}/`;
+
+    const escapeHtml = (val: any) =>
+      String(val ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const config = db.get('defaultGatewayConfig');
+    const subject = this.formatSubjectWithTicketToken(
+      config?.subjectPrefix || '[IT-Desk]',
+      ticket.id,
+      `Approval Required: ${catalogItemTitle} (${ticket.requesterName})`
+    );
+
+    const specEntries = Object.entries(formData || {}).filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '');
+    const specRowsHtml = specEntries.length > 0
+      ? specEntries
+          .map(
+            ([k, v]) => `
+            <tr>
+              <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 600; width: 38%; vertical-align: top; font-size: 13px;">${escapeHtml(k)}</td>
+              <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; color: #0f172a; font-size: 13px;">${escapeHtml(Array.isArray(v) ? v.join(', ') : v)}</td>
+            </tr>`
+          )
+          .join('')
+      : `<tr><td colspan="2" style="padding: 8px 12px; color: #64748b; font-size: 13px;">Standard catalog specification requested.</td></tr>`;
+
+    const specText = specEntries.length > 0
+      ? specEntries.map(([k, v]) => `  - ${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('\n')
+      : '  - Standard catalog specification';
+
+    const priorityColor =
+      ticket.priority === 'urgent'
+        ? '#e11d48'
+        : ticket.priority === 'high'
+        ? '#ea580c'
+        : ticket.priority === 'normal'
+        ? '#0284c7'
+        : '#475569';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Service Catalog Approval Required - ${escapeHtml(ticket.id)}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f1f5f9; padding: 24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="620" style="max-width: 620px; width: 100%; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 14px; overflow: hidden;">
+          <!-- Header Banner -->
+          <tr>
+            <td style="background-color: #0f172a; padding: 22px 26px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td>
+                    <span style="display: inline-block; padding: 4px 10px; font-size: 11px; font-weight: 700; font-family: 'Courier New', monospace; border-radius: 4px; background-color: #0284c7; color: #ffffff; letter-spacing: 0.5px;">
+                      [${escapeHtml(ticket.id)}]
+                    </span>
+                    <span style="display: inline-block; margin-left: 8px; padding: 4px 10px; font-size: 11px; font-weight: 700; border-radius: 4px; background-color: #f59e0b; color: #0f172a; text-transform: uppercase;">
+                      Manager Approval Required
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-top: 12px;">
+                    <h1 style="margin: 0; font-size: 20px; line-height: 1.3; color: #ffffff; font-weight: 700;">
+                      Service Catalog Request: ${escapeHtml(catalogItemTitle)}
+                    </h1>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Greeting & Summary -->
+          <tr>
+            <td style="padding: 24px 26px 12px 26px;">
+              <p style="margin: 0 0 12px 0; font-size: 14px; line-height: 1.6; color: #1e293b;">
+                Hello <strong>${escapeHtml(managerName)}</strong>,
+              </p>
+              <p style="margin: 0 0 18px 0; font-size: 14px; line-height: 1.6; color: #334155;">
+                <strong>${escapeHtml(ticket.requesterName)}</strong>${ticket.requesterEmployeeCode ? ` (<span style="font-family: monospace; font-weight: 700;">${escapeHtml(ticket.requesterEmployeeCode)}</span>)` : ''} has submitted a Service Catalog request that requires your approval before IT Support can proceed.
+              </p>
+
+              <!-- Requester & Ticket Metadata Table -->
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 18px;">
+                <tr>
+                  <td style="padding: 14px 16px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="font-size: 13px; color: #334155;">
+                      <tr>
+                        <td style="padding: 4px 0; color: #64748b; width: 150px;"><strong>Ticket ID:</strong></td>
+                        <td style="padding: 4px 0; font-family: monospace; font-weight: 700; color: #0369a1;">${escapeHtml(ticket.id)}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 4px 0; color: #64748b;"><strong>Catalog Item:</strong></td>
+                        <td style="padding: 4px 0; font-weight: 700; color: #0f172a;">${escapeHtml(catalogItemTitle)}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 4px 0; color: #64748b;"><strong>Category:</strong></td>
+                        <td style="padding: 4px 0;">${escapeHtml(catalogItemCategory)}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 4px 0; color: #64748b;"><strong>Requester:</strong></td>
+                        <td style="padding: 4px 0;">${escapeHtml(ticket.requesterName)} &lt;${escapeHtml(ticket.requesterEmail)}&gt;</td>
+                      </tr>
+                      ${requesterDepartment ? `<tr><td style="padding: 4px 0; color: #64748b;"><strong>Department:</strong></td><td style="padding: 4px 0;">${escapeHtml(requesterDepartment)}</td></tr>` : ''}
+                      <tr>
+                        <td style="padding: 4px 0; color: #64748b;"><strong>Priority:</strong></td>
+                        <td style="padding: 4px 0; font-weight: 700; text-transform: uppercase; color: ${priorityColor};">${escapeHtml(ticket.priority)}</td>
+                      </tr>
+                      ${estimatedHours ? `<tr><td style="padding: 4px 0; color: #64748b;"><strong>Est. Turnaround:</strong></td><td style="padding: 4px 0;">${escapeHtml(estimatedHours)} Hours</td></tr>` : ''}
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Form Specifications -->
+              <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: #475569; margin-bottom: 8px;">
+                Submitted Request Specifications
+              </div>
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border: 1px solid #e2e8f0; border-radius: 8px; border-collapse: collapse; margin-bottom: 24px;">
+                ${specRowsHtml}
+              </table>
+
+              <!-- Interactive Decision Action Box -->
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border: 2px solid #cbd5e1; border-radius: 12px; margin-bottom: 18px;">
+                <tr>
+                  <td align="center" style="padding: 20px 18px;">
+                    <div style="font-size: 14px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">
+                      Take Action Directly From This Email
+                    </div>
+                    <div style="font-size: 12px; color: #475569; margin-bottom: 18px;">
+                      Your decision updates Ticket <strong>${escapeHtml(ticket.id)}</strong> immediately in the IT Helpdesk Portal.
+                    </div>
+                    <table role="presentation" cellpadding="0" cellspacing="0" align="center">
+                      <tr>
+                        <td align="center" style="padding: 0 8px 8px 8px;">
+                          <a href="${approveUrl}" target="_blank" style="display: inline-block; background-color: #059669; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; padding: 13px 28px; border-radius: 8px; border: 1px solid #047857;">
+                            &#10003;&nbsp; Approve Request
+                          </a>
+                        </td>
+                        <td align="center" style="padding: 0 8px 8px 8px;">
+                          <a href="${rejectUrl}" target="_blank" style="display: inline-block; background-color: #e11d48; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; padding: 13px 28px; border-radius: 8px; border: 1px solid #be123c;">
+                            &#10005;&nbsp; Reject Request
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 12px; line-height: 1.5;">
+                      <strong>Approve:</strong> Ticket <strong>${escapeHtml(ticket.id)}</strong> immediately becomes <strong>OPEN</strong> for IT fulfillment.<br />
+                      <strong>Reject:</strong> Ticket <strong>${escapeHtml(ticket.id)}</strong> is automatically <strong>CLOSED</strong>.
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin: 0 0 12px 0; font-size: 12px; color: #64748b; text-align: center;">
+                Prefer reviewing in the browser? <a href="${portalUrl}" style="color: #0284c7; font-weight: 600; text-decoration: underline;">Open IT Helpdesk Portal</a>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 14px 26px; text-align: center; font-size: 11px; color: #94a3b8;">
+              IT Helpdesk &bull; Automated Manager Approval Workflow
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    const text = `Manager Approval Required - Ticket [${ticket.id}]\n\nHello ${managerName},\n\n${ticket.requesterName} (${ticket.requesterEmail}) has submitted a Service Catalog request for "${catalogItemTitle}" (${catalogItemCategory}).\n\nRequest Specifications:\n${specText}\n\nTake action immediately:\n- APPROVE (Opens ticket for IT fulfillment): ${approveUrl}\n- REJECT (Auto-closes ticket): ${rejectUrl}\n\nIT Helpdesk Support`;
+
+    if (!managerEmail || !managerEmail.includes('@')) {
+      return {
+        success: false,
+        status: 'failed',
+        approveUrl,
+        rejectUrl,
+        html,
+        error: 'Manager email address is missing or invalid.',
+      };
+    }
+
+    if (!config || !this.isSmtpConfigured(config)) {
+      const simId = `sim-appr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      this.recordDelivery({
+        id: simId,
+        type: 'approval_request',
+        recipient: managerEmail,
+        subject,
+        sentAt: new Date().toISOString(),
+        status: 'simulated_success',
+        messageId: simId,
+        ticketId: ticket.id,
+      });
+      return {
+        success: true,
+        status: 'simulated_success',
+        messageId: simId,
+        approveUrl,
+        rejectUrl,
+        html,
+      };
+    }
+
+    try {
+      const transporter = this.createTransporter(config);
+      const info = await transporter.sendMail({
+        from: `"${config.fromName}" <${config.fromEmail}>`,
+        to: managerEmail,
+        replyTo: config.replyToEmail || config.fromEmail,
+        subject,
+        text,
+        html,
+      });
+
+      this.recordDelivery({
+        id: `out-appr-${Date.now()}`,
+        type: 'approval_request',
+        recipient: managerEmail,
+        subject,
+        sentAt: new Date().toISOString(),
+        status: 'sent',
+        messageId: info.messageId,
+        ticketId: ticket.id,
+      });
+
+      return {
+        success: true,
+        status: 'sent',
+        messageId: info.messageId,
+        approveUrl,
+        rejectUrl,
+        html,
+      };
+    } catch (err: any) {
+      const simId = `sim-appr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      this.recordDelivery({
+        id: simId,
+        type: 'approval_request',
+        recipient: managerEmail,
+        subject,
+        sentAt: new Date().toISOString(),
+        status: 'simulated_success',
+        error: err.message,
+        messageId: simId,
+        ticketId: ticket.id,
+      });
+      return {
+        success: true,
+        status: 'simulated_success',
+        messageId: simId,
+        approveUrl,
+        rejectUrl,
+        html,
+        error: err.message,
+      };
     }
   }
 

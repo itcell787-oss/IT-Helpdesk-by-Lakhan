@@ -1,5 +1,8 @@
 import fs from 'fs';
+import express from 'express';
+import http from 'http';
 import { db } from '../server/db';
+import { apiRouter } from '../server/apiRouter';
 import { calculateSlaDeadlines, evaluateSlaStatus } from '../server/slaEngine';
 import { runAutomations } from '../server/automationEngine';
 import { Ticket, SlaPolicy, AutomationRule, User, TechnicianAssignedTask } from '../src/types';
@@ -1084,6 +1087,224 @@ async function runTestSuite() {
   };
 
   testDynamicTicketCustomFieldsAndTableSync();
+
+  // -------------------------------------------------------------
+  // Test: Mandatory Select Manager on Registration & Interactive Email Service Catalog Approvals
+  // -------------------------------------------------------------
+  console.log('\n📋 Testing Mandatory Manager Registration & Interactive Email Service Catalog Approvals...');
+  const testManagerRegistrationAndEmailApprovals = async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/api', apiRouter);
+
+    const server = await new Promise<http.Server>((resolve) => {
+      const s = app.listen(0, '127.0.0.1', () => resolve(s));
+    });
+
+    try {
+      const addr = server.address() as { port: number };
+      const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+      // 1. Public managers endpoint returns active managers
+      const mgrsRes = await fetch(`${baseUrl}/api/auth/managers`);
+      const mgrs = (await mgrsRes.json()) as Array<{ id: string; name: string; email: string }>;
+      assert('GET /api/auth/managers returns active managers list', mgrsRes.status === 200 && Array.isArray(mgrs) && mgrs.length > 0);
+      const selectedMgr = mgrs[0];
+
+      // 2. Self-registration rejects missing managerId
+      const missingMgrRes = await fetch(`${baseUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Missing Manager User',
+          email: 'missing.mgr@example.com',
+          employeeCode: 'EMP9001',
+          title: 'Analyst',
+          preSharedKey: 'Sports@9433',
+          password: 'password123',
+        }),
+      });
+      assert('POST /api/auth/register rejects registration when managerId is omitted', missingMgrRes.status === 400);
+
+      // 3. Self-registration accepts NA and preserves managerId === "NA"
+      const naRegRes = await fetch(`${baseUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Independent Employee',
+          email: 'independent.emp@example.com',
+          employeeCode: 'EMP9002',
+          title: 'Consultant',
+          managerId: 'NA',
+          preSharedKey: 'Sports@9433',
+          password: 'password123',
+        }),
+      });
+      const naRegBody = (await naRegRes.json()) as { success?: boolean; user?: User };
+      assert(
+        'POST /api/auth/register accepts NA and stores managerId as "NA"',
+        naRegRes.status === 201 && naRegBody.user?.managerId === 'NA'
+      );
+
+      // 4. Self-registration accepts a specific Manager ID and stores it
+      const mgrRegRes = await fetch(`${baseUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Managed Employee',
+          email: 'managed.emp@example.com',
+          employeeCode: 'EMP9003',
+          title: 'Software Engineer',
+          managerId: selectedMgr.id,
+          preSharedKey: 'Sports@9433',
+          password: 'password123',
+        }),
+      });
+      const mgrRegBody = (await mgrRegRes.json()) as { success?: boolean; user?: User };
+      assert(
+        'POST /api/auth/register assigns selected reporting manager cleanly',
+        mgrRegRes.status === 201 && mgrRegBody.user?.managerId === selectedMgr.id
+      );
+
+      const managedUser = mgrRegBody.user!;
+      const catalog = db.get('serviceCatalog') || [];
+      const catalogItem = catalog[0];
+      assert('Service catalog has at least one item for approval test', Boolean(catalogItem));
+
+      // 5. Interactive HTML email builder contains Approve and Reject action links
+      const sampleEmail = await emailService.sendServiceCatalogApprovalEmail({
+        ticket: {
+          id: 'ITL-TEST-APPR',
+          subject: `[Service Request]: ${catalogItem.title}`,
+          description: 'Test request',
+          status: 'waiting_approval',
+          priority: 'normal',
+          type: 'service_request',
+          category: catalogItem.category,
+          impact: 'medium',
+          urgency: 'medium',
+          channel: 'service_catalog',
+          requesterId: managedUser.id,
+          requesterName: managedUser.name,
+          requesterEmail: managedUser.email,
+          requesterEmployeeCode: managedUser.employeeCode,
+          organizationId: managedUser.organizationId,
+          followers: [],
+          ccRecipients: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          relatedAssetIds: [],
+          tags: [],
+          estimatedMinutes: 60,
+          actualMinutesSpent: 0,
+          customFields: { Justification: 'Project work' },
+          slaStatus: 'within_target',
+          slaFirstResponseDeadline: new Date().toISOString(),
+          slaResolutionDeadline: new Date().toISOString(),
+        },
+        catalogItemTitle: catalogItem.title,
+        catalogItemCategory: catalogItem.category,
+        estimatedHours: catalogItem.estimatedHours,
+        formData: { Justification: 'Project work' },
+        managerName: selectedMgr.name,
+        managerEmail: selectedMgr.email,
+        approvalToken: 'sample-token-123',
+        appBaseUrl: baseUrl,
+      });
+      assert(
+        'Interactive approval email HTML includes both Approve and Reject action links',
+        sampleEmail.success &&
+          sampleEmail.html.includes('decision=approved') &&
+          sampleEmail.html.includes('decision=rejected') &&
+          sampleEmail.html.includes('Approve Request') &&
+          sampleEmail.html.includes('Reject Request')
+      );
+
+      // 6. Service catalog request #1 -> Approve from Email -> Ticket immediately opens
+      const reqApproveRes = await fetch(`${baseUrl}/api/service-catalog/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          catalogItemId: catalogItem.id,
+          formData: { Justification: 'Need hardware for Q4 sprint' },
+          requesterId: managedUser.id,
+          requesterName: managedUser.name,
+          requesterEmail: managedUser.email,
+          requesterEmployeeCode: managedUser.employeeCode,
+        }),
+      });
+      const reqApproveBody = (await reqApproveRes.json()) as any;
+      assert(
+        'Service catalog request routes to respective manager with waiting_approval & email dispatch',
+        reqApproveRes.status === 201 &&
+          reqApproveBody.ticket?.status === 'waiting_approval' &&
+          reqApproveBody.approvalEmailDispatched === true &&
+          reqApproveBody.managerEmail === selectedMgr.email &&
+          Boolean(reqApproveBody.approveUrl) &&
+          Boolean(reqApproveBody.rejectUrl)
+      );
+
+      const emailApproveClick = await fetch(reqApproveBody.approveUrl, {
+        headers: { Accept: 'text/html' },
+      });
+      const emailApproveHtml = await emailApproveClick.text();
+      const updatedTicketAfterApprove = (db.get('tickets') || []).find((t) => t.id === reqApproveBody.ticket.id);
+      const updatedApprAfterApprove = (db.get('approvalRequests') || []).find((a) => a.id === reqApproveBody.approval.id);
+      assert(
+        'Clicking Approve in manager email immediately sets ticket status to OPEN and records via email',
+        emailApproveClick.status === 200 &&
+          emailApproveHtml.includes('OPEN') &&
+          updatedTicketAfterApprove?.status === 'open' &&
+          updatedApprAfterApprove?.status === 'approved' &&
+          updatedApprAfterApprove?.decidedVia === 'email'
+      );
+
+      // Idempotency check: clicking Reject on an already-approved token must NOT change state
+      const reclickReject = await fetch(reqApproveBody.rejectUrl, {
+        headers: { Accept: 'application/json' },
+      });
+      const reclickBody = (await reclickReject.json()) as any;
+      const ticketStillOpen = (db.get('tickets') || []).find((t) => t.id === reqApproveBody.ticket.id);
+      assert(
+        'Re-clicking email action link after decision is idempotent and preserves OPEN ticket status',
+        reclickReject.status === 200 && reclickBody.alreadyDecided === true && ticketStillOpen?.status === 'open'
+      );
+
+      // 7. Service catalog request #2 -> Reject from Email -> Ticket immediately auto-closes
+      const reqRejectRes = await fetch(`${baseUrl}/api/service-catalog/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          catalogItemId: catalogItem.id,
+          formData: { Justification: 'Duplicate request' },
+          requesterId: managedUser.id,
+          requesterName: managedUser.name,
+          requesterEmail: managedUser.email,
+          requesterEmployeeCode: managedUser.employeeCode,
+        }),
+      });
+      const reqRejectBody = (await reqRejectRes.json()) as any;
+      const emailRejectClick = await fetch(reqRejectBody.rejectUrl, {
+        headers: { Accept: 'text/html' },
+      });
+      const emailRejectHtml = await emailRejectClick.text();
+      const updatedTicketAfterReject = (db.get('tickets') || []).find((t) => t.id === reqRejectBody.ticket.id);
+      const updatedApprAfterReject = (db.get('approvalRequests') || []).find((a) => a.id === reqRejectBody.approval.id);
+      assert(
+        'Clicking Reject in manager email immediately AUTO-CLOSES ticket and marks approval rejected via email',
+        emailRejectClick.status === 200 &&
+          emailRejectHtml.includes('Auto-Closed') &&
+          updatedTicketAfterReject?.status === 'closed' &&
+          Boolean(updatedTicketAfterReject?.closedAt) &&
+          updatedApprAfterReject?.status === 'rejected' &&
+          updatedApprAfterReject?.decidedVia === 'email'
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  };
+
+  await testManagerRegistrationAndEmailApprovals();
 
   try {
     fs.copyFileSync('data/database.seed.json', 'data/database.json');

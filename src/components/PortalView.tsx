@@ -49,6 +49,7 @@ interface PortalViewProps {
   announcements?: PortalAnnouncement[];
   organization?: Organization;
   organizations?: Organization[];
+  availableUsers?: User[];
   systemSettings?: {
     requireOtpForTicketSubmission: boolean;
     enableTicketRating: boolean;
@@ -102,6 +103,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
   announcements = [],
   organization,
   organizations,
+  availableUsers = [],
   systemSettings,
   assets = [],
   allowRequesterAssetSelfService = true,
@@ -203,6 +205,58 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [regPsk, setRegPsk] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regEmployeeCode, setRegEmployeeCode] = useState('');
+  const [regManagerId, setRegManagerId] = useState('');
+  const [publicManagers, setPublicManagers] = useState<
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      employeeCode?: string;
+      title?: string;
+      team?: string;
+      organizationId?: string;
+    }>
+  >([]);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .getPublicManagers()
+      .then((list) => {
+        if (active && Array.isArray(list)) {
+          setPublicManagers(list);
+        }
+      })
+      .catch(() => {
+        // Fallback to availableUsers prop if endpoint unavailable
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeTab]);
+
+  const managerOptions = React.useMemo(() => {
+    const byId = new Map<
+      string,
+      { id: string; name: string; email: string; employeeCode?: string; title?: string; team?: string }
+    >();
+    for (const m of publicManagers) {
+      if (m && m.id) byId.set(m.id, m);
+    }
+    for (const u of availableUsers) {
+      if (u.role === 'manager' && u.status !== 'suspended' && !byId.has(u.id)) {
+        byId.set(u.id, {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          employeeCode: u.employeeCode,
+          title: u.title,
+          team: u.team,
+        });
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [publicManagers, availableUsers]);
 
   // Guest Ticket Tracking State
   const [guestTrackId, setGuestTrackId] = useState('');
@@ -507,6 +561,10 @@ export const PortalView: React.FC<PortalViewProps> = ({
       setRegError('Employee Code is compulsory (e.g. CBPL2045).');
       return;
     }
+    if (!regManagerId.trim()) {
+      setRegError('Please select a Manager (or choose NA) before completing registration.');
+      return;
+    }
     const hasPsk = Boolean(regPsk.trim());
     if (!hasPsk && !regOtpVerified) {
       setRegError('Please enter an Admin Pre-Shared Key (PSK) or verify your email via OTP before registering.');
@@ -526,6 +584,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
         title: regTitle.trim(),
         phone: regPhone.trim(),
         departmentId: regDepartment,
+        managerId: regManagerId.trim(),
         organizationId: regOrgId || currentUser?.organizationId || organization?.id || 'org-lakhan-tech',
         preSharedKey: regPsk.trim() || undefined,
         password: regPassword.trim(),
@@ -2305,9 +2364,9 @@ export const PortalView: React.FC<PortalViewProps> = ({
             <div className="space-y-4">
               {myCatalogRequests.map(({ ticket, approval, catalogItem }) => {
                 const isWaitingApproval = ticket.status === 'waiting_approval' || approval?.status === 'pending';
-                const isApproved = approval?.status === 'approved' || (!ticket.status.includes('waiting') && approval?.status !== 'rejected');
                 const isRejected = approval?.status === 'rejected' || ticket.status === 'cancelled';
-                const isFulfilled = ticket.status === 'resolved' || ticket.status === 'closed';
+                const isApproved = approval?.status === 'approved' || (!ticket.status.includes('waiting') && !isRejected);
+                const isFulfilled = !isRejected && (ticket.status === 'resolved' || ticket.status === 'closed');
 
                 return (
                   <div
@@ -2343,7 +2402,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                         ) : isRejected ? (
                           <span className="px-3 py-1 rounded-full text-xs font-bold bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 flex items-center gap-1.5">
                             <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                            <span>Request Rejected</span>
+                            <span>Rejected &bull; Ticket Auto-Closed</span>
                           </span>
                         ) : isFulfilled ? (
                           <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 flex items-center gap-1.5">
@@ -2353,7 +2412,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                         ) : (
                           <span className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border border-cyan-300 flex items-center gap-1.5">
                             <RotateCw className="w-3.5 h-3.5 text-cyan-600 animate-spin" />
-                            <span>Approved · In Fulfillment</span>
+                            <span>Approved &bull; Ticket Open</span>
                           </span>
                         )}
                       </div>
@@ -2415,7 +2474,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                           </div>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
                             {approval?.approverName
-                              ? `Reviewed by ${approval.approverName}`
+                              ? `${isWaitingApproval ? 'Emailed to' : 'Decided by'} ${approval.approverName}${approval.decidedVia === 'email' ? ' (via Email)' : ''}`
                               : approval?.approverRole
                               ? `Assigned to ${approval.approverRole.toUpperCase()}`
                               : 'Manager Endorsement'}
@@ -2426,7 +2485,9 @@ export const PortalView: React.FC<PortalViewProps> = ({
                         {/* Step 3: Fulfillment */}
                         <div
                           className={`p-3 rounded-lg bg-white dark:bg-slate-900 border space-y-1 ${
-                            isFulfilled
+                            isRejected
+                              ? 'border-rose-300 dark:border-rose-800/50'
+                              : isFulfilled
                               ? 'border-emerald-300 dark:border-emerald-800/40'
                               : isApproved && !isWaitingApproval && !isRejected
                               ? 'border-cyan-300 dark:border-cyan-800/50 ring-1 ring-cyan-400/40'
@@ -2435,7 +2496,9 @@ export const PortalView: React.FC<PortalViewProps> = ({
                         >
                           <div
                             className={`flex items-center justify-between text-xs font-bold ${
-                              isFulfilled
+                              isRejected
+                                ? 'text-rose-700 dark:text-rose-400'
+                                : isFulfilled
                                 ? 'text-emerald-700 dark:text-emerald-400'
                                 : isApproved && !isWaitingApproval && !isRejected
                                 ? 'text-cyan-700 dark:text-cyan-400'
@@ -2443,7 +2506,9 @@ export const PortalView: React.FC<PortalViewProps> = ({
                             }`}
                           >
                             <span className="flex items-center gap-1">
-                              {isFulfilled ? (
+                              {isRejected ? (
+                                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                              ) : isFulfilled ? (
                                 <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
                               ) : (
                                 <RotateCw className={`w-3.5 h-3.5 ${isApproved && !isWaitingApproval && !isRejected ? 'animate-spin text-cyan-600' : ''}`} />
@@ -2451,7 +2516,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                               <span>3. IT Provisioning</span>
                             </span>
                             <span className="text-[10px] font-mono font-bold">
-                              {isFulfilled ? '✓ Delivered' : isApproved && !isWaitingApproval && !isRejected ? '⚙ Active' : 'Waiting'}
+                              {isRejected ? '✕ Auto-Closed' : isFulfilled ? '✓ Delivered' : isApproved && !isWaitingApproval && !isRejected ? '⚙ Open' : 'Waiting'}
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -2757,6 +2822,30 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 onChange={(e) => setRegPhone(e.target.value)}
                 className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
               />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1 flex items-center justify-between">
+                <span>Select Manager *</span>
+                <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-mono font-bold">Mandatory (NA or Reporting Manager)</span>
+              </label>
+              <select
+                required
+                value={regManagerId}
+                onChange={(e) => setRegManagerId(e.target.value)}
+                className="w-full px-3 py-2 text-xs neu-input rounded-xl text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
+              >
+                <option value="">-- Select Manager --</option>
+                <option value="NA">NA (No Reporting Manager)</option>
+                {managerOptions.map((mgr) => (
+                  <option key={mgr.id} value={mgr.id}>
+                    {mgr.name} {mgr.employeeCode ? `[${mgr.employeeCode}]` : ''} ({mgr.title || 'Manager'} · {mgr.email})
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 block">
+                Service Catalog requests you submit will automatically send an interactive approval email (Approve / Reject) to your selected manager.
+              </span>
             </div>
 
             <div>

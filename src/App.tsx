@@ -334,34 +334,79 @@ export default function App() {
     loadData(true);
   }, [loadData]);
 
-  // Periodic Poller to detect incoming tickets from email gateways or other sessions
+  // Periodic Poller to detect incoming tickets AND live status/approval updates (e.g. Manager Approve/Reject from email)
   useEffect(() => {
     const poller = setInterval(async () => {
       try {
-        if (!currentUser || currentUser?.role === 'inventory_manager' || currentUser?.role === 'requester') return;
-        const freshTickets = await api.getTickets();
+        if (!currentUser || currentUser?.role === 'inventory_manager') return;
+        const [freshTickets, freshApprovals] = await Promise.all([
+          api.getTickets(),
+          api.getApprovals().catch(() => null),
+        ]);
+
         if (Array.isArray(freshTickets)) {
+          const isRequester = currentUser.role === 'requester';
           if (knownTicketIdsRef.current.size === 0) {
             knownTicketIdsRef.current = new Set(freshTickets.map((t) => t.id));
             setTickets(freshTickets);
-            return;
-          }
-          // Strictly count newly created tickets that were NOT in knownTicketIds
-          const newlyGenerated = freshTickets.filter((t) => !knownTicketIdsRef.current.has(t.id));
-          if (newlyGenerated.length > 0) {
-            setNewTicketNotificationCount(newlyGenerated.length);
-            setShowNewTicketNotification(true);
-            setPendingFreshTickets(freshTickets);
           } else {
-            if (newTicketNotificationCount === 0) {
-              setShowNewTicketNotification(false);
+            // Strictly count newly created tickets that were NOT in knownTicketIds (for staff notification badge)
+            const newlyGenerated = freshTickets.filter((t) => !knownTicketIdsRef.current.has(t.id));
+            if (newlyGenerated.length > 0 && !isRequester) {
+              setNewTicketNotificationCount(newlyGenerated.length);
+              setShowNewTicketNotification(true);
+              setPendingFreshTickets(freshTickets);
+            } else {
+              if (newTicketNotificationCount === 0) {
+                setShowNewTicketNotification(false);
+              }
+              // Live-sync status/updatedAt changes (e.g. email manager approval -> OPEN or rejection -> CLOSED)
+              setTickets((prev) => {
+                const prevMap = new Map(prev.map((t) => [t.id, t]));
+                const hasChanges =
+                  prev.length !== freshTickets.length ||
+                  freshTickets.some((ft) => {
+                    const existing = prevMap.get(ft.id);
+                    return (
+                      !existing ||
+                      existing.status !== ft.status ||
+                      existing.updatedAt !== ft.updatedAt ||
+                      existing.assignedTechnicianId !== ft.assignedTechnicianId
+                    );
+                  });
+                if (hasChanges) {
+                  if (isRequester) {
+                    knownTicketIdsRef.current = new Set(freshTickets.map((t) => t.id));
+                  }
+                  return freshTickets;
+                }
+                return prev;
+              });
             }
           }
+        }
+
+        if (Array.isArray(freshApprovals)) {
+          setApprovals((prev) => {
+            const prevMap = new Map(prev.map((a) => [a.id, a]));
+            const hasApprovalChanges =
+              prev.length !== freshApprovals.length ||
+              freshApprovals.some((fa) => {
+                const existing = prevMap.get(fa.id);
+                return (
+                  !existing ||
+                  existing.status !== fa.status ||
+                  existing.decidedAt !== fa.decidedAt ||
+                  existing.decidedVia !== fa.decidedVia
+                );
+              });
+            return hasApprovalChanges ? freshApprovals : prev;
+          });
         }
       } catch {
         // Silent poll
       }
-    }, 5000);
+    }, 4000);
 
     return () => clearInterval(poller);
   }, [currentUser, newTicketNotificationCount]);
@@ -962,14 +1007,23 @@ export default function App() {
         requesterEmployeeCode: currentUser?.employeeCode,
       });
       setTickets((prev) => [res.ticket, ...prev]);
-      showToast(`Service request lodged [${res.ticket.id}]!`);
+      if (res.approval) {
+        setApprovals((prev) => [res.approval!, ...prev]);
+      }
+      if (res.approvalEmailDispatched && res.managerEmail) {
+        showToast(
+          `Service request [${res.ticket.id}] lodged — interactive approval email sent to Manager ${res.managerName || ''} (${res.managerEmail})!`
+        );
+      } else {
+        showToast(`Service request lodged [${res.ticket.id}]!`);
+      }
       if (currentUser?.role === 'requester') {
         setActiveView('portal');
         setPortalInitialTab('catalog-status');
       }
       loadData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message || 'Failed to submit service catalog request.');
     }
   };
 
@@ -1536,6 +1590,7 @@ export default function App() {
                 announcements={announcements}
                 organization={organization}
                 organizations={organizations}
+                availableUsers={availableUsers}
                 systemSettings={systemSettings || organization?.systemSettings}
                 assets={assets}
                 initialTab={portalInitialTab}

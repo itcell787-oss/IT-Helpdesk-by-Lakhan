@@ -173,6 +173,18 @@ export const api = {
     });
   },
 
+  async getPublicManagers(): Promise<Array<{
+    id: string;
+    name: string;
+    email: string;
+    employeeCode?: string;
+    title?: string;
+    team?: string;
+    organizationId?: string;
+  }>> {
+    return request('/api/auth/managers');
+  },
+
   async registerUser(payload: {
     name: string;
     email: string;
@@ -181,6 +193,7 @@ export const api = {
     departmentId?: string;
     title?: string;
     phone?: string;
+    managerId: string;
     otp?: string;
     preSharedKey?: string;
     password?: string;
@@ -383,7 +396,15 @@ export const api = {
       requesterEmail?: string;
       requesterEmployeeCode?: string;
     }
-  ): Promise<{ ticket: Ticket }> {
+  ): Promise<{
+    ticket: Ticket;
+    approval?: ApprovalRequest;
+    approvalEmailDispatched?: boolean;
+    managerName?: string;
+    managerEmail?: string;
+    approveUrl?: string;
+    rejectUrl?: string;
+  }> {
     return request('/api/service-catalog/request', {
       method: 'POST',
       body: JSON.stringify({ catalogItemId, formData, ...requesterDetails }),

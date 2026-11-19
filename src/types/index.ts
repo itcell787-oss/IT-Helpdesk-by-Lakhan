@@ -459,8 +459,13 @@ export interface ApprovalRequest {
   requesterName: string;
   approverId?: string;
   approverName?: string;
+  approverEmail?: string;
   approverRole: string;
+  approvalToken?: string;
   status: 'pending' | 'approved' | 'rejected';
+  decidedVia?: 'portal' | 'email';
+  emailDeliveryStatus?: 'sent' | 'simulated_success' | 'failed';
+  emailMessageId?: string;
   notes?: string;
   createdAt: string;
   decidedAt?: string;
