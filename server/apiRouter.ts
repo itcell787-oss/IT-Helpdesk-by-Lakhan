@@ -41,6 +41,134 @@ import {
 
 export const apiRouter = Router();
 
+// -------------------------------------------------------------
+// Public Domain / Base URL Resolution (prevents local/LAN IP links in emails)
+// -------------------------------------------------------------
+let lastDetectedPublicOrigin = '';
+
+function isLocalOrIpHost(urlOrHost: string): boolean {
+  const raw = String(urlOrHost || '').trim();
+  if (!raw) return true;
+  let hostname = raw;
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    hostname = parsed.hostname.toLowerCase();
+  } catch {
+    hostname = raw.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].toLowerCase();
+  }
+  if (!hostname) return true;
+  if (
+    hostname === 'localhost' ||
+    hostname === '0.0.0.0' ||
+    hostname === '::1' ||
+    hostname === '[::1]' ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.localhost')
+  ) {
+    return true;
+  }
+  // Match any IPv4 address (including 127.x.x.x, 10.x.x.x, 192.168.x.x, 172.16-31.x.x, or raw WAN IPs)
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+    return true;
+  }
+  // Match raw IPv6 literal
+  if (hostname.includes(':')) {
+    return true;
+  }
+  return false;
+}
+
+function normalizePublicBaseUrl(raw?: string): string {
+  const cleaned = String(raw || '').trim().replace(/\/+$/, '');
+  if (!cleaned) return '';
+  if (/^https?:\/\//i.test(cleaned)) {
+    try {
+      const u = new URL(cleaned);
+      return `${u.protocol}//${u.host}`;
+    } catch {
+      return cleaned;
+    }
+  }
+  const defaultProto = isLocalOrIpHost(cleaned) ? 'http' : 'https';
+  try {
+    const u = new URL(`${defaultProto}://${cleaned}`);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return `${defaultProto}://${cleaned}`;
+  }
+}
+
+function extractRealDomainOriginFromRequest(req: Request): string {
+  const protoHeader = (req.headers['x-forwarded-proto'] as string) || '';
+  const forwardedProto = protoHeader.split(',')[0]?.trim().toLowerCase();
+  const effectiveProto = forwardedProto === 'https' || forwardedProto === 'http' ? forwardedProto : (req.protocol || 'https');
+
+  const candidates: string[] = [];
+
+  const fwdHost = ((req.headers['x-forwarded-host'] as string) || '').split(',')[0]?.trim();
+  if (fwdHost) {
+    candidates.push(`${effectiveProto}://${fwdHost}`);
+  }
+
+  const originHeader = String(req.headers['origin'] || '').trim();
+  if (originHeader && /^https?:\/\//i.test(originHeader)) {
+    candidates.push(originHeader);
+  }
+
+  const refererHeader = String(req.headers['referer'] || '').trim();
+  if (refererHeader && /^https?:\/\//i.test(refererHeader)) {
+    try {
+      const refUrl = new URL(refererHeader);
+      candidates.push(`${refUrl.protocol}//${refUrl.host}`);
+    } catch {}
+  }
+
+  const hostHeader = String(req.get('host') || '').trim();
+  if (hostHeader) {
+    candidates.push(`${effectiveProto}://${hostHeader}`);
+  }
+
+  const bodyBaseUrl = typeof req.body?.appBaseUrl === 'string' ? req.body.appBaseUrl.trim() : '';
+  if (bodyBaseUrl && /^https?:\/\//i.test(bodyBaseUrl)) {
+    candidates.push(bodyBaseUrl);
+  }
+
+  for (const candidate of candidates) {
+    const normalized = normalizePublicBaseUrl(candidate);
+    if (normalized && !isLocalOrIpHost(normalized)) {
+      return normalized;
+    }
+  }
+  return '';
+}
+
+// Automatically capture the live domain whenever traffic arrives via a real public domain (e.g. https://helpdesk.company.com)
+apiRouter.use((req: Request, _res: Response, next) => {
+  try {
+    const detected = extractRealDomainOriginFromRequest(req);
+    if (detected && detected !== lastDetectedPublicOrigin) {
+      lastDetectedPublicOrigin = detected;
+      const orgs = db.get('organizations') || [];
+      if (orgs[0]) {
+        const currentDetected = orgs[0].systemSettings?.detectedPublicUrl;
+        if (currentDetected !== detected) {
+          orgs[0].systemSettings = {
+            requireOtpForTicketSubmission: false,
+            enableTicketRating: true,
+            enableCategoryAutoAssign: true,
+            ...(orgs[0].systemSettings || {}),
+            detectedPublicUrl: detected,
+          };
+          db.set('organizations', orgs);
+        }
+      }
+    }
+  } catch {
+    // Non-blocking domain detection
+  }
+  next();
+});
+
 // In-memory isolated session store: SessionToken -> Session metadata
 // This guarantees independent sessions across different PCs and browser tabs.
 export interface ActiveSession {
@@ -518,16 +646,22 @@ apiRouter.patch('/system-settings', (req: Request, res: Response) => {
 
   const organizations = db.get('organizations');
   const org = organizations[0];
-  const mergedFormConfig = req.body.ticketSubmissionFormConfig
+  const sanitizedBody = { ...req.body };
+  if (typeof sanitizedBody.publicPortalUrl === 'string') {
+    sanitizedBody.publicPortalUrl = sanitizedBody.publicPortalUrl.trim()
+      ? normalizePublicBaseUrl(sanitizedBody.publicPortalUrl)
+      : '';
+  }
+  const mergedFormConfig = sanitizedBody.ticketSubmissionFormConfig
     ? {
         ...DEFAULT_TICKET_SUBMISSION_FORM_CONFIG,
         ...(org.systemSettings?.ticketSubmissionFormConfig || {}),
-        ...req.body.ticketSubmissionFormConfig,
+        ...sanitizedBody.ticketSubmissionFormConfig,
       }
     : org.systemSettings?.ticketSubmissionFormConfig;
   org.systemSettings = {
     ...org.systemSettings,
-    ...req.body,
+    ...sanitizedBody,
     ...(mergedFormConfig ? { ticketSubmissionFormConfig: mergedFormConfig } : {}),
   };
 
@@ -2702,17 +2836,38 @@ apiRouter.delete('/service-catalog/:id', (req: Request, res: Response) => {
   res.json({ success: true, deletedCatalogId: id });
 });
 
-// Shared helper to derive public base URL for interactive email links
+// Shared helper to derive public domain base URL for interactive approval emails & portal links
 function resolvePublicBaseUrl(req: Request): string {
-  const explicitPublicUrl = (process.env.PUBLIC_APP_URL || '').trim();
-  if (explicitPublicUrl) return explicitPublicUrl.replace(/\/+$/, '');
+  // 1. Explicit Superadmin-configured Public Domain / Portal URL in Helpdesk Settings
+  const orgs = db.get('organizations') || [];
+  const configuredPortalUrl = normalizePublicBaseUrl(orgs[0]?.systemSettings?.publicPortalUrl);
+  if (configuredPortalUrl) return configuredPortalUrl;
+
+  // 2. Explicit environment override (PUBLIC_APP_URL)
+  const explicitEnvUrl = normalizePublicBaseUrl(process.env.PUBLIC_APP_URL);
+  if (explicitEnvUrl) return explicitEnvUrl;
+
+  // 3. Current request's real non-IP domain (X-Forwarded-Host, Origin, Referer, Host, or browser appBaseUrl)
+  const requestDomain = extractRealDomainOriginFromRequest(req);
+  if (requestDomain) return requestDomain;
+
+  // 4. Previously auto-detected real domain from live HTTPS traffic (guards against LAN IP / 127.0.0.1 proxy submissions)
+  const persistedDetected = normalizePublicBaseUrl(
+    lastDetectedPublicOrigin || orgs[0]?.systemSettings?.detectedPublicUrl
+  );
+  if (persistedDetected && !isLocalOrIpHost(persistedDetected)) {
+    return persistedDetected;
+  }
+
+  // 5. Fallback to current request host (local / dev / test setups)
   const protoHeader = (req.headers['x-forwarded-proto'] as string) || '';
   const proto = protoHeader.split(',')[0]?.trim() || req.protocol || 'http';
   const hostHeader = (req.headers['x-forwarded-host'] as string) || '';
   const host = hostHeader.split(',')[0]?.trim() || req.get('host');
   if (host) return `${proto}://${host}`.replace(/\/+$/, '');
-  const fallbackAppUrl = (process.env.APP_URL || 'http://localhost:3000').trim();
-  return fallbackAppUrl.replace(/\/+$/, '');
+
+  const fallbackAppUrl = normalizePublicBaseUrl(process.env.APP_URL) || 'http://localhost:3000';
+  return fallbackAppUrl;
 }
 
 // Shared helper to apply a manager approval or rejection decision (via Portal OR Email)

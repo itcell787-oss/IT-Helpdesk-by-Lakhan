@@ -56,6 +56,8 @@ export interface SystemSettings {
   ticketSubmissionFormConfig?: TicketSubmissionFormConfig; // Customizable End-User Submit Support Ticket form settings
   enableInboundTicketGeneration?: boolean; // Superadmin toggle to enable/disable ticket creation via email
   enableOutboundReplyNotification?: boolean; // Superadmin toggle for outbound reply emails
+  publicPortalUrl?: string; // Explicit public domain URL (e.g. https://helpdesk.company.com) used in interactive approval emails and portal links
+  detectedPublicUrl?: string; // Auto-detected public domain from live HTTPS traffic (fallback when publicPortalUrl is unset)
 }
 
 export interface User {

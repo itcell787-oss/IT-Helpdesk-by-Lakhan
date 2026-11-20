@@ -407,7 +407,12 @@ export const api = {
   }> {
     return request('/api/service-catalog/request', {
       method: 'POST',
-      body: JSON.stringify({ catalogItemId, formData, ...requesterDetails }),
+      body: JSON.stringify({
+        catalogItemId,
+        formData,
+        ...requesterDetails,
+        appBaseUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+      }),
     });
   },
 

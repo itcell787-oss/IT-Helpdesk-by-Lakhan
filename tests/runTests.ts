@@ -1299,6 +1299,63 @@ async function runTestSuite() {
           updatedApprAfterReject?.status === 'rejected' &&
           updatedApprAfterReject?.decidedVia === 'email'
       );
+
+      // 8. Reverse-proxy X-Forwarded-Host domain overrides local IP in email Approve/Reject links
+      const forwardedReqRes = await fetch(`${baseUrl}/api/service-catalog/request`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-Proto': 'https',
+          'X-Forwarded-Host': 'helpdesk.example-company.org',
+        },
+        body: JSON.stringify({
+          catalogItemId: catalogItem.id,
+          formData: { Justification: 'Domain routing check' },
+          requesterId: managedUser.id,
+          requesterName: managedUser.name,
+          requesterEmail: managedUser.email,
+          requesterEmployeeCode: managedUser.employeeCode,
+        }),
+      });
+      const forwardedBody = (await forwardedReqRes.json()) as any;
+      assert(
+        'Approval email links use forwarded public domain (https://helpdesk.example-company.org) instead of local IP',
+        forwardedReqRes.status === 201 &&
+          String(forwardedBody.approveUrl || '').startsWith('https://helpdesk.example-company.org/api/approvals/email-action?') &&
+          String(forwardedBody.rejectUrl || '').startsWith('https://helpdesk.example-company.org/api/approvals/email-action?')
+      );
+
+      // 9. Explicit publicPortalUrl in System Settings overrides even plain local-IP requests
+      const orgsForDomain = db.get('organizations') || [];
+      orgsForDomain[0].systemSettings = {
+        ...(orgsForDomain[0].systemSettings || {
+          requireOtpForTicketSubmission: false,
+          enableTicketRating: true,
+          enableCategoryAutoAssign: true,
+        }),
+        publicPortalUrl: 'https://portal.enterprise-domain.test',
+      };
+      db.set('organizations', orgsForDomain);
+
+      const configuredDomainRes = await fetch(`${baseUrl}/api/service-catalog/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          catalogItemId: catalogItem.id,
+          formData: { Justification: 'Configured public domain check' },
+          requesterId: managedUser.id,
+          requesterName: managedUser.name,
+          requesterEmail: managedUser.email,
+          requesterEmployeeCode: managedUser.employeeCode,
+        }),
+      });
+      const configuredDomainBody = (await configuredDomainRes.json()) as any;
+      assert(
+        'Configured publicPortalUrl in Helpdesk Settings forces domain URL even for local IP submissions',
+        configuredDomainRes.status === 201 &&
+          String(configuredDomainBody.approveUrl || '').startsWith('https://portal.enterprise-domain.test/api/approvals/email-action?') &&
+          String(configuredDomainBody.rejectUrl || '').startsWith('https://portal.enterprise-domain.test/api/approvals/email-action?')
+      );
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
