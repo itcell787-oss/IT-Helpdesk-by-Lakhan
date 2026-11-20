@@ -626,15 +626,21 @@ export default function App() {
 
   const handleUpdateTicket = async (id: string, updates: Partial<Ticket>) => {
     try {
-      const updated = await api.updateTicket(id, updates);
+      const payload = currentUser?.id ? ({ ...updates, _actorUserId: currentUser.id } as any) : updates;
+      const updated = await api.updateTicket(id, payload);
       setTickets((prev) => prev.map((t) => (t.id === id ? updated : t)));
       if (ticketDetailData && ticketDetailData.ticket.id === id) {
-        setTicketDetailData({ ...ticketDetailData, ticket: updated });
+        try {
+          const freshDetail = await api.getTicket(id);
+          setTicketDetailData(freshDetail);
+        } catch {
+          setTicketDetailData({ ...ticketDetailData, ticket: updated });
+        }
       }
       showToast(`Ticket [${id}] updated!`);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed updating ticket');
+      showToast(err.message || 'Failed updating ticket');
     }
   };
 
@@ -878,6 +884,10 @@ export default function App() {
 
   const handleUserRegistered = (newUser: User) => {
     setAvailableUsers((prev) => [...prev, newUser]);
+    setCurrentUser(newUser);
+    try {
+      localStorage.setItem('it_helpdesk_user_id', newUser.id);
+    } catch {}
     showToast(`Welcome ${newUser.name}! Account registered.`);
     loadData();
   };

@@ -743,7 +743,7 @@ class EmailGatewayService {
   }
 
   /**
-   * Dispatches status update email notification to requester and CC list when staff changes ticket status or assigns tech
+   * Dispatches status update email notification to requester and CC list (including assigned technician when requester closes/resolves)
    */
   public async sendTicketStatusUpdateEmail(params: {
     ticket: Ticket;
@@ -753,7 +753,17 @@ class EmailGatewayService {
     actorRole?: string;
     resolutionSummary?: string;
     assignedTechName?: string;
-  }): Promise<{ success: boolean; status: 'sent' | 'simulated_success' | 'failed'; messageId?: string; error?: string }> {
+    assignedTechEmail?: string;
+  }): Promise<{
+    success: boolean;
+    status: 'sent' | 'simulated_success' | 'failed';
+    messageId?: string;
+    subject?: string;
+    html?: string;
+    text?: string;
+    cc?: string[];
+    error?: string;
+  }> {
     const config = db.get('defaultGatewayConfig');
     if (!config || config.enableOutboundReplyNotification === false) {
       return { success: true, status: 'simulated_success' };
@@ -764,19 +774,58 @@ class EmailGatewayService {
       return { success: false, status: 'failed', error: 'Requester email missing' };
     }
 
-    const cc = (params.ticket.ccRecipients || []).filter(
-      (e) => e && e.includes('@') && e.toLowerCase() !== to.toLowerCase()
-    );
+    const normalizedRole = String(params.actorRole || '').toLowerCase();
+    const isRequesterAction = normalizedRole === 'requester';
+    const roleLabelMap: Record<string, string> = {
+      requester: 'Requester',
+      technician: 'Technician',
+      manager: 'Manager',
+      admin: 'Admin',
+      superadmin: 'Superadmin',
+      inventory_manager: 'Inventory Manager',
+      auditor: 'Auditor',
+    };
+    const roleLabel = roleLabelMap[normalizedRole] || (params.actorRole ? params.actorRole.replace(/_/g, ' ') : 'Support Staff');
+
+    const isClosed = params.newStatus === 'closed';
+    const isResolved = params.newStatus === 'resolved';
+    const isClosureAction = isClosed || isResolved;
+
+    const ccSet = new Set<string>();
+    for (const e of params.ticket.ccRecipients || []) {
+      if (e && e.includes('@') && e.toLowerCase() !== to.toLowerCase()) {
+        ccSet.add(e.trim());
+      }
+    }
+    // When requester closes/resolves their own ticket, also CC the assigned technician so IT staff sees the update
+    if (isRequesterAction && isClosureAction) {
+      let techEmail = params.assignedTechEmail;
+      if (!techEmail && params.ticket.assignedTechnicianId) {
+        const users = db.get('users') || [];
+        const techUser = users.find((u) => u.id === params.ticket.assignedTechnicianId);
+        if (techUser?.email) techEmail = techUser.email;
+      }
+      if (techEmail && techEmail.includes('@') && techEmail.toLowerCase() !== to.toLowerCase()) {
+        ccSet.add(techEmail.trim());
+      }
+    }
+    const cc = Array.from(ccSet);
 
     const statusLabel = this.formatStatusLabel(params.newStatus);
+    const subjectTitle =
+      isRequesterAction && isClosureAction
+        ? `Ticket ${statusLabel} by Requester (${params.actorName}) - ${params.ticket.subject}`
+        : `Status Update: ${statusLabel} - ${params.ticket.subject}`;
+
     const subject = this.formatSubjectWithTicketToken(
       config.subjectPrefix,
       params.ticket.id,
-      `Status Update: ${statusLabel} - ${params.ticket.subject}`
+      subjectTitle
     );
 
     const statusBadgeColors: Record<string, { bg: string; text: string; border: string }> = {
       new: { bg: '#e0f2fe', text: '#0369a1', border: '#bae6fd' },
+      open: { bg: '#e0f2fe', text: '#0369a1', border: '#bae6fd' },
       assigned: { bg: '#ede9fe', text: '#6d28d9', border: '#ddd6fe' },
       in_progress: { bg: '#fef3c7', text: '#b45309', border: '#fde68a' },
       pending_requester: { bg: '#ffedd5', text: '#c2410c', border: '#fed7aa' },
@@ -787,8 +836,25 @@ class EmailGatewayService {
     };
 
     const badge = statusBadgeColors[params.newStatus] || { bg: '#f1f5f9', text: '#334155', border: '#cbd5e1' };
+    const actionRowLabel = isClosed ? 'Closed By:' : isResolved ? 'Resolved By:' : 'Updated By:';
+    const actionVerb = isClosed ? 'closed' : isResolved ? 'resolved' : `updated to ${statusLabel}`;
 
-    const textContent = `Ticket: [${params.ticket.id}] ${params.ticket.subject}\nStatus Update: ${statusLabel}\nUpdated by: ${params.actorName} (${(params.actorRole || 'Staff').toUpperCase()})\nAssigned Technician: ${params.assignedTechName || params.ticket.assignedTechnicianName || 'Support Team'}\n${params.resolutionSummary ? `Resolution Notes: ${params.resolutionSummary}\n` : ''}\n---\nTo view or update this request, reply directly to this email.\nIT Helpdesk Support`;
+    const headingText =
+      isRequesterAction && isClosureAction
+        ? `Ticket ${statusLabel} by Requester`
+        : 'Support Ticket Status Updated';
+
+    const summarySentenceText =
+      isRequesterAction && isClosureAction
+        ? `Requester ${params.actorName} has ${actionVerb} their support ticket [${params.ticket.id}].`
+        : `Support ticket [${params.ticket.id}] status has been updated to ${statusLabel} by ${params.actorName} (${roleLabel}).`;
+
+    const summarySentenceHtml =
+      isRequesterAction && isClosureAction
+        ? `Requester <strong>${params.actorName}</strong> has <strong>${actionVerb}</strong> their support ticket <strong>[${params.ticket.id}]</strong>.`
+        : `Your support ticket <strong>[${params.ticket.id}]</strong> status has been updated to <strong>${statusLabel}</strong> by <strong>${params.actorName}</strong> (${roleLabel}).`;
+
+    const textContent = `Ticket: [${params.ticket.id}] ${params.ticket.subject}\n${summarySentenceText}\nStatus: ${statusLabel}\n${actionRowLabel} ${params.actorName} (${roleLabel})\nAssigned Technician: ${params.assignedTechName || params.ticket.assignedTechnicianName || 'Support Team (Unassigned)'}\n${params.resolutionSummary ? `Resolution Notes: ${params.resolutionSummary}\n` : ''}\n---\nTo view or update this request, reply directly to this email.\nIT Helpdesk Support`;
 
     const htmlContent = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 620px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
@@ -800,21 +866,23 @@ class EmailGatewayService {
             <span style="margin-left: 8px; display: inline-block; padding: 3px 8px; font-size: 11px; font-weight: 700; border-radius: 4px; background: ${badge.bg}; color: ${badge.text}; border: 1px solid ${badge.border}; text-transform: uppercase;">
               ${statusLabel}
             </span>
+            ${isRequesterAction && isClosureAction ? `<span style="margin-left: 8px; display: inline-block; padding: 3px 8px; font-size: 11px; font-weight: 700; border-radius: 4px; background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; text-transform: uppercase;">By Requester</span>` : ''}
           </div>
-          <h2 style="color: #0f172a; margin: 8px 0 0; font-size: 20px;">Support Ticket Status Updated</h2>
+          <h2 style="color: #0f172a; margin: 8px 0 0; font-size: 20px;">${headingText}</h2>
         </div>
 
         <p style="color: #334155; font-size: 14px; line-height: 1.6;">
           Hello <strong>${params.ticket.requesterName}</strong>,
         </p>
         <p style="color: #334155; font-size: 14px; line-height: 1.6;">
-          Your support ticket <strong>[${params.ticket.id}]</strong> status has been updated to <strong>${statusLabel}</strong> by <strong>${params.actorName}</strong>.
+          ${summarySentenceHtml}
         </p>
 
         <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
           <table style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse;">
-            <tr><td style="padding: 6px 0; color: #64748b; width: 140px;"><strong>Subject:</strong></td><td style="padding: 6px 0; font-weight: 600;">${params.ticket.subject}</td></tr>
+            <tr><td style="padding: 6px 0; color: #64748b; width: 150px;"><strong>Subject:</strong></td><td style="padding: 6px 0; font-weight: 600;">${params.ticket.subject}</td></tr>
             <tr><td style="padding: 6px 0; color: #64748b;"><strong>Current Status:</strong></td><td style="padding: 6px 0;"><span style="display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 700; border-radius: 4px; background: ${badge.bg}; color: ${badge.text};">${statusLabel}</span></td></tr>
+            <tr><td style="padding: 6px 0; color: #64748b;"><strong>${actionRowLabel}</strong></td><td style="padding: 6px 0; font-weight: 700; color: #0f172a;">${params.actorName} <span style="font-weight: 600; color: ${isRequesterAction ? '#4338ca' : '#0369a1'};">(${roleLabel})</span></td></tr>
             <tr><td style="padding: 6px 0; color: #64748b;"><strong>Assigned Technician:</strong></td><td style="padding: 6px 0;">${params.assignedTechName || params.ticket.assignedTechnicianName || 'Support Team (Unassigned)'}</td></tr>
             <tr><td style="padding: 6px 0; color: #64748b;"><strong>Category:</strong></td><td style="padding: 6px 0;">${params.ticket.category}</td></tr>
             <tr><td style="padding: 6px 0; color: #64748b;"><strong>Updated At:</strong></td><td style="padding: 6px 0;">${new Date().toLocaleString()}</td></tr>
@@ -824,7 +892,7 @@ class EmailGatewayService {
 
         <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 16px; border-radius: 4px; margin-bottom: 20px;">
           <p style="margin: 0; font-size: 12px; color: #1e40af;">
-            💡 <strong>Need to reply?</strong> Simply reply directly to this email to add notes or attachments to ticket <strong>${params.ticket.id}</strong>.
+            💡 <strong>Need to reply?</strong> Simply reply directly to this email to add notes or reopen ticket <strong>${params.ticket.id}</strong>.
           </p>
         </div>
 
@@ -847,7 +915,7 @@ class EmailGatewayService {
         messageId: simId,
         ticketId: params.ticket.id,
       });
-      return { success: true, status: 'simulated_success', messageId: simId };
+      return { success: true, status: 'simulated_success', messageId: simId, subject, html: htmlContent, text: textContent, cc };
     }
 
     try {
@@ -873,7 +941,7 @@ class EmailGatewayService {
         ticketId: params.ticket.id,
       });
 
-      return { success: true, status: 'sent', messageId: info.messageId };
+      return { success: true, status: 'sent', messageId: info.messageId, subject, html: htmlContent, text: textContent, cc };
     } catch (err: any) {
       const simId = `sim-status-${Date.now()}`;
       this.recordDelivery({
@@ -887,7 +955,7 @@ class EmailGatewayService {
         messageId: simId,
         ticketId: params.ticket.id,
       });
-      return { success: true, status: 'simulated_success', error: err.message, messageId: simId };
+      return { success: true, status: 'simulated_success', error: err.message, messageId: simId, subject, html: htmlContent, text: textContent, cc };
     }
   }
 

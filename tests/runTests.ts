@@ -1093,6 +1093,14 @@ async function runTestSuite() {
   // -------------------------------------------------------------
   console.log('\n📋 Testing Mandatory Manager Registration & Interactive Email Service Catalog Approvals...');
   const testManagerRegistrationAndEmailApprovals = async () => {
+    // Isolate test from any previously auto-detected preview domain in data/database.json
+    const seedOrgs = db.get('organizations') || [];
+    if (seedOrgs[0]?.systemSettings) {
+      delete seedOrgs[0].systemSettings.publicPortalUrl;
+      delete seedOrgs[0].systemSettings.detectedPublicUrl;
+      db.set('organizations', seedOrgs);
+    }
+
     const app = express();
     app.use(express.json());
     app.use('/api', apiRouter);
@@ -1355,6 +1363,103 @@ async function runTestSuite() {
         configuredDomainRes.status === 201 &&
           String(configuredDomainBody.approveUrl || '').startsWith('https://portal.enterprise-domain.test/api/approvals/email-action?') &&
           String(configuredDomainBody.rejectUrl || '').startsWith('https://portal.enterprise-domain.test/api/approvals/email-action?')
+      );
+
+      // 10. Requester self-resolve & self-close attribution (Ticket, Audit Log, Timeline Comment, and Outbound Email)
+      const requesterToken = (mgrRegBody as any).sessionToken as string;
+      assert('POST /api/auth/register returns isolated sessionToken for newly registered requester', Boolean(requesterToken));
+
+      const techUser = (db.get('users') || []).find((u) => u.role === 'technician');
+      const createdByReqRes = await fetch(`${baseUrl}/api/tickets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-session-token': requesterToken,
+          'x-user-id': managedUser.id,
+        },
+        body: JSON.stringify({
+          subject: 'VPN issue resolved myself',
+          description: 'Testing requester self-closure attribution',
+          category: 'Network & VPN',
+          priority: 'normal',
+          requesterId: managedUser.id,
+          requesterName: managedUser.name,
+          requesterEmail: managedUser.email,
+          assignedTechnicianId: techUser?.id,
+          assignedTechnicianName: techUser?.name,
+        }),
+      });
+      const reqTicket = (await createdByReqRes.json()) as Ticket;
+
+      // Requester resolves their own ticket
+      const selfResolveRes = await fetch(`${baseUrl}/api/tickets/${reqTicket.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-session-token': requesterToken,
+          'x-user-id': managedUser.id,
+        },
+        body: JSON.stringify({
+          status: 'resolved',
+          resolutionCode: 'solved',
+          resolutionSummary: 'Restarted VPN client and it worked',
+        }),
+      });
+      const selfResolvedTicket = (await selfResolveRes.json()) as Ticket;
+      assert(
+        'When requester resolves their own ticket, resolvedByRole is requester and resolvedByName matches requester (not superadmin/technician)',
+        selfResolveRes.status === 200 &&
+          selfResolvedTicket.status === 'resolved' &&
+          selfResolvedTicket.resolvedByRole === 'requester' &&
+          selfResolvedTicket.resolvedByName === managedUser.name
+      );
+
+      // Requester closes their own ticket
+      const selfCloseRes = await fetch(`${baseUrl}/api/tickets/${reqTicket.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-session-token': requesterToken,
+          'x-user-id': managedUser.id,
+        },
+        body: JSON.stringify({
+          status: 'closed',
+        }),
+      });
+      const selfClosedTicket = (await selfCloseRes.json()) as Ticket;
+      const latestComments = (db.get('comments') || []).filter((c) => c.ticketId === reqTicket.id);
+      const latestAudits = (db.get('auditLogs') || []).filter((a) => a.entityId === reqTicket.id);
+
+      assert(
+        'When requester closes their own ticket, closedByRole is requester and timeline + audit log attribute closure to requester',
+        selfCloseRes.status === 200 &&
+          selfClosedTicket.status === 'closed' &&
+          selfClosedTicket.closedByRole === 'requester' &&
+          selfClosedTicket.closedByName === managedUser.name &&
+          latestComments.some((c) => c.authorRole === 'requester' && c.content.includes(`Requester ${managedUser.name} closed this ticket`)) &&
+          latestAudits.some((a) => a.actorRole === 'requester' && a.details.includes(`Requester ${managedUser.name} closed ticket ${reqTicket.id}`))
+      );
+
+      // Outbound status update email explicitly shows Requester closed their ticket and CCs assigned technician
+      const closeEmail = await emailService.sendTicketStatusUpdateEmail({
+        ticket: selfClosedTicket,
+        oldStatus: 'resolved',
+        newStatus: 'closed',
+        actorName: managedUser.name,
+        actorRole: 'requester',
+        resolutionSummary: selfClosedTicket.resolutionSummary,
+        assignedTechName: techUser?.name,
+        assignedTechEmail: techUser?.email,
+      });
+      assert(
+        'Outbound closure email explicitly shows Requester closed their ticket and CCs assigned technician',
+        closeEmail.success &&
+          String(closeEmail.subject || '').includes(`Ticket Closed by Requester (${managedUser.name})`) &&
+          String(closeEmail.html || '').includes('Ticket Closed by Requester') &&
+          String(closeEmail.html || '').includes(`Requester <strong>${managedUser.name}</strong> has <strong>closed</strong> their support ticket`) &&
+          String(closeEmail.html || '').includes('Closed By:') &&
+          String(closeEmail.text || '').includes(`Closed By: ${managedUser.name} (Requester)`) &&
+          (!techUser?.email || (closeEmail.cc || []).includes(techUser.email))
       );
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

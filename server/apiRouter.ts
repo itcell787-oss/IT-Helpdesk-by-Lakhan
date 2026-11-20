@@ -1053,6 +1053,17 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
 
   db.set('users', [...users, newUser]);
 
+  const nowIso = new Date().toISOString();
+  const sessionToken = `sess-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+  activeSessions.set(sessionToken, {
+    token: sessionToken,
+    userId: newUser.id,
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+    createdAt: nowIso,
+    lastActive: nowIso,
+  });
+
   logAudit(
     newUser,
     'user.self_registered',
@@ -1065,6 +1076,7 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     success: true,
     message: 'Registration successful! Your account is active.',
     user: newUser,
+    sessionToken,
   });
 });
 
@@ -1724,27 +1736,81 @@ apiRouter.patch('/tickets/:id', async (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Ticket not found' });
   }
 
-  const actor = getActor(req);
+  const users = db.get('users');
+  const rawUpdates = req.body || {};
+  const fallbackActorId = typeof rawUpdates._actorUserId === 'string' ? rawUpdates._actorUserId : '';
+  const optionalActor = getOptionalActor(req) || (fallbackActorId ? users.find((u) => u.id === fallbackActorId) || null : null);
+  const actor = optionalActor || getActor(req);
   if (actor.role === 'inventory_manager' && actor.privileges?.canManageTickets !== true) {
     return res.status(403).json({ error: 'Access denied: Inventory managers cannot modify tickets without ticket management privilege.' });
   }
 
-  const users = db.get('users');
-
   const oldTicket = tickets[idx];
-  const updates = req.body;
+  const updates = { ...rawUpdates };
+  delete updates._actorUserId;
 
-  // Handling resolution / closure
+  const actorRoleLabelMap: Record<string, string> = {
+    requester: 'Requester',
+    technician: 'Technician',
+    manager: 'Manager',
+    admin: 'Admin',
+    superadmin: 'Superadmin',
+    inventory_manager: 'Inventory Manager',
+    auditor: 'Auditor',
+  };
+  const actorRoleLabel = actorRoleLabelMap[actor.role] || actor.role;
+  const nowIso = new Date().toISOString();
+
+  // Handling resolution / closure with accurate actor attribution (never misattributing requester actions to staff)
   if (updates.status === 'resolved' || updates.status === 'closed') {
     if (!updates.resolutionCode && !oldTicket.resolutionCode) {
       updates.resolutionCode = 'solved';
-      updates.resolutionSummary = updates.resolutionSummary || (updates.status === 'closed' ? 'Closed via ticket properties control' : 'Resolved via ticket properties control');
     }
-  }
+    if (!updates.resolutionSummary && !oldTicket.resolutionSummary) {
+      updates.resolutionSummary =
+        actor.role === 'requester'
+          ? updates.status === 'closed'
+            ? `Ticket closed by Requester (${actor.name})`
+            : `Ticket resolved by Requester (${actor.name})`
+          : updates.status === 'closed'
+          ? `Closed by ${actor.name} (${actorRoleLabel})`
+          : `Resolved by ${actor.name} (${actorRoleLabel})`;
+    }
 
-  // If status is transitioning to resolved, record resolvedAt timestamp
-  if (updates.status === 'resolved' && oldTicket.status !== 'resolved' && !updates.resolvedAt) {
-    updates.resolvedAt = new Date().toISOString();
+    if (updates.status === 'resolved') {
+      if (oldTicket.status !== 'resolved' && !updates.resolvedAt) {
+        updates.resolvedAt = nowIso;
+      }
+      updates.resolvedById = actor.id;
+      updates.resolvedByName = actor.name;
+      updates.resolvedByRole = actor.role;
+    }
+
+    if (updates.status === 'closed') {
+      if (oldTicket.status !== 'closed' && !updates.closedAt) {
+        updates.closedAt = nowIso;
+      }
+      updates.closedById = actor.id;
+      updates.closedByName = actor.name;
+      updates.closedByRole = actor.role;
+    }
+  } else if (
+    updates.status &&
+    updates.status !== 'resolved' &&
+    updates.status !== 'closed' &&
+    (oldTicket.status === 'resolved' || oldTicket.status === 'closed')
+  ) {
+    // Reopening clears stale closure/resolution attribution
+    updates.closedAt = undefined;
+    updates.closedById = undefined;
+    updates.closedByName = undefined;
+    updates.closedByRole = undefined;
+    if (oldTicket.status === 'resolved') {
+      updates.resolvedAt = undefined;
+      updates.resolvedById = undefined;
+      updates.resolvedByName = undefined;
+      updates.resolvedByRole = undefined;
+    }
   }
 
   // Team Manager restrictions: Can only view and close tickets belonging to their team/group
@@ -1928,6 +1994,25 @@ apiRouter.patch('/tickets/:id', async (req: Request, res: Response) => {
   }
 
   const statusChanged = oldTicket.status !== updatedTicket.status;
+
+  // Append an explicit timeline comment when a ticket is closed or resolved by the requester
+  if (statusChanged && actor.role === 'requester' && (updatedTicket.status === 'closed' || updatedTicket.status === 'resolved')) {
+    const comments = db.get('comments') || [];
+    const actionWord = updatedTicket.status === 'closed' ? 'closed' : 'resolved';
+    const requesterActionComment: TicketComment = {
+      id: `cmt-req-close-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      ticketId: id,
+      authorId: actor.id,
+      authorName: actor.name,
+      authorEmail: actor.email,
+      authorRole: 'requester',
+      content: `Requester ${actor.name} ${actionWord} this ticket.${updatedTicket.resolutionSummary && !updatedTicket.resolutionSummary.toLowerCase().includes('by requester') ? `\nNotes: ${updatedTicket.resolutionSummary}` : ''}`,
+      isInternal: false,
+      createdAt: new Date().toISOString(),
+    };
+    db.set('comments', [...comments, requesterActionComment]);
+  }
+
   const techAssigned =
     (!oldTicket.assignedTechnicianId && Boolean(updatedTicket.assignedTechnicianId)) ||
     (Boolean(oldTicket.assignedTechnicianId) &&
@@ -1936,6 +2021,9 @@ apiRouter.patch('/tickets/:id', async (req: Request, res: Response) => {
 
   if (statusChanged || techAssigned) {
     try {
+      const assignedTechUser = updatedTicket.assignedTechnicianId
+        ? users.find((u) => u.id === updatedTicket.assignedTechnicianId)
+        : undefined;
       await emailService.sendTicketStatusUpdateEmail({
         ticket: updatedTicket,
         oldStatus: oldTicket.status,
@@ -1944,19 +2032,19 @@ apiRouter.patch('/tickets/:id', async (req: Request, res: Response) => {
         actorRole: actor?.role,
         resolutionSummary: updatedTicket.resolutionSummary,
         assignedTechName: updatedTicket.assignedTechnicianName,
+        assignedTechEmail: assignedTechUser?.email,
       });
     } catch (err: any) {
       console.warn('Outbound status update notification failed:', err.message);
     }
   }
 
-  logAudit(
-    actor,
-    'ticket.updated',
-    'ticket',
-    id,
-    `Updated ticket ${id}: Status=${updatedTicket.status}, Priority=${updatedTicket.priority}, Assignee=${updatedTicket.assignedTechnicianName || 'Unassigned'}`
-  );
+  const auditMessage =
+    statusChanged && (updatedTicket.status === 'closed' || updatedTicket.status === 'resolved')
+      ? `${actorRoleLabel} ${actor.name} ${updatedTicket.status === 'closed' ? 'closed' : 'resolved'} ticket ${id} (Status=${updatedTicket.status}, Assignee=${updatedTicket.assignedTechnicianName || 'Unassigned'})`
+      : `Updated ticket ${id}: Status=${updatedTicket.status}, Priority=${updatedTicket.priority}, Assignee=${updatedTicket.assignedTechnicianName || 'Unassigned'}`;
+
+  logAudit(actor, 'ticket.updated', 'ticket', id, auditMessage);
 
   res.json(updatedTicket);
 });
@@ -2912,6 +3000,9 @@ function applyApprovalDecision(params: {
     } else {
       tickets[tIdx].status = 'closed';
       tickets[tIdx].closedAt = now;
+      tickets[tIdx].closedById = actor.id;
+      tickets[tIdx].closedByName = actor.name;
+      tickets[tIdx].closedByRole = actor.role;
       tickets[tIdx].resolvedAt = now;
       tickets[tIdx].resolutionCode = 'cancelled';
       tickets[tIdx].resolutionSummary =

@@ -1529,10 +1529,34 @@ export const TicketListView: React.FC<TicketListViewProps> = ({
 
                       {selectedColumns.includes('status') && (
                         <td className="py-3 px-3" onClick={() => onSelectTicket(t.id)}>
-                          <div className="flex items-center gap-1.5 flex-wrap">
+                          <div className="flex flex-col items-start gap-0.5">
                             <span className={`capitalize px-2 py-0.5 rounded-md text-[10px] inline-block ${statusBadge[t.status]?.cls || 'bg-slate-200 text-slate-800'}`}>
                               {statusBadge[t.status]?.label || t.status.replace(/_/g, ' ')}
                             </span>
+                            {t.status === 'closed' && t.closedByName && (
+                              <span
+                                className={`text-[10px] font-medium truncate max-w-[140px] ${
+                                  t.closedByRole === 'requester'
+                                    ? 'text-indigo-700 dark:text-indigo-300 font-semibold'
+                                    : 'text-slate-500 dark:text-slate-400'
+                                }`}
+                                title={`Closed by ${t.closedByName} (${t.closedByRole || 'staff'})`}
+                              >
+                                {t.closedByRole === 'requester' ? 'by Requester' : `by ${t.closedByName}`}
+                              </span>
+                            )}
+                            {t.status === 'resolved' && t.resolvedByName && (
+                              <span
+                                className={`text-[10px] font-medium truncate max-w-[140px] ${
+                                  t.resolvedByRole === 'requester'
+                                    ? 'text-indigo-700 dark:text-indigo-300 font-semibold'
+                                    : 'text-slate-500 dark:text-slate-400'
+                                }`}
+                                title={`Resolved by ${t.resolvedByName} (${t.resolvedByRole || 'staff'})`}
+                              >
+                                {t.resolvedByRole === 'requester' ? 'by Requester' : `by ${t.resolvedByName}`}
+                              </span>
+                            )}
                           </div>
                         </td>
                       )}

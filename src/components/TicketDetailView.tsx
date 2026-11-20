@@ -557,12 +557,23 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
           )}
 
           {ticket.status !== 'resolved' && ticket.status !== 'closed' ? (
-            <button
-              onClick={() => setShowResolveModal(true)}
-              className="neu-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.02]"
-            >
-              <CheckCircle2 className="w-4 h-4" /> Resolve Ticket
-            </button>
+            <>
+              <button
+                onClick={() => setShowResolveModal(true)}
+                className="neu-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.02]"
+              >
+                <CheckCircle2 className="w-4 h-4" /> Resolve Ticket
+              </button>
+              {isRequester && (
+                <button
+                  onClick={() => onUpdateTicket(ticket.id, { status: 'closed' })}
+                  className="neu-btn flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-100 rounded-lg cursor-pointer whitespace-nowrap hover:bg-slate-200/80 dark:hover:bg-white/10 transition-colors"
+                  title="Close this ticket as the requester"
+                >
+                  <CheckCheck className="w-4 h-4 text-slate-700 dark:text-slate-300" /> Close Ticket
+                </button>
+              )}
+            </>
           ) : (
             <button
               onClick={() => onUpdateTicket(ticket.id, { status: 'in_progress' })}
@@ -612,6 +623,16 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
           <div className="text-right text-xs">
             <div className="font-bold">Status: {ticket.status.toUpperCase()}</div>
             <div className="font-semibold text-slate-700">Priority: {ticket.priority.toUpperCase()}</div>
+            {ticket.status === 'closed' && ticket.closedByName && (
+              <div className="font-semibold text-slate-700">
+                Closed By: {ticket.closedByRole === 'requester' ? `Requester (${ticket.closedByName})` : `${ticket.closedByName} (${ticket.closedByRole || 'Staff'})`}
+              </div>
+            )}
+            {ticket.status === 'resolved' && ticket.resolvedByName && (
+              <div className="font-semibold text-emerald-800">
+                Resolved By: {ticket.resolvedByRole === 'requester' ? `Requester (${ticket.resolvedByName})` : `${ticket.resolvedByName} (${ticket.resolvedByRole || 'Staff'})`}
+              </div>
+            )}
           </div>
         </div>
         <div className="text-xs text-slate-800 pt-2 border-t border-slate-200 flex flex-wrap justify-between gap-2">
@@ -1382,8 +1403,34 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
                   </div>
                 )
               ) : isRequester ? (
-                <div className="p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-white/10">
-                  {ticket.status.replace(/_/g, ' ').toUpperCase()}
+                <div className="space-y-2">
+                  <div className="p-2 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-white/10">
+                    <div>{ticket.status.replace(/_/g, ' ').toUpperCase()}</div>
+                    {ticket.status === 'closed' && ticket.closedByName && (
+                      <div className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300 mt-0.5">
+                        {ticket.closedByRole === 'requester'
+                          ? `Closed by Requester (${ticket.closedByName})`
+                          : `Closed by ${ticket.closedByName} (${ticket.closedByRole || 'Staff'})`}
+                      </div>
+                    )}
+                    {ticket.status === 'resolved' && ticket.resolvedByName && (
+                      <div className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300 mt-0.5">
+                        {ticket.resolvedByRole === 'requester'
+                          ? `Resolved by Requester (${ticket.resolvedByName})`
+                          : `Resolved by ${ticket.resolvedByName} (${ticket.resolvedByRole || 'Staff'})`}
+                      </div>
+                    )}
+                  </div>
+                  {ticket.status !== 'closed' && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateTicket(ticket.id, { status: 'closed' })}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white shadow-xs cursor-pointer transition-colors"
+                    >
+                      <CheckCheck className="w-3.5 h-3.5" />
+                      <span>Close My Ticket</span>
+                    </button>
+                  )}
                 </div>
               ) : (
                 <>
@@ -1567,13 +1614,37 @@ export const TicketDetailView: React.FC<TicketDetailViewProps> = ({
               )}
             </div>
 
-            {/* Resolution Information if resolved */}
-            {ticket.resolutionCode && (
-              <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-300 dark:border-emerald-500/30 text-xs space-y-1">
-                <span className="font-bold text-emerald-800 dark:text-emerald-400 block uppercase font-mono text-[10px]">
-                  Resolution Code: {ticket.resolutionCode}
-                </span>
-                <p className="text-slate-800 dark:text-slate-300 font-medium">{ticket.resolutionSummary}</p>
+            {/* Resolution / Closure Information & Attribution */}
+            {(ticket.resolutionCode || ticket.status === 'resolved' || ticket.status === 'closed') && (
+              <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-300 dark:border-emerald-500/30 text-xs space-y-1.5">
+                {ticket.status === 'closed' && ticket.closedByName && (
+                  <div className="font-bold text-indigo-800 dark:text-indigo-300 flex items-center gap-1.5">
+                    <CheckCheck className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      {ticket.closedByRole === 'requester'
+                        ? `Closed by Requester: ${ticket.closedByName}`
+                        : `Closed by ${ticket.closedByRole ? ticket.closedByRole.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Staff'}: ${ticket.closedByName}`}
+                    </span>
+                  </div>
+                )}
+                {ticket.resolvedByName && (ticket.status === 'resolved' || ticket.resolvedById !== ticket.closedById) && (
+                  <div className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                      {ticket.resolvedByRole === 'requester'
+                        ? `Resolved by Requester: ${ticket.resolvedByName}`
+                        : `Resolved by ${ticket.resolvedByRole ? ticket.resolvedByRole.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Staff'}: ${ticket.resolvedByName}`}
+                    </span>
+                  </div>
+                )}
+                {ticket.resolutionCode && (
+                  <span className="font-bold text-emerald-800 dark:text-emerald-400 block uppercase font-mono text-[10px]">
+                    Resolution Code: {ticket.resolutionCode}
+                  </span>
+                )}
+                {ticket.resolutionSummary && (
+                  <p className="text-slate-800 dark:text-slate-300 font-medium">{ticket.resolutionSummary}</p>
+                )}
               </div>
             )}
 

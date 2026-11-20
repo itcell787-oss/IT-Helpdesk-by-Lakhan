@@ -197,11 +197,20 @@ export const api = {
     otp?: string;
     preSharedKey?: string;
     password?: string;
-  }): Promise<{ success: boolean; message: string; user: User }> {
-    return request('/api/auth/register', {
+  }): Promise<{ success: boolean; message: string; user: User; sessionToken?: string }> {
+    const data = await request<{ success: boolean; message: string; user: User; sessionToken?: string }>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    if (data.user?.id) {
+      try {
+        localStorage.setItem('it_helpdesk_user_id', data.user.id);
+        if (data.sessionToken) {
+          localStorage.setItem('it_helpdesk_session_token', data.sessionToken);
+        }
+      } catch {}
+    }
+    return data;
   },
 
   // Organizations

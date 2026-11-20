@@ -201,7 +201,13 @@ export interface Ticket {
   firstResponseAt?: string;
   dueDate?: string;
   resolvedAt?: string;
+  resolvedById?: string;
+  resolvedByName?: string;
+  resolvedByRole?: UserRole;
   closedAt?: string;
+  closedById?: string;
+  closedByName?: string;
+  closedByRole?: UserRole;
   
   resolutionCode?: 'solved' | 'workaround' | 'hardware_replaced' | 'vendor_fixed' | 'not_reproducible' | 'cancelled';
   resolutionSummary?: string;
